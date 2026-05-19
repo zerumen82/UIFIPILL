@@ -20,6 +20,8 @@ pub fn run() {
             commands::kill_attack_process,
             commands::capture_handshake,
             commands::crack_handshake,
+            commands::deauth_inject,
+            commands::disassoc_inject,
             // tool detection
             tools_detect::detect_tools,
             tools_detect::find_tool_cmd,

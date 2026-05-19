@@ -344,7 +344,7 @@ pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option
     let atk           = attack_mode.unwrap_or(0);
     let cracked_out   = format!("{}.cracked", hash_file);
 
-    let mut args: Vec<String> = vec![
+    let args: Vec<String> = vec![
         "-m".into(),            mode_str.into(),
         "-a".into(),            atk.to_string(),
         "-o".into(),            cracked_out.clone(),
@@ -371,5 +371,40 @@ pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option
         stderr:  r.stderr,
         exit_code: r.exit_code,
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 12 — DEAUTH INJECTION  (aireplay-ng via WSL2)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Envía paquetes de desautenticación 802.11 para forzar un re-handshake WPA2.
+/// Requiere WSL2 con aircrack-ng instalado y adaptador en modo monitor.
+/// Uso: aireplay-ng --deauth <count> -a <BSSID> [-c <client>] <iface>
+#[command]
+pub async fn deauth_inject(_app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let iface  = iface.unwrap_or_else(|| "wlan0mon".into());
+    let cnt    = count.unwrap_or(10).to_string();
+    let mut cmd = format!("aireplay-ng --deauth {} -a {}", cnt, bssid);
+    if let Some(ref c) = client_mac { cmd.push_str(&format!(" -c {}", c)); }
+    cmd.push_str(&format!(" {}", iface));
+
+    println!("[deauth] ejecutando en WSL2: {}", cmd);
+    crate::wifi_adapter::wsl2_run(_app, cmd).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 13 — DISASSOC INJECTION  (aireplay-ng via WSL2)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Envía paquetes de desasociación 802.11 (menos intrusivo que deauth).
+/// Requiere WSL2 con aircrack-ng instalado.
+#[command]
+pub async fn disassoc_inject(_app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let iface  = iface.unwrap_or_else(|| "wlan0mon".into());
+    let cnt    = count.unwrap_or(5).to_string();
+    let mut cmd = format!("aireplay-ng --disassociate {} -a {}", cnt, bssid);
+    if let Some(ref c) = client_mac { cmd.push_str(&format!(" -c {}", c)); }
+    cmd.push_str(&format!(" {}", iface));
+
+    println!("[disassoc] ejecutando en WSL2: {}", cmd);
+    crate::wifi_adapter::wsl2_run(_app, cmd).await
 }
 
