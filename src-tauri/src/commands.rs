@@ -329,3 +329,47 @@ pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<Stri
         exit_code: conv.exit_code,
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 11 — CRACK HANDSHAKE WPA/WPA2 (hashcat modo 22000)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Fuerza bruta sobre handshakes .hccapx / .22000 con hashcat modo 22000.
+/// -a 0 = straight, -a 3 = brute-force, -a 6 = dict+rule, -a 8 = PRINCE
+/// Soporta --session para pausar/reanudar y --restore para continuar
+#[command]
+pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option<String>, attack_mode: Option<u8>, session_name: Option<String>) -> CmdResponse {
+    let prog          = tool_path("HASHCAT_PATH", "hashcat.exe");
+    let wordlist_bin  = wordlist.clone().unwrap_or_else(|| tool_path("WORDLIST_PATH", "wordlist.txt").to_string_lossy().into_owned());
+    let mode_str      = "22000";   // WPA/WPA2 PBKDF2-PMKID
+    let atk           = attack_mode.unwrap_or(0);
+    let cracked_out   = format!("{}.cracked", hash_file);
+
+    let mut args: Vec<String> = vec![
+        "-m".into(),            mode_str.into(),
+        "-a".into(),            atk.to_string(),
+        "-o".into(),            cracked_out.clone(),
+        "--force".into(),
+        "--status".into(),      "--status-timer=10".into(),
+        "--session".into(),     session_name.clone().unwrap_or_else(|| "uifipill".into()),
+        hash_file.clone(),
+        wordlist_bin.clone(),
+    ];
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("hashcat.exe"), &args).await;
+
+    // parsear linea resumen "Hash.Target......: password" si existe
+    let pw_opt = r.output.lines().find(|l| l.contains(':') && !l.starts_with('#')).map(|s| s.to_string());
+    let body   = if let Some(ref p) = pw_opt {
+        format!("\u{1F512} PASSWORD CRACKEADA:\n{}\n\n{}", p, r.output)
+    } else {
+        format!("Sin resultado aun.\nHash: {}\nModo: {}  Ataque: {}  Wordlist: {}\n\n{}", hash_file, mode_str, atk, wordlist_bin, r.output)
+    };
+    let ok = pw_opt.is_some();
+    CmdResponse {
+        success: ok,
+        output:  wrap(&format!("Handshake Crack \u{00B7} {hash_file} \u{00B7} -a{atk}"), &body, ok),
+        stderr:  r.stderr,
+        exit_code: r.exit_code,
+    }
+}
+

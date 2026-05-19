@@ -270,9 +270,47 @@
         </button>
         <button class="nav-btn" id="nav-console" onclick="showTab('console')">
           &#9881; Consola
-        </button>
-      </div>
+              </button>
+            </div>
 
+            <!-- Crack Handshake WPA2 -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F512; Crack Handshake WPA2</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza bruta hashcat modo 22000 sobre archivo .hccapx o .22000</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Hash:</label>
+                  <input id="crack-handshake-hash" type="text" placeholder="handshake_AA-BB-CC.hccapx"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Wordlist:</label>
+                  <input id="crack-handshake-wordlist" type="text" placeholder="rockyou.txt"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Modo (a):</label>
+                  <select id="crack-handshake-mode" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none">
+                    <option value="0">0 — straight</option>
+                    <option value="1">1 — combinator</option>
+                    <option value="3">3 — brute-force</option>
+                    <option value="6">6 — dict + rule</option>
+                    <option value="8">8 — PRINCE</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Session:</label>
+                  <input id="crack-handshake-session" type="text" placeholder="uifipill (opcional)"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('crack_handshake', crackHandshake)">
+                Crack con hashcat
+              </button>
+            </div>
+
+            <!-- WPS PIN -->
       <div class="nav-footer">
         <span class="badge-wi">v1.0 · Rust + Tauri</span>
       </div>

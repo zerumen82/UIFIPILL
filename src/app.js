@@ -209,6 +209,20 @@ window.captureHandshake = async function () {
   return invokeAttack('capture_handshake', { bssid, essid, channel: ch, duration_seconds: dur });
 };
 
+window.crackHandshake = async function () {
+  const hash  = valOrEmpty($('crack-handshake-hash').value);
+  const wl    = valOrEmpty($('crack-handshake-wordlist').value);
+  const atk   = valOrEmpty($('crack-handshake-mode').value) || '0';
+  const sess  = valOrEmpty($('crack-handshake-session').value) || undefined;
+  if (!hash) { log('Especifica el archivo .hccapx o .22000 a crackear.', 'warn'); return; }
+  return invokeAttack('crack_handshake', {
+    hash_file: hash,
+    wordlist:  wl || undefined,
+    attack_mode: parseInt(atk) || undefined,
+    session_name: sess || undefined,
+  });
+};
+
 // Wrapper usado por los botones onclick="doCmd('name', handler)"
 window.doCmd = function (cmdName, handler) {
   log(`>>> [${cmdName}] ejecutando…`, 'info');
