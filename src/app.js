@@ -223,6 +223,28 @@ window.crackHandshake = async function () {
   });
 };
 
+window.doDeauth = async function () {
+  const bssid  = valOrEmpty($('deauth-bssid').value);
+  const client = valOrEmpty($('deauth-client').value) || undefined;
+  const cnt    = valOrEmpty($('deauth-count').value) || '10';
+  const iface  = valOrEmpty($('deauth-iface').value) || 'wlan0mon';
+
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`Deauth: AP=${bssid} client=${client || 'broadcast'} cnt=${cnt} iface=${iface}`, 'warn');
+  return invokeAttack('deauth_inject', { bssid, client_mac: client, count: parseInt(cnt) || 10, interface: iface });
+};
+
+window.doDisassoc = async function () {
+  const bssid  = valOrEmpty($('deauth-bssid').value);
+  const client = valOrEmpty($('deauth-client').value) || undefined;
+  const cnt    = valOrEmpty($('deauth-count').value) || '5';
+  const iface  = valOrEmpty($('deauth-iface').value) || 'wlan0mon';
+
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`Disassoc: AP=${bssid} client=${client || 'broadcast'} cnt=${cnt} iface=${iface}`, 'warn');
+  return invokeAttack('disassoc_inject', { bssid, client_mac: client, count: parseInt(cnt) || 5, interface: iface });
+};
+
 // Wrapper usado por los botones onclick="doCmd('name', handler)"
 window.doCmd = function (cmdName, handler) {
   log(`>>> [${cmdName}] ejecutando…`, 'info');
