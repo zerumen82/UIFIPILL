@@ -431,6 +431,34 @@
               </button>
             </div>
 
+            <!-- Handshake Capture -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F510; Capturar Handshake WPA2</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Captura EAPOL 4-way + extrae .hccapx con hcxpcapngtool -k</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">SSID (opc):</label>
+                  <input id="handshake-essid" type="text" placeholder="MiRedWiFi"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="handshake-chan" type="number" min="1" max="165" placeholder="auto"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Duraci&oacute;n:</label>
+                  <input id="handshake-dur" type="number" min="10" max="3600" value="60"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                  <span style="font-size:11px;color:var(--muted)">s</span>
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('capture_handshake', captureHandshake)">
+                Capturar handshake
+              </button>
+            </div>
+
             <!-- WPS PIN -->
             <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
               <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F511; WPS PIN bruteforce</h3>

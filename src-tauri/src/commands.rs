@@ -46,10 +46,10 @@ macro_rules! re {
 static RE_SSID:   once_cell::sync::Lazy<regex::Regex> = re!(r"^SSID\s+\d+\s*:\s*(.*)");
 static RE_NEW_ID: once_cell::sync::Lazy<regex::Regex> = re!(r"^SSID\s+\d+\s*:");
 static RE_BSSID:  once_cell::sync::Lazy<regex::Regex> = re!(r"^BSSID\s+\d*\s*:\s*([0-9A-Fa-f:]{17})");
-static RE_SIG:    once_cell::sync::Lazy<regex::Regex> = re!(r"Signal|Señal:\s*(\d+)%");
+static RE_SIG:    once_cell::sync::Lazy<regex::Regex> = re!(r"Signal|Se\u{00F1}al:\s*(\d+)%");
 static RE_CHAN:   once_cell::sync::Lazy<regex::Regex> = re!(r"Channel|Canal:\s*(\d+)");
 static RE_SEC:    once_cell::sync::Lazy<regex::Regex> =
-    re!(r"(?:Authentication|Seguridad|Autenticaci[oó]n|Tipo de autenticaci[oó]n)\s*:\s*(.*)");
+    re!(r"(?:Authentication|Seguridad|Autenticaci[o\u{00F3}n|Tipo de autenticaci[o\u{00F3}n])\s*:\s*(.*)");
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PARSEADOR NETSH
@@ -91,7 +91,6 @@ fn parse_netsh(raw: &str) -> Vec<WifiNetwork> {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Ejecuta un binario externo y devuelve su salida
 async fn run_bin(app: &AppHandle, exe: &str, args: &[String]) -> CmdResponse {
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
@@ -115,7 +114,7 @@ fn wrap(title: &str, body: &str, ok: bool) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 1 — ESCANEAR (existente, intacto)
+// COMANDO 1 — ESCANEAR
 // ═══════════════════════════════════════════════════════════════════════════════
 #[command]
 pub async fn scan_wifi(app: AppHandle) -> ScanResult {
@@ -131,8 +130,6 @@ pub async fn scan_wifi(app: AppHandle) -> ScanResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 2 — CAPTURAR PMKID  (hcxdumptool)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Ejecuta hcxdumptool capturando paquetes PMKID de un BSSID específico.
-/// Guarda el archivo .pcapng en el directorio actual.
 #[command]
 pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>) -> CmdResponse {
     let prog  = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
@@ -155,9 +152,8 @@ pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, d
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 3 — CONVERTIR PMKID → HASH  (hcxpcapngtool)
+// COMANDO 3 — CONVERTIR PMKID -> HASH  (hcxpcapngtool)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Extrae hashes PMKID de un .pcapng y genera un archivo .22000 listo para hashcat.
 #[command]
 pub async fn pmkid_convert(_app: AppHandle, pcapng_path: String, output_dir: Option<String>) -> CmdResponse {
     let prog    = tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe");
@@ -174,8 +170,6 @@ pub async fn pmkid_convert(_app: AppHandle, pcapng_path: String, output_dir: Opt
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 4 — CRACK PMKID  (hashcat)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Fuerza bruta sobre hashes .22000 con hashcat (modo 16800 = PBKDF2-SHA512-PMKID).
-/// -a 0 = straight, -a 3 = brute-force, -a 6 = dictionary + rule.
 #[command]
 pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<String>, attack_mode: Option<u8>) -> CmdResponse {
     let prog     = tool_path("HASHCAT_PATH", "hashcat.exe");
@@ -197,7 +191,7 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
     let body = if let Some(ref p) = pw_opt {
         format!("\u{1F512} PASSWORD: {}\n\n{}", p, r.output)
     } else {
-        format!("Sin resultado aún. Hash: {}\nModo: {}  Wordlist: {}\n\n{}", hash_file, mode, wordlist_bin, r.output)
+        format!("Sin resultado aun. Hash: {}\nModo: {}  Wordlist: {}\n\n{}", hash_file, mode, wordlist_bin, r.output)
     };
     CmdResponse { success: pw_opt.is_some() || r.success, output: wrap(&format!("PMKID Crack \u{00B7} {hash_file}"), &body, pw_opt.is_some()), stderr: r.stderr, exit_code: r.exit_code }
 }
@@ -205,7 +199,6 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 5 — WPS PIN BRUTEFORCE  (bully)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Ejecuta bully para extraer el PIN WPS y la PSK de una red objetivo.
 #[command]
 pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String) -> CmdResponse {
     let prog = tool_path("BULLY_PATH", "bully.exe");
@@ -233,16 +226,10 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 6 — SCAN AIRODUMP-STYLE  (netsh estructurado)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Escaneo con filtros opcionales. Devuelve salida de Netsh parseable
-/// cuando airodump-ng no esté disponible en Windows.
 #[command]
 pub async fn scan_airodump(app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, _duration: Option<u64>) -> CmdResponse {
     let shell = app.shell();
-
     let ps_args: Vec<String> = vec!["-NoProfile".into(), "-Command".into(), "netsh wlan show networks mode=bssid".into()];
-
-    if let Some(_ch) = channel_filter { }
-
     let ps_out = match shell.command("powershell").args(&ps_args).output().await {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(e) => return CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None },
@@ -289,4 +276,56 @@ pub async fn kill_attack_process(_app: AppHandle, pid: u32) -> CmdResponse {
     let cmd   = format!("taskkill /PID {} /F /T", pid);
     let out   = match shell.command("powershell").args(["-NoProfile", "-Command", &cmd]).output().await { Ok(o) => o, Err(e) => return CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None } };
     CmdResponse { success: out.status.success(), output: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned(), exit_code: out.status.code() }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 10 — CAPTURAR HANDSHAKE WPA/WPA2 (EAPOL 4-way)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Captura trafico 802.11 con hcxdumptool y extrae el handshake EAPOL
+/// completo con hcxpcapngtool (-k plaintext).
+/// Salida: handshake_<BSSID>.pcapng + handshake_<BSSID>.hccapx
+#[command]
+pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>) -> CmdResponse {
+    let dur  = duration_seconds.unwrap_or(60);
+    let ch   = channel.unwrap_or(1);
+    let bssid_clean = bssid.replace(':', "");
+    let pcap  = format!("handshake_{}.pcapng", bssid_clean);
+    let hccapx = format!("handshake_{}.hccapx", bssid_clean);
+
+    let mut args = vec![
+        "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
+        "-i".into(), "-t".into(), dur.to_string(),
+        "-w".into(), pcap.clone(),
+        "--bssid".into(), bssid.clone(),
+        "--channel".into(), ch.to_string(),
+    ];
+    if let Some(ref e) = essid {
+        args.push("--essid".into());
+        args.push(e.clone());
+    }
+
+    let prog  = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
+    let cap  = run_bin(&app, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
+
+    let conv = if cap.success {
+        let prog2 = tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe");
+        let c_args = vec!["-k".into(), "-o".into(), hccapx.clone(), pcap.clone()];
+        run_bin(&app, prog2.to_str().unwrap_or("hcxpcapngtool.exe"), &c_args).await
+    } else {
+        CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code }
+    };
+
+    let body = format!(
+        "Paso 1 — Captura:\n{}\n{}\n\nPaso 2 — Extraccion EAPOL:\n{}\n{}\nArchivo handshake: {}",
+        prog.display(), cap.output,
+        tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe").display(), conv.output,
+        hccapx
+    );
+    let ok = conv.success;
+    CmdResponse {
+        success: ok,
+        output: wrap(&format!("Handshake Capture \u{00B7} {} \u{00B7} Canal={} \u{00B7} {}s", bssid, ch, dur), &body, ok),
+        stderr: format!("{}\n{}", cap.stderr, conv.stderr),
+        exit_code: conv.exit_code,
+    }
 }

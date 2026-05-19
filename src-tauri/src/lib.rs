@@ -18,6 +18,7 @@ pub fn run() {
             commands::wifi_interface_status,
             commands::list_attack_processes,
             commands::kill_attack_process,
+            commands::capture_handshake,
             // tool detection
             tools_detect::detect_tools,
             tools_detect::find_tool_cmd,
