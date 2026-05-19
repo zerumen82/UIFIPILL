@@ -294,8 +294,16 @@
             <button class="scan-btn" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
               &#x1F4E2; Activar modo monitor
             </button>
-            <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green)">
-              &#x1F4F6; Capturar paquetes
+            <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green);min-width:160px">
+              &#x1F4F6; Capturar PMKID
+            </button>
+            <button class="scan-btn" id="ifaceStatusBtn" onclick="doIfaceStatus()" style="background:#3a3a52">
+              &#x1F4F1; Info adaptador
+            </button>
+            <button class="scan-btn" id="procBtn" onclick="doListProcs()" style="background:#3a3a52">
+              &#x1F4CB; Procesos
+            </button>
+          </div>
             </button>
           </div>
         </header>
@@ -512,10 +520,19 @@
       }
 
       async function doCapture() {
-        log('Iniciando captura de paquetes…', 'info');
+        // Use BSSID from the last scan (attack-tab selector), not a hardcoded broadcast
+        const bssidEl = document.getElementById('attack-bssid');
+        if (!bssidEl || !bssidEl.value) {
+          log('Captura cancelada: no hay BSSID seleccionado. Escanea primero y elige un objetivo, o activa el modo monitor.', 'warn');
+          // Auto-activate monitor mode if no BSSID is selected yet
+          log('Intenta primero "Escanear ahora" y luego elige una red.', 'info');
+          return;
+        }
+        const bssid = bssidEl.value.trim();
+        log(`Capturando PMKID de ${bssid}…`, 'info');
         try {
           const result = await __invoke('pmkid_capture', {
-            bssid: 'FF:FF:FF:FF:FF:FF',
+            bssid,
             channel: undefined,
             duration_seconds: 30
           });
