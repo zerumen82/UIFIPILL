@@ -200,6 +200,21 @@ window.wpsBrute = async function () {
   return invokeAttack('wps_pin_bruteforce', { bssid, interface: iface });
 };
 
+window.captureHandshake = async function () {
+  const bssid = getSelectedBssid(); if (!bssid) return;
+  const essid = valOrEmpty($('handshake-essid').value) || undefined;
+  const chRaw = valOrEmpty($('handshake-chan').value);
+  const ch    = chRaw ? parseInt(chRaw) : undefined;
+  const dur   = $('handshake-dur').value ? parseInt($('handshake-dur').value) : 60;
+  return invokeAttack('capture_handshake', { bssid, essid, channel: ch, duration_seconds: dur });
+};
+
+// Wrapper used by inline onclick="doCmd('name', handler)"
+window.doCmd = function (cmdName, handler) {
+  log(`>>> [${cmdName}] ejecutando…`, 'info');
+  return handler();
+};
+
 async function invokeAttack(cmd, args) {
   log(`>>> Rust invoke → ${cmd}  args=${JSON.stringify(args)}`, 'info');
   const t0 = performance.now();
