@@ -200,6 +200,12 @@ window.wpsBrute = async function () {
   return invokeAttack('wps_pin_bruteforce', { bssid, interface: iface });
 };
 
+// Wrapper usado por los botones onclick="doCmd('name', handler)"
+window.doCmd = function (cmdName, handler) {
+  log(`>>> [${cmdName}] ejecutando…`, 'info');
+  return handler();
+};
+
 async function invokeAttack(cmd, args) {
   log(`>>> Rust invoke → ${cmd}  args=${JSON.stringify(args)}`, 'info');
   const t0 = performance.now();
