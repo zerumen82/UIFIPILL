@@ -250,7 +250,7 @@
     .tool-path { font-size: 11px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tool-ver  { font-size: 10.5px; color: var(--gray); min-width: 110px; text-align: right; }
   </style>
-  <script type="module" crossorigin src="/assets/index-COh3eYfO.js"></script>
+  <script type="module" crossorigin src="/assets/index-BQx-jT0s.js"></script>
 </head>
 <body>
   <div id="app" class="app">
@@ -271,8 +271,248 @@
         </button>
         <button class="nav-btn" id="nav-console" onclick="showTab('console')">
           &#9881; Consola
-        </button>
-      </div>
+              </button>
+            </div>
+
+            <!-- Crack Handshake WPA2 -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F512; Crack Handshake WPA2</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza bruta hashcat modo 22000 sobre archivo .hccapx o .22000</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Hash:</label>
+                  <input id="crack-handshake-hash" type="text" placeholder="handshake_AA-BB-CC.hccapx"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Wordlist:</label>
+                  <input id="crack-handshake-wordlist" type="text" placeholder="rockyou.txt"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Modo (a):</label>
+                  <select id="crack-handshake-mode" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none">
+                    <option value="0">0 — straight</option>
+                    <option value="1">1 — combinator</option>
+                    <option value="3">3 — brute-force</option>
+                    <option value="6">6 — dict + rule</option>
+                    <option value="8">8 — PRINCE</option>
+                  </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Session:</label>
+                  <input id="crack-handshake-session" type="text" placeholder="uifipill (opcional)"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('crack_handshake', crackHandshake)">
+                Crack con hashcat
+              </button>
+            </div>
+
+            <!-- Deauth / Disassoc Injection -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F4A2; Deauth / Disassoc</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza desconexión de un cliente del AP para capturar re-handshake (aireplay-ng)</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="deauth-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Cliente (opc):</label>
+                  <input id="deauth-client" type="text" placeholder="dejar vacío = broadcast"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Paquetes:</label>
+                  <input id="deauth-count" type="number" min="1" max="100" value="10"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="deauth-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="atk-btn atk-orange" style="flex:1"
+                        onclick="doCmd('deauth_inject', doDeauth)">
+                  &#x26A1; Deauth
+                </button>
+                <button class="atk-btn" style="flex:1;background:#3a3a52"
+                        onclick="doCmd('disassoc_inject', doDisassoc)">
+                  &#x21AF; Disassoc
+                </button>
+              </div>
+            </div>
+
+            <!-- Scan Airodump -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x1F4BF; Scan airodump</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Escaneo en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="airodump-chan" type="number" min="1" max="165" placeholder="0=todos"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Duraci&oacute;n:</label>
+                  <input id="airodump-dur" type="number" min="5" max="3600" value="60"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                  <span style="font-size:11px;color:var(--muted)">s</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID (opc):</label>
+                  <input id="airodump-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-blue" style="margin-top:12px;width:100%"
+                      onclick="doCmd('scan_airodump', doAirodumpScan)">
+                &#x1F4BF; Escanear
+              </button>
+            </div>
+
+            <!-- ARP Replay Inject -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x26A1; ARP Replay Inject</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Inyecta paquetes ARP reply (aireplay-ng --arpreply) para capturar handshake</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="arpreply-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">MAC fake:</label>
+                  <input id="arpreply-mac" type="text" placeholder="ff:ff:ff:ff:ff:ff=broadcast"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="arpreply-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-blue" style="margin-top:12px;width:100%"
+                      onclick="doCmd('arp_replay_inject', doArpreply)">
+                &#x26A1; ARP Reply Inject
+              </button>
+            </div>
+
+            <!-- Beacon Flood -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F525; Beacon Flood</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Inunda el espectro con beacons falsos (mdk3) — AP virtual en el aire</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">ESSID falso:</label>
+                  <input id="beacon-essid" type="text" placeholder="FakeAP-FreeWiFi"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="beacon-chan" type="number" min="1" max="165" value="1"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Beacons:</label>
+                  <input id="beacon-count" type="number" min="1" value="50"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-orange" style="margin-top:12px;width:100%"
+                      onclick="doCmd('beacon_flood', doBeaconFlood)">
+                &#x1F525; Enviar beacons
+              </button>
+            </div>
+
+            <!-- WPS PBC Attack -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F511; WPS PBC</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Ataque por Push-Button Configuration (PBC) — reaver-wps -S</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="wpspbc-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="wpspbc-iface" type="text" placeholder="wlan0"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-orange" style="margin-top:12px;width:100%"
+                      onclick="doCmd('wps_pbc_attack', doWpsPbc)">
+                &#x1F511; WPS PBC
+              </button>
+            </div>
+
+            <!-- ChopChop WEP -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--yellow);margin-bottom:4px">&#x2702; ChopChop WEP</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Descifra paquetes WEP generando IVs (aireplay-ng --chopchop)</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="chopchop-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">MAC origen:</label>
+                  <input id="chopchop-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="chopchop-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn" style="margin-top:12px;width:100%;background:#c8a830"
+                      onclick="doCmd('chopchop_inject', doChopChop)">
+                &#x2702; ChopChop
+              </button>
+            </div>
+
+            <!-- Evil Twin / Rogue AP -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F608; Evil Twin</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Clona un AP legitimo con airbase-ng para capturar handshake de clientes</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">ESSID clon:</label>
+                  <input id="rogue-essid" type="text" placeholder="MiWiFi-Casa"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID clon:</label>
+                  <input id="rogue-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="rogue-chan" type="number" min="1" max="165" value="1"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="rogue-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('rogue_ap', doRogueAp)">
+                &#x1F608; Lanzar Evil Twin
+              </button>
+            </div>
+
+           </div><!-- /attack-grid -->
 
       <div class="nav-footer">
         <span class="badge-wi">v1.0 · Rust + Tauri</span>
@@ -295,8 +535,16 @@
             <button class="scan-btn" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
               &#x1F4E2; Activar modo monitor
             </button>
-            <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green)">
-              &#x1F4F6; Capturar paquetes
+            <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green);min-width:160px">
+              &#x1F4F6; Capturar PMKID
+            </button>
+            <button class="scan-btn" id="ifaceStatusBtn" onclick="doIfaceStatus()" style="background:#3a3a52">
+              &#x1F4F1; Info adaptador
+            </button>
+            <button class="scan-btn" id="procBtn" onclick="doListProcs()" style="background:#3a3a52">
+              &#x1F4CB; Procesos
+            </button>
+          </div>
             </button>
           </div>
         </header>
@@ -337,7 +585,7 @@
         <header class="phead">
           <div>
             <h1>Panel de Ataque</h1>
-            <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · solo redes propias en laboratorio</p>
+            <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · aireplay-ng · evil twin · solo redes propias en laboratorio</p>
           </div>
         </header>
 
@@ -424,6 +672,34 @@
               </button>
             </div>
 
+            <!-- Handshake Capture -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F510; Capturar Handshake WPA2</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Captura EAPOL 4-way + extrae .hccapx con hcxpcapngtool -k</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">SSID (opc):</label>
+                  <input id="handshake-essid" type="text" placeholder="MiRedWiFi"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="handshake-chan" type="number" min="1" max="165" placeholder="auto"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Duraci&oacute;n:</label>
+                  <input id="handshake-dur" type="number" min="10" max="3600" value="60"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                  <span style="font-size:11px;color:var(--muted)">s</span>
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('capture_handshake', captureHandshake)">
+                Capturar handshake
+              </button>
+            </div>
+
             <!-- WPS PIN -->
             <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
               <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F511; WPS PIN bruteforce</h3>
@@ -449,7 +725,7 @@
               &#x26A0;&#xFE0F; <strong style="color:var(--orange)">UIFIPILL Lab Only</strong> —
               Estas herramientas deben usarse exclusivamente sobre redes de tu propiedad/campo de pruebas.
               La captura PMKID y el WPS PIN bruteforce sin autorización violan las leyes locales y federales.
-              Linux/WSL2 recomendado. <span id="attack-warn"></span>
+              Linux/Windows nativo. <span id="attack-warn"></span>
             </p>
           </div>
 
@@ -487,19 +763,55 @@
 
       <!-- Tauri API bridge -->
     <script>
-      // Monitor mode handlers
-      async function doMonitor() {
-        log('Activando modo monitor…', 'info');
+      // ── Monitor mode helpers ──────────────────────────────────────────
+      window._selectedMonitorGuid = '';
+
+      async function showMonitorModal() {
+        log('Escaneando adaptadores WiFi…', 'info');
+        const adapters = await __invoke('detect_adapters');
+        const list = adapters?.adapters || [];
+        if (list.length === 0) {
+          log('No se encontro ningún adaptador WiFi.', 'warn');
+          return;
+        }
+        // Build a simple modal dialog
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+        overlay.id = 'monitor-modal-overlay';
+        let rows = '';
+        list.forEach((a, i) => {
+          const key = a.chipset_key || a.name;
+          rows += `<tr style="cursor:pointer" onclick="window._pickedGuid='${key}';document.getElementById('monitor-modal-overlay').remove();doMonitorReal()">
+            <td style="padding:8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:600;color:var(--text)">${esc(a.chipset||a.name)}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(a.name)}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(key)}</td>
+          </tr>`;
+        });
+        overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:600px;width:90%;font-family:inherit">
+          <h3 style="font-size:15px;margin-bottom:4px;color:var(--orange)">&#x1F4E2; Activar modo monitor</h3>
+          <p style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Haz clic en el adaptador para activar modo monitor sobre él.</p>
+          <div style="overflow:auto;max-height:280px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:var(--surface2)">
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">#</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Chipset</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Nombre</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">GUID / VID:PID</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <button onclick="document.getElementById('monitor-modal-overlay').remove()" style="margin-top:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:6px 14px;cursor:pointer;font-size:12px;font-family:inherit">Cancelar</button>
+        </div>`;
+        document.body.appendChild(overlay);
+      }
+
+      async function doMonitorReal() {
+        const guid = window._pickedGuid || '';
+        if (!guid) { log('No se seleccionó un adaptador.', 'warn'); return; }
+        log(`Activando modo monitor en ${guid}…`, 'info');
         try {
-          // First detect adapters to get the interface GUID
-          const adapters = await __invoke('detect_adapters');
-          const adapterList = adapters?.adapters || [];
-          if (adapterList.length === 0) {
-            log('No se encontraron adaptadores WiFi.', 'warn');
-            return;
-          }
-          // Use first adapter
-          const guid = adapterList[0].chipset_key || adapterList[0].name;
           const result = await __invoke('activate_monitor', { iface_guid: guid, channel: undefined });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
         } catch (err) {
@@ -507,11 +819,24 @@
         }
       }
 
+      async function doMonitor() {
+        await showMonitorModal();
+      }
+
       async function doCapture() {
-        log('Iniciando captura de paquetes…', 'info');
+        // Use BSSID from the last scan (attack-tab selector), not a hardcoded broadcast
+        const bssidEl = document.getElementById('attack-bssid');
+        if (!bssidEl || !bssidEl.value) {
+          log('Captura cancelada: no hay BSSID seleccionado. Escanea primero y elige un objetivo, o activa el modo monitor.', 'warn');
+          // Auto-activate monitor mode if no BSSID is selected yet
+          log('Intenta primero "Escanear ahora" y luego elige una red.', 'info');
+          return;
+        }
+        const bssid = bssidEl.value.trim();
+        log(`Capturando PMKID de ${bssid}…`, 'info');
         try {
           const result = await __invoke('pmkid_capture', {
-            bssid: 'FF:FF:FF:FF:FF:FF',
+            bssid,
             channel: undefined,
             duration_seconds: 30
           });

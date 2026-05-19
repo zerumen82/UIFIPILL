@@ -313,7 +313,7 @@
             <!-- Deauth / Disassoc Injection -->
             <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
               <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F4A2; Deauth / Disassoc</h3>
-              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza desconexión de un cliente del AP para capturar re-handshake (aireplay-ng via WSL2)</p>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza desconexión de un cliente del AP para capturar re-handshake (aireplay-ng)</p>
               <div style="display:flex;flex-direction:column;gap:7px">
                 <div style="display:flex;align-items:center;gap:7px">
                   <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
@@ -331,7 +331,7 @@
                          style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
                 </div>
                 <div style="display:flex;align-items:center;gap:7px">
-                  <label style="font-size:11px;color:var(--muted);width:72px">Interface WSL:</label>
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
                   <input id="deauth-iface" type="text" placeholder="wlan0mon"
                          style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
                 </div>
@@ -350,8 +350,8 @@
 
             <!-- Scan Airodump -->
             <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
-              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x1F4BF; Scan airodump (WSL2)</h3>
-              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Escanera en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x1F4BF; Scan airodump</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Escaneo en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
               <div style="display:flex;flex-direction:column;gap:7px">
                 <div style="display:flex;align-items:center;gap:7px">
                   <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
@@ -392,7 +392,7 @@
                          style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
                 </div>
                 <div style="display:flex;align-items:center;gap:7px">
-                  <label style="font-size:11px;color:var(--muted);width:72px">Interface WSL:</label>
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
                   <input id="arpreply-iface" type="text" placeholder="wlan0mon"
                          style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
                 </div>
@@ -430,7 +430,88 @@
               </button>
             </div>
 
-           </div><!-- /attack-grid -->
+            <!-- WPS PBC Attack -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F511; WPS PBC</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Ataque por Push-Button Configuration (PBC) — reaver-wps -S</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="wpspbc-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="wpspbc-iface" type="text" placeholder="wlan0"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-orange" style="margin-top:12px;width:100%"
+                      onclick="doCmd('wps_pbc_attack', doWpsPbc)">
+                &#x1F511; WPS PBC
+              </button>
+            </div>
+
+            <!-- ChopChop WEP -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--yellow);margin-bottom:4px">&#x2702; ChopChop WEP</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Descifra paquetes WEP generando IVs (aireplay-ng --chopchop)</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="chopchop-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">MAC origen:</label>
+                  <input id="chopchop-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="chopchop-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn" style="margin-top:12px;width:100%;background:#c8a830"
+                      onclick="doCmd('chopchop_inject', doChopChop)">
+                &#x2702; ChopChop
+              </button>
+            </div>
+
+            <!-- Evil Twin / Rogue AP -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F608; Evil Twin</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Clona un AP legitimo con airbase-ng para capturar handshake de clientes</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">ESSID clon:</label>
+                  <input id="rogue-essid" type="text" placeholder="MiWiFi-Casa"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID clon:</label>
+                  <input id="rogue-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="rogue-chan" type="number" min="1" max="165" value="1"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="rogue-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('rogue_ap', doRogueAp)">
+                &#x1F608; Lanzar Evil Twin
+            </button>
+          </div>
+
+        </div><!-- /attack-grid -->
 
       <div class="nav-footer">
         <span class="badge-wi">v1.0 · Rust + Tauri</span>
@@ -503,7 +584,7 @@
         <header class="phead">
           <div>
             <h1>Panel de Ataque</h1>
-            <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · solo redes propias en laboratorio</p>
+            <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · aireplay-ng · evil twin · solo redes propias en laboratorio</p>
           </div>
         </header>
 
@@ -643,7 +724,7 @@
               &#x26A0;&#xFE0F; <strong style="color:var(--orange)">UIFIPILL Lab Only</strong> —
               Estas herramientas deben usarse exclusivamente sobre redes de tu propiedad/campo de pruebas.
               La captura PMKID y el WPS PIN bruteforce sin autorización violan las leyes locales y federales.
-              Linux/WSL2 recomendado. <span id="attack-warn"></span>
+              Linux/Windows nativo. <span id="attack-warn"></span>
             </p>
           </div>
 

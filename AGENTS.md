@@ -7,6 +7,7 @@ Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + 
 - Rust + Tauri v2 (backend, ~2.5 MB final binary)
 - Vanilla JS frontend (`src/app.js`), no React
 - Index: `index.html` — built via Vite → `dist/`
+- Binarios de ataque Windows nativos: airodump-ng, aireplay-ng, mdk3, mdk4, airbase-ng, aircrack-ng (todos .exe sin WSL; https://github.com/aircrack-ng/aircrack-ng/releases)
 
 ## Audio prompt
 `src/components/AudioPlayer.tsx` (ABner's music UI with Play when user asks for songs or audio from uploading audio file or just typing.. No yapping)
@@ -15,7 +16,7 @@ Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + 
 | file | purpose |
 |---|---|
 | `lib.rs` | registers all invoke handlers |
-| `commands.rs` | scan_wifi, pmkid_capture/convert/crack, wps_pin_bruteforce, scan_airodump, wifi_interface_status, list/kill_attack_process |
+| `commands.rs` | list/kill/attack_process, scan_wifi, scan_airodump (airodump-ng), pmkid_capture/convert/crack, capture_handshake/crack_handshake, wps_pin_bruteforce, wps_pbc_attack (reaver-wps -S), deauth/disassoc/arp_replay/chopchop_inject (aireplay-ng), beacon_flood (mdk3), rogue_ap (airbase-ng) |
 | `monitor_mode.rs` | activate_monitor, restore_managed, set_monitor_channel, monitor_status (NPcap FFI) |
 | `wifi_adapter.rs` | detect_adapters, set_monitor_mode, set_managed_mode, wsl2_run, wsl2_info |
 | `tools_detect.rs` | detect_tools, find_tool_cmd, check_tool (hcxdumptool, hashcat, bully…) |

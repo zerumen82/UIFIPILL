@@ -14,9 +14,9 @@ pub fn run() {
             commands::pmkid_convert,
             commands::pmkid_crack,
             commands::wps_pin_bruteforce,
+            commands::wps_pbc_attack,
             commands::scan_airodump,
             commands::wifi_interface_status,
-            commands::scan_airodump,
             commands::list_attack_processes,
             commands::kill_attack_process,
             commands::capture_handshake,
@@ -25,15 +25,16 @@ pub fn run() {
             commands::disassoc_inject,
             commands::arp_replay_inject,
             commands::beacon_flood,
+            commands::chopchop_inject,
+            commands::rogue_ap,
             // tool detection
             tools_detect::detect_tools,
             tools_detect::find_tool_cmd,
             tools_detect::check_tool,
-            // wifi adapter / chipset / WSL2
+            // wifi adapter / chipset
             wifi_adapter::detect_adapters,
             wifi_adapter::set_monitor_mode,
             wifi_adapter::set_managed_mode,
-            wifi_adapter::wsl2_run,
             wifi_adapter::wsl2_info,
             // modo monitor nativo NPcap
             monitor_mode::activate_monitor,

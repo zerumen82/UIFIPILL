@@ -95,21 +95,36 @@ pub struct ToolsReport {
 }
 
 const TOOL_LIST: &[&str] = &[
+    // hcxtools
     "hcxdumptool",
     "hcxpcapngtool",
+    // hashcat
     "hashcat",
+    // WPS
     "bully",
     "reaver-wps-fork-t6x",
+    // aircrack-ng suite
+    "airodump-ng",
+    "aireplay-ng",
+    "airbase-ng",
+    "mdk3",
+    "aircrack-ng",
+    // wordlists
     "rockyou.txt",
 ];
 
 const INSTALL_HINTS: &[&str] = &[
-    "https://github.com/cipsas-uifipill/hcxtools/releases → .exe Windows build",
+    "https://github.com/cipsas-uifipill/hcxtools/releases   (Win64 .exe)",
     "Mismo paquete .zip que hcxdumptool",
-    "https://hashcat.net/hashcat/ → Self-Extracting Installer",
-    "https://github.com/T6X/bully → busca binarios .exe precompilados",
-    "https://github.com/T6X/reaver-wps-fork-t6x → compatible WPS",
-    "Descarga rockyou.txt → %APPDATA%\\UIFIPILL\\tools\\",
+    "https://hashcat.net/hashcat/   (SE Self-Extracting .exe)",
+    "https://github.com/T6X/bully   (Win64 .exe)",
+    "https://github.com/T6X/reaver-wps-fork-t6x   (Win64 .exe)",
+    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
+    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
+    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
+    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
+    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
+    "Descarga rockyou.txt y copiala en %APPDATA%\\UIFIPILL\\tools\\",
 ];
 
 /// Devuelve el estado de todas las herramientas. El frontend lo consulta al iniciar.

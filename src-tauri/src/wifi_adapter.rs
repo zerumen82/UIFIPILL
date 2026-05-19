@@ -186,47 +186,31 @@ pub async fn detect_adapters() -> AdapterReport {
 /// Instrucciones para activar modo monitor en el adaptador detectado
 #[command]
 pub async fn set_monitor_mode(_app: AppHandle, iface: String) -> MonitorModeResult {
-    let npcap  = std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
+    let npcap = std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
         || std::path::Path::new(r"C:\Windows\SysWOW64\Npcap.dll").exists();
-    let wsl2   = check_wsl2().0;
-    let wsl2ok = check_wsl2().1;
 
-    let msg = if wsl2ok {
+    let msg = if npcap {
         format!(
-            "✅ WSL2 con herramientas Linux detectado.\n\
-             Ruta recomendada: WSL2 (modo monitor nativo).\n\n\
-             Ejecuta en consola:\n\
-             wsl sudo airmon-ng start <interface-wsl>  # activa modo monitor\n\
-             wsl sudo airodump-ng <interface-wsl>mon    # escanea\n\n\
-             Interface Windows '{}' — si la pasas a WSL2:\n\
-             wsl -- sudo ip link set <if-wsl> up",
-            iface)
-    } else if npcap {
-        format!(
-            "⚠️  NPcap detectado pero sin herramientas WSL2.\n\
-             Para modo monitor en Windows con tu ALFA AWUS036H (RT2870):\n\n\
-             1. Desinstala el driver Realtek oficial en Administrador de dispositivos\n\
-             2. Instala NPcap desde https://npcap.com\n\
-             3. Instala el driver NPcap + RT2870 desde comunidad\n\
-             4. Coloca WiFiMode.exe en la carpeta del driver\n\
-             5. Ejecuta: WiFiMode.exe set monitor 1",
-            )
-    } else if wsl2 {
-        format!(
-            "⚠️  WSL2 disponible pero sin herramientas Linux instaladas.\n\
-             Ejecuta en PowerShell:\n\
-             wsl sudo apt install -y aircrack-ng bully hcxtools\n\
-             Luego usa WSL2 para todos los ataques."
+            "✅ NPcap detectado.\n\
+             Ruta recomendada: modo monitor nativo NPcap (Windows).\n\n\
+             Para activar monitor en '{}':\n\
+             1. Abre Administrador de Dispositivos\n\
+             2. Desinstala driver WiFi oficial del fabricante\n\
+             3. Instala NPcap desde https://npcap.com ('WinPcap API-compatible Mode')\n\
+             4. Instala el driver NPcap modificado para tu chipset\n\
+             5. Selecciona el adaptador en el modal y pulsa 'Activar modo monitor'\n\n\
+             Una vez en modo monitor, ejecuta airodump-ng, aireplay-ng y airbase-ng\n\
+             directamente desde Windows (binarios .exe).",
+            iface
         )
     } else {
         format!(
-            "❌ Ni WSL2 ni NPcap detectados.\n\n\
-             OPCIÓN A — WSL2 (recomendado):\n\
-               wsl --install\n\
-               wsl sudo apt install -y aircrack-ng bully hcxtools hashcat\n\n\
-             OPCIÓN B — NPcap nativo:\n\
-               https://npcap.com → instalar NPcap\n\
-               Luego driver NPcap + RT2870 modificado para la AWUS036H"
+            "❌ NPcap no detectado.\n\n\
+             Instala NPcap desde https://npcap.com\n\
+             Marca la opcion 'Install in WinPcap API-compatible Mode'.\n\
+             Luego usa aireplay-ng, airodump-ng, airbase-ng y mdk3\n\
+             directamente en Windows (binarios .exe de aircrack-ng Windows).\n\n\
+             Binarios .exe: https://github.com/aircrack-ng/aircrack-ng/releases"
         )
     };
 
@@ -250,6 +234,7 @@ pub async fn set_managed_mode(_app: AppHandle, iface: String) -> MonitorModeResu
 }
 
 /// Ejecuta un comando dentro de WSL2 (aireplay-ng, bully, hcxdumptool, etc.)
+#[allow(dead_code)]
 #[command]
 pub async fn wsl2_run(_app: AppHandle, cmd: String) -> CmdResponse {
     let full = format!("wsl -- bash -c '{}'", cmd.replace("'", "'\\''"));

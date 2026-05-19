@@ -264,12 +264,39 @@ window.doAirodumpScan = async function () {
 };
 
 window.doArpreply = async function () {
-  const bssid    = valOrEmpty($('arpreply-bssid').value);
-  const mac      = valOrEmpty($('arpreply-mac').value) || 'ff:ff:ff:ff:ff:ff';
-  const iface    = valOrEmpty($('arpreply-iface').value) || 'wlan0mon';
+  const bssid = valOrEmpty($('arpreply-bssid').value);
+  const mac   = valOrEmpty($('arpreply-mac').value) || 'ff:ff:ff:ff:ff:ff';
+  const iface = valOrEmpty($('arpreply-iface').value) || 'wlan0mon';
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
-  log(`ARP replay: AP=${bssid} mac=${mac} iface=${iface}`, 'warn');
-  return invokeAttack('arp_replay_inject', { target_bssid: bssid, address: mac, interface: iface });
+  log(`ARP Replay: AP=${bssid} mac=${mac} iface=${iface}`, 'warn');
+  return invokeAttack('arp_replay_inject', { target_bssid: bssid, address: mac, iface });
+};
+
+window.doWpsPbc = async function () {
+  const bssid = valOrEmpty($('wpspbc-bssid').value);
+  const iface = valOrEmpty($('wpspbc-iface').value) || 'wlan0';
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`WPS PBC: BSSID=${bssid} iface=${iface}`, 'warn');
+  return invokeAttack('wps_pbc_attack', { bssid, iface });
+};
+
+window.doChopChop = async function () {
+  const bssid    = valOrEmpty($('chopchop-bssid').value);
+  const srcMac   = valOrEmpty($('chopchop-mac').value) || undefined;
+  const iface    = valOrEmpty($('chopchop-iface').value) || 'wlan0mon';
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`ChopChop: AP=${bssid} src=${srcMac || '00:11:22:33:44:55'} iface=${iface}`, 'warn');
+  return invokeAttack('chopchop_inject', { target_bssid: bssid, source_mac: srcMac, iface });
+};
+
+window.doRogueAp = async function () {
+  const essid  = valOrEmpty($('rogue-essid').value);
+  const bssid  = valOrEmpty($('rogue-bssid').value) || undefined;
+  const ch     = valOrEmpty($('rogue-chan').value) || '1';
+  const iface  = valOrEmpty($('rogue-iface').value) || 'wlan0mon';
+  if (!essid) { log('Especifica el ESSID del AP falso.', 'warn'); return; }
+  log(`Evil Twin: ESSID=${essid} BSSID=${bssid || '00:11:22:33:44:55'} chan=${ch} iface=${iface}`, 'warn');
+  return invokeAttack('rogue_ap', { essid, bssid, channel: parseInt(ch) || 1, iface });
 };
 
 // Wrapper usado por los botones onclick="doCmd('name', handler)"
