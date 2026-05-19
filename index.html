@@ -499,24 +499,64 @@
     </script>
     <script type="module" src="src/app.js"></script>
     <script>
-      // Monitor mode handlers
-      async function doMonitor() {
-        log('Activando modo monitor…', 'info');
+      // ── Monitor mode helpers ──────────────────────────────────────────
+      window._selectedMonitorGuid = '';
+
+      async function showMonitorModal() {
+        log('Escaneando adaptadores WiFi…', 'info');
+        const adapters = await __invoke('detect_adapters');
+        const list = adapters?.adapters || [];
+        if (list.length === 0) {
+          log('No se encontro ningún adaptador WiFi.', 'warn');
+          return;
+        }
+        // Build a simple modal dialog
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+        overlay.id = 'monitor-modal-overlay';
+        let rows = '';
+        list.forEach((a, i) => {
+          const key = a.chipset_key || a.name;
+          rows += `<tr style="cursor:pointer" onclick="window._pickedGuid='${key}';document.getElementById('monitor-modal-overlay').remove();doMonitorReal()">
+            <td style="padding:8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:600;color:var(--text)">${esc(a.chipset||a.name)}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(a.name)}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(key)}</td>
+          </tr>`;
+        });
+        overlay.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:600px;width:90%;font-family:inherit">
+          <h3 style="font-size:15px;margin-bottom:4px;color:var(--orange)">&#x1F4E2; Activar modo monitor</h3>
+          <p style="font-size:11.5px;color:var(--muted);margin-bottom:14px">Haz clic en el adaptador para activar modo monitor sobre él.</p>
+          <div style="overflow:auto;max-height:280px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead><tr style="background:var(--surface2)">
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">#</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Chipset</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Nombre</th>
+                <th style="padding:7px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">GUID / VID:PID</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <button onclick="document.getElementById('monitor-modal-overlay').remove()" style="margin-top:12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:6px 14px;cursor:pointer;font-size:12px;font-family:inherit">Cancelar</button>
+        </div>`;
+        document.body.appendChild(overlay);
+      }
+
+      async function doMonitorReal() {
+        const guid = window._pickedGuid || '';
+        if (!guid) { log('No se seleccionó un adaptador.', 'warn'); return; }
+        log(`Activando modo monitor en ${guid}…`, 'info');
         try {
-          // First detect adapters to get the interface GUID
-          const adapters = await __invoke('detect_adapters');
-          const adapterList = adapters?.adapters || [];
-          if (adapterList.length === 0) {
-            log('No se encontraron adaptadores WiFi.', 'warn');
-            return;
-          }
-          // Use first adapter
-          const guid = adapterList[0].chipset_key || adapterList[0].name;
           const result = await __invoke('activate_monitor', { iface_guid: guid, channel: undefined });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
         } catch (err) {
           log(`[monitor] FATAL: ${err}`, 'error');
         }
+      }
+
+      async function doMonitor() {
+        await showMonitorModal();
       }
 
       async function doCapture() {
@@ -528,6 +568,19 @@
           log('Intenta primero "Escanear ahora" y luego elige una red.', 'info');
           return;
         }
+        const bssid = bssidEl.value.trim();
+        log(`Capturando PMKID de ${bssid}…`, 'info');
+        try {
+          const result = await __invoke('pmkid_capture', {
+            bssid,
+            channel: undefined,
+            duration_seconds: 30
+          });
+          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output}`, result.success ? 'ok' : 'warn');
+        } catch (err) {
+          log(`[capture] FATAL: ${err}`, 'error');
+        }
+      }
         const bssid = bssidEl.value.trim();
         log(`Capturando PMKID de ${bssid}…`, 'info');
         try {
