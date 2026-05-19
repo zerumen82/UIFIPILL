@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' http://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline';" />
+  <title>UIFIPILL</title>
+  <style>
+    /* ── Reset ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0c0c10;
+      --surface:  #171720;
+      --surface2: #1e1e2c;
+      --border:   #2e2e3e;
+      --accent:   #7c6dfa;
+      --accent-glow: rgba(124,109,250,.18);
+      --text:     #e4e4f0;
+      --muted:    #6f7090;
+      --red:      #f07178;
+      --orange:   #e8a030;
+      --yellow:   #f0c040;
+      --green:    #55d48a;
+      --blue:     #62b8ff;
+      --gray:     #555760;
+      --r:        10px;
+      --transition: .18s ease;
+    }
+
+    html, body {
+      height: 100%; width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    .app { display: flex; height: 100vh; width: 100vw; }
+
+    /* ── Sidebar ──────────────────────────────────────────────────── */
+    .sidebar {
+      width: 200px; min-width: 200px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      padding: 18px 0;
+    }
+
+    .logo-wrap {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 18px 20px;
+    }
+    .logo {
+      font-size: 22px; color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px;
+    }
+    .brand { font-weight: 700; font-size: 15px; letter-spacing: .4px; }
+
+    .nav-group { flex: 1; padding: 4px 10px; }
+    .nav-label {
+      font-size: 10px; font-weight: 700; letter-spacing: .8px;
+      color: var(--muted); text-transform: uppercase;
+      padding: 6px 10px 6px;
+    }
+    .nav-btn {
+      display: flex; align-items: center; gap: 9px;
+      width: 100%; padding: 9px 10px;
+      background: transparent; border: 1px solid transparent;
+      color: var(--muted); border-radius: 8px;
+      font-family: inherit; font-size: 13px; cursor: pointer;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+    }
+    .nav-btn:hover { background: var(--accent-glow); color: var(--text); }
+    .nav-btn.active {
+      background: var(--accent);
+      color: #fff; border-color: var(--accent);
+    }
+    .nv { font-size: 15px; width: 20px; text-align: center; }
+
+    .nav-footer { padding: 12px 18px; }
+    .badge-wi { font-size: 10px; color: var(--gray); }
+
+    /* ── Main panel ────────────────────────────────────────────────── */
+    .panel {
+      flex: 1; display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Tabs ──────────────────────────────────────────────────────── */
+    .tab { display: none; flex-direction: column; height: 100%; }
+    .tab.active { display: flex; }
+
+    /* ── Panel header ──────────────────────────────────────────────── */
+    .phead {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 20px 26px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .phead h1 { font-size: 18px; font-weight: 700; }
+    .phead .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .scan-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 9px;
+      padding: 9px 20px;
+      font-family: inherit; font-size: 12.5px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), opacity var(--transition), transform .1s;
+    }
+    .scan-btn:hover { opacity: .88; }
+    .scan-btn:active { transform: scale(.96); }
+    .scan-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+    /* ── Horizontal bar (status, counts) ──────────────────────────── */
+    .hbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 26px;
+    }
+    .status-pill {
+      font-size: 11.5px; color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 99px;
+    }
+    .count-pill {
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid rgba(124,109,250,.3);
+      padding: 4px 14px; border-radius: 99px;
+    }
+
+    /* ── Table ─────────────────────────────────────────────────────── */
+    .tbl-wrap { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+    .tbl-wrap::-webkit-scrollbar { width: 5px; }
+    .tbl-wrap::-webkit-scrollbar-track { background: transparent; }
+    .tbl-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .tbl { width: 100%; border-collapse: separate; border-spacing: 0 3px; }
+
+    thead { position: sticky; top: 0; z-index: 2; }
+
+    th {
+      padding: 7px 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    th.th-bar { width: 72px; }
+    th.th-ssid { }
+    th.th-num  { text-align: right; }
+    th.th-bssid { font-family: monospace; font-size: 10.5px; }
+
+    tbody tr {
+      background: var(--surface);
+      transition: background var(--transition);
+    }
+    tbody tr:hover { background: var(--surface2); }
+
+    td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .td-bar   { font-size: 17px; font-family: monospace; line-height: 1; }
+    .td-ssid  { font-weight: 500; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+    .td-num   { text-align: right; font-weight: 600; }
+    .td-bssid { font-family: monospace; font-size: 11.5px; color: var(--muted); }
+
+    .empty-row td { padding: 40px; }
+    .empty-state { text-align: center; }
+    .empty-state .ei { font-size: 38px; opacity: .5; display: block; margin-bottom: 12px; }
+    .empty-state p { color: var(--muted); font-size: 13px; }
+    .empty-state strong { color: var(--text); }
+
+    /* ── Console ───────────────────────────────────────────────────── */
+    .console-wrap {
+      flex: 1; overflow-y: auto;
+      margin: 0 26px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      background: #0e0e14;
+    }
+    .console-wrap::-webkit-scrollbar { width: 6px; }
+    .console-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .console-view {
+      padding: 16px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11.5px; line-height: 1.65;
+      color: #b0b0c4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* timestamp in log */
+    /* ── Animated scan spinner ─────────────────────────────────────── */
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 var(--accent); }
+      80%  { box-shadow: 0 0 0 6px rgba(124,109,250,.5); }
+      100% { box-shadow: 0 0 0 12px rgba(124,109,250,0); }
+     }
+
+    /* ── Attack grid buttons ─────────────────────────────────────────────── */
+    .atk-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 9px;
+      padding: 8px 18px;
+      font-family: inherit; font-size: 12px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), opacity var(--transition);
+      width: 100%; justify-content: center;
+    }
+    .atk-btn:hover  { opacity: .88; }
+    .atk-btn:active { transform: scale(.97); }
+    .atk-btn:disabled { opacity: .40; cursor: not-allowed; }
+    .atk-btn.atk-red    { background: #f07178; }
+    .atk-btn.atk-blue   { background: #62b8ff; }
+    .atk-btn.atk-orange { background: #e8a030; }
+
+    .attack-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    /* ── Tools status ─────────────────────────────────────────────────── */
+    .tool-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px; background: var(--bg); border-radius: 6px;
+    }
+    .tool-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .tool-dot.ok   { background: var(--green); }
+    .tool-dot.miss { background: var(--red); }
+    .tool-dot.warn { background: var(--orange); }
+    .tool-name { font-size: 12px; font-weight: 600; color: var(--text); min-width: 140px; }
+    .tool-path { font-size: 11px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-ver  { font-size: 10.5px; color: var(--gray); min-width: 110px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- ─── Sidebar ─────────────────────────────────────────────── -->
+    <nav class="sidebar">
+      <div class="logo-wrap">
+        <div class="logo">◈</div>
+        <span class="brand">UIFIPILL</span>
+      </div>
+
+      <div class="nav-group">
+        <p class="nav-label">Herramientas</p>
+        <button class="nav-btn active" id="nav-scan" onclick="showTab('scan')">
+          &#128245; Escanear
+        </button>
+        <button class="nav-btn" id="nav-attack" onclick="showTab('attack')">
+          &#9886; Ataque
+        </button>
+        <button class="nav-btn" id="nav-console" onclick="showTab('console')">
+          &#9881; Consola
+        </button>
+      </div>
+
+      <div class="nav-footer">
+        <span class="badge-wi">v1.0 · Rust + Tauri</span>
+      </div>
+    </nav>
+
+    <!-- ─── Main panel ─────────────────────────────────────────── -->
+    <main class="panel">
+      <!-- SCAN TAB -->
+      <section id="tab-scan" class="tab active">
+        <header class="phead">
+          <div>
+            <h1>Redes Wi-Fi Cercanas</h1>
+            <p class="sub">Escaneadas vía netsh · Windows 10 / 11</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="scan-btn" id="scanBtn" onclick="doScan()">
+              &#8635; Escanear ahora
+            </button>
+            <button class="scan-btn" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
+              &#x1F4E2; Activar modo monitor
+            </button>
+            <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green)">
+              &#x1F4F6; Capturar paquetes
+            </button>
+          </div>
+        </header>
+
+        <div class="hbar">
+          <span id="status-txt" class="status-pill">Inicializando…</span>
+          <span id="count-pill" class="count-pill" style="display:none"></span>
+        </div>
+
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th class="th-bar">Señal</th>
+                <th class="th-ssid">SSID</th>
+                <th class="th-num" style="text-align:right">% Señal</th>
+                <th class="th-num" style="text-align:right">Canal</th>
+                <th>Seguridad</th>
+                <th class="th-bssid">BSSID</th>
+              </tr>
+            </thead>
+            <tbody id="net-tbody">
+              <tr class="empty-row">
+                <td colspan="6">
+                  <div class="empty-state">
+                    <span class="ei">&#128245;</span>
+                    <p>Haz clic en <strong>Escanear</strong> para listar las redes</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ATTACK TAB -->
+      <section id="tab-attack" class="tab">
+        <header class="phead">
+          <div>
+            <h1>Panel de Ataque</h1>
+            <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · solo redes propias en laboratorio</p>
+          </div>
+        </header>
+
+        <div class="attack-body" style="flex:1;overflow-y:auto;padding:18px 26px 20px">
+          <!-- Target select -->
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+            <label style="font-size:12px;color:var(--muted);white-space:nowrap">Objetivo BSSID:</label>
+            <select id="attack-bssid"
+                    style="flex:1;max-width:340px;background:var(--surface);color:var(--text);
+                           border:1px solid var(--border);border-radius:8px;padding:7px 12px;
+                           font-family:inherit;font-size:13px;outline:none">
+              <option value="">-- Selecciona una red de la lista --</option>
+            </select>
+            <button id="refreshTargetBtn"
+                    style="background:var(--surface2);color:var(--text);border:1px solid var(--border);
+                           border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;font-size:12px"
+                    onclick="syncTargetList()">
+              &#8635; Actualizar
+            </button>
+          </div>
+
+          <!-- Grid de botones -->
+          <div class="attack-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px;margin-bottom:18px">
+
+            <!-- PMKID Capture -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px">&#x1F50D; Capturar PMKID</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Extrae el hash PMKID del handshake WPA2 en un solo paquete</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="pmkid-chan" type="number" min="1" max="165" placeholder="auto"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Duración:</label>
+                  <input id="pmkid-dur" type="number" min="10" max="3600" value="120"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                  <span style="font-size:11px;color:var(--muted)">s</span>
+                </div>
+              </div>
+              <button class="atk-btn" style="margin-top:12px;width:100%"
+                      onclick="doCmd('pmkid_capture',capturePmkid)">
+                Iniciar captura
+              </button>
+            </div>
+
+            <!-- Convertir PMKID -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x2699; Convertir PMKID</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Convierte .pcapng → formato .22000 (hashcat)</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">.pcapng:</label>
+                  <input id="convert-pcap" type="text" placeholder="capture_AA-BB-CC.pcapng"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-blue" style="margin-top:12px;width:100%"
+                      onclick="doCmd('pmkid_convert', convertPmkid)">
+                Convertir
+              </button>
+            </div>
+
+            <!-- Crack PMKID -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--red);margin-bottom:4px">&#x1F512; Crack password</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Fuerza bruta con hashcat (modo 16800)</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Hash .hc22000:</label>
+                  <input id="crack-hash" type="text" placeholder="capture_xxx.22000"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Wordlist:</label>
+                  <input id="crack-wordlist" type="text" placeholder="rockyou.txt"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-red" style="margin-top:12px;width:100%"
+                      onclick="doCmd('pmkid_crack', crackPmkid)">
+                Crack con hashcat
+              </button>
+            </div>
+
+            <!-- WPS PIN -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F511; WPS PIN bruteforce</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Ataque bully/reaver a WPS · requiere chipset compatible</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface:</label>
+                  <input id="wps-iface" type="text" placeholder="wlan0"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-orange" style="margin-top:12px;width:100%"
+                      onclick="doCmd('wps_pin_bruteforce', wpsBrute)">
+                Iniciar WPS PIN
+              </button>
+            </div>
+
+          </div><!-- /attack-grid -->
+
+            <!-- Info box -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px">
+            <p style="font-size:11.5px;color:var(--muted);line-height:1.6">
+              &#x26A0;&#xFE0F; <strong style="color:var(--orange)">UIFIPILL Lab Only</strong> —
+              Estas herramientas deben usarse exclusivamente sobre redes de tu propiedad/campo de pruebas.
+              La captura PMKID y el WPS PIN bruteforce sin autorización violan las leyes locales y federales.
+              Linux/WSL2 recomendado. <span id="attack-warn"></span>
+            </p>
+          </div>
+
+          <!-- Tools status panel -->
+          <div style="margin-top:18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--border);background:var(--surface2)">
+              <h3 style="font-size:13px;font-weight:700;color:var(--text)">&#x1F4BB; Estado de herramientas</h3>
+              <button onclick="checkToolsStatus()" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer;font-family:inherit">&#8635; Revisar</button>
+            </div>
+            <div id="tools-status-body" style="padding:12px 18px;display:flex;flex-direction:column;gap:8px">
+              <p style="font-size:11.5px;color:var(--muted)">Cargando detección de binarios…</p>
+            </div>
+          </div>
+
+        </div><!-- /attack-body -->
+      </section><!-- /tab-attack -->
+
+      <!-- CONSOLE TAB -->
+      <section id="tab-console" class="tab">
+        <header class="phead">
+          <div>
+            <h1>Consola Verbose</h1>
+            <p class="sub">Salida de escaneo, errores y depuración</p>
+          </div>
+          <button class="scan-btn" style="background:#3a3a52" onclick="clearConsole()">
+            &#10005; Limpiar
+          </button>
+        </header>
+        <div class="console-wrap">
+          <pre id="cv" class="console-view"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+      <!-- Tauri API bridge -->
+    <script type="module">
+      import { invoke } from '@tauri-apps/api/core';
+      window.__invoke = invoke;
+    </script>
+    <script type="module" src="src/app.js"></script>
+    <script>
+      // Monitor mode handlers
+      async function doMonitor() {
+        log('Activando modo monitor…', 'info');
+        try {
+          // First detect adapters to get the interface GUID
+          const adapters = await __invoke('detect_adapters');
+          const adapterList = adapters?.adapters || [];
+          if (adapterList.length === 0) {
+            log('No se encontraron adaptadores WiFi.', 'warn');
+            return;
+          }
+          // Use first adapter
+          const guid = adapterList[0].chipset_key || adapterList[0].name;
+          const result = await __invoke('activate_monitor', { iface_guid: guid, channel: undefined });
+          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
+        } catch (err) {
+          log(`[monitor] FATAL: ${err}`, 'error');
+        }
+      }
+
+      async function doCapture() {
+        log('Iniciando captura de paquetes…', 'info');
+        try {
+          const result = await __invoke('pmkid_capture', {
+            bssid: 'FF:FF:FF:FF:FF:FF',
+            channel: undefined,
+            duration_seconds: 30
+          });
+          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output}`, result.success ? 'ok' : 'warn');
+        } catch (err) {
+          log(`[capture] FATAL: ${err}`, 'error');
+        }
+      }
+    </script>
+  </body>
+</html>
