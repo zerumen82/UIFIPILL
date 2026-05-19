@@ -348,7 +348,90 @@
               </div>
             </div>
 
-            <!-- WPS PIN -->
+            <!-- Scan Airodump -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x1F4BF; Scan airodump (WSL2)</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Escanera en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="airodump-chan" type="number" min="1" max="165" placeholder="0=todos"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Duraci&oacute;n:</label>
+                  <input id="airodump-dur" type="number" min="5" max="3600" value="60"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                  <span style="font-size:11px;color:var(--muted)">s</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID (opc):</label>
+                  <input id="airodump-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-blue" style="margin-top:12px;width:100%"
+                      onclick="doCmd('scan_airodump', doAirodumpScan)">
+                &#x1F4BF; Escanear
+              </button>
+            </div>
+
+            <!-- ARP Replay Inject -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--blue);margin-bottom:4px">&#x26A1; ARP Replay Inject</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Inyecta paquetes ARP reply (aireplay-ng --arpreply) para capturar handshake</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">BSSID AP:</label>
+                  <input id="arpreply-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">MAC fake:</label>
+                  <input id="arpreply-mac" type="text" placeholder="ff:ff:ff:ff:ff:ff=broadcast"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Interface WSL:</label>
+                  <input id="arpreply-iface" type="text" placeholder="wlan0mon"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-blue" style="margin-top:12px;width:100%"
+                      onclick="doCmd('arp_replay_inject', doArpreply)">
+                &#x26A1; ARP Reply Inject
+              </button>
+            </div>
+
+            <!-- Beacon Flood -->
+            <div class="atk-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px">
+              <h3 style="font-size:14px;font-weight:700;color:var(--orange);margin-bottom:4px">&#x1F525; Beacon Flood</h3>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Inunda el espectro con beacons falsos (mdk3) — AP virtual en el aire</p>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">ESSID falso:</label>
+                  <input id="beacon-essid" type="text" placeholder="FakeAP-FreeWiFi"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Canal:</label>
+                  <input id="beacon-chan" type="number" min="1" max="165" value="1"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+                <div style="display:flex;align-items:center;gap:7px">
+                  <label style="font-size:11px;color:var(--muted);width:72px">Beacons:</label>
+                  <input id="beacon-count" type="number" min="1" value="50"
+                         style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;outline:none;width:0">
+                </div>
+              </div>
+              <button class="atk-btn atk-orange" style="margin-top:12px;width:100%"
+                      onclick="doCmd('beacon_flood', doBeaconFlood)">
+                &#x1F525; Enviar beacons
+              </button>
+            </div>
+
+           </div><!-- /attack-grid -->
+
       <div class="nav-footer">
         <span class="badge-wi">v1.0 · Rust + Tauri</span>
       </div>
@@ -672,19 +755,6 @@
           log('Intenta primero "Escanear ahora" y luego elige una red.', 'info');
           return;
         }
-        const bssid = bssidEl.value.trim();
-        log(`Capturando PMKID de ${bssid}…`, 'info');
-        try {
-          const result = await __invoke('pmkid_capture', {
-            bssid,
-            channel: undefined,
-            duration_seconds: 30
-          });
-          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output}`, result.success ? 'ok' : 'warn');
-        } catch (err) {
-          log(`[capture] FATAL: ${err}`, 'error');
-        }
-      }
         const bssid = bssidEl.value.trim();
         log(`Capturando PMKID de ${bssid}…`, 'info');
         try {

