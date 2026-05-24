@@ -174,7 +174,8 @@ window.capturePmkid = async function () {
   const chRaw = valOrEmpty($('pmkid-chan').value);
   const ch    = chRaw ? parseInt(chRaw) : undefined;
   const dur   = $('pmkid-dur').value ? parseInt($('pmkid-dur').value) : 120;
-  return invokeAttack('pmkid_capture', { bssid, channel: ch, duration_seconds: dur });
+  currentAttackId = `pmkid_${bssid.replace(/:/g,'')}`;
+  return invokeAttack('pmkid_capture_bg', { bssid, channel: ch, duration_seconds: dur });
 };
 
 window.convertPmkid = async function () {
@@ -197,7 +198,8 @@ window.crackPmkid = async function () {
 window.wpsBrute = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
   const iface = valOrEmpty($('wps-iface').value) || 'wlan0';
-  return invokeAttack('wps_pin_bruteforce', { bssid, interface: iface });
+  currentAttackId = `wps_${bssid.replace(/:/g,'')}`;
+  return invokeAttack('wps_pin_bruteforce_bg', { bssid, interface: iface });
 };
 
 window.captureHandshake = async function () {
@@ -206,7 +208,8 @@ window.captureHandshake = async function () {
   const chRaw = valOrEmpty($('handshake-chan').value);
   const ch    = chRaw ? parseInt(chRaw) : undefined;
   const dur   = $('handshake-dur').value ? parseInt($('handshake-dur').value) : 60;
-  return invokeAttack('capture_handshake', { bssid, essid, channel: ch, duration_seconds: dur });
+  currentAttackId = `handshake_${bssid.replace(/:/g,'')}`;
+  return invokeAttack('capture_handshake_bg', { bssid, essid, channel: ch, duration_seconds: dur });
 };
 
 window.crackHandshake = async function () {
@@ -259,8 +262,9 @@ window.doAirodumpScan = async function () {
   const ch      = chRaw ? parseInt(chRaw) : 0;
   const dur     = valOrEmpty($('airodump-dur').value) ? parseInt($('airodump-dur').value) : 60;
   const bssid   = valOrEmpty($('airodump-bssid').value) || undefined;
+  currentAttackId = 'airodump_scan';
   log(`airodump: ch=${ch || 'todos'} dur=${dur}s bssid=${bssid || 'ninguno'}`, 'info');
-  return invokeAttack('scan_airodump', { bssid_filter: bssid, channel_filter: ch || undefined, duration_secs: dur });
+  return invokeAttack('scan_airodump_bg', { bssid_filter: bssid, channel_filter: ch || undefined, duration_secs: dur });
 };
 
 window.doArpreply = async function () {
@@ -311,25 +315,32 @@ async function invokeAttack(cmd, args) {
   try {
     const result = await __invoke(cmd, args);
     const ms   = Math.round(performance.now() - t0);
-    const out  = result?.output || '';
-
-    if (result?.error) {
-      log(`[ERROR ${cmd}] ${result.error}`, 'error');
-      return;
-    }
-    if (out) {
-      const lines = out.split('\n');
-      const head  = lines.slice(0, 80).join('\n');
-      if (lines.length > 80) {
-        log(`[${cmd}] — ${lines.length} líneas de salida. Primeras 80:\n${head}\n...`, 'output');
-      } else {
-        log(`[${cmd}]:\n${out}`, 'output');
+    // Handle Result<CmdResponse, String> (background commands)
+    if (result && typeof result === 'object' && 'ok' in result === false && 'success' in result) {
+      // Old style CmdResponse
+      const out  = result?.output || '';
+      if (result?.stderr) log(`[${cmd}]:\n${result.stderr}`, 'warn');
+      if (out) {
+        const lines = out.split('\n');
+        const head  = lines.slice(0, 80).join('\n');
+        if (lines.length > 80) {
+          log(`[${cmd}] — ${lines.length} líneas de salida. Primeras 80:\n${head}\n...`, 'output');
+        } else {
+          log(`[${cmd}]:\n${out}`, 'output');
+        }
       }
-    }
-    if (result?.success) {
-      log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
+      if (result?.success) {
+        log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
+      } else {
+        log(`⚠️  ${cmd} finalizó (code=${result?.exit_code ?? '?'}) en ${ms} ms`, 'warn');
+      }
     } else {
-      log(`⚠️  ${cmd} finalizó (code=${result?.exit_code ?? '?'}) en ${ms} ms`, 'warn');
+      // New Result style: Ok or Err
+      if (result?.ok === false && result?.err) {
+        log(`[ERROR ${cmd}] ${result.err}`, 'error');
+      } else if (result?.ok === true) {
+        log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
+      }
     }
   } catch (err) {
     log(`[FATAL ${cmd}] ${err}`, 'error');
@@ -560,4 +571,35 @@ window.doFakeauth = async function () {
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`Fakeauth: AP=${bssid} mac=${mac || '00:11:22:33:44:55'} iface=${iface || '(requerida)'}`, 'warn');
   return invokeAttack('fakeauth_inject', { bssid, source_mac: mac, iface });
+};
+
+window.doWpsPixieDust = async function () {
+  const bssid = valOrEmpty($('pixie-bssid').value);
+  const iface = valOrEmpty($('pixie-iface').value) || '';
+  if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
+  log(`WPS Pixie Dust: BSSID=${bssid} iface=${iface || '(requerida)'}`, 'warn');
+  return invokeAttack('wps_pixiedust', { bssid, iface });
+};
+
+window.doCafeLatte = async function () {
+  const bssid = valOrEmpty($('latte-bssid').value);
+  const mac = valOrEmpty($('latte-mac').value);
+  const iface = valOrEmpty($('latte-iface').value) || '';
+  if (!bssid || !mac) { log('BSSID y MAC cliente son requeridos.', 'warn'); return; }
+  log(`Café Latte: AP=${bssid} cliente=${mac} iface=${iface || '(requerida)'}`, 'warn');
+  return invokeAttack('cafe_latte_attack', { bssid, client_mac: mac, iface });
+};
+
+window.doInteractive = async function () {
+  const iface = valOrEmpty($('inter-iface').value) || '';
+  log(`Interactive: iface=${iface || '(requerida)'}`, 'warn');
+  return invokeAttack('interactive_inject', { iface });
+};
+
+window.doFragment = async function () {
+  const bssid = valOrEmpty($('frag-bssid').value);
+  const iface = valOrEmpty($('frag-iface').value) || '';
+  if (!bssid) { log('BSSID es requerido.', 'warn'); return; }
+  log(`Fragment: BSSID=${bssid} iface=${iface || '(requerida)'}`, 'warn');
+  return invokeAttack('fragment_inject', { bssid, iface });
 };
