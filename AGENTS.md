@@ -13,7 +13,7 @@ Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + 
 | file | purpose |
 |---|---|
 | `lib.rs` | registers all invoke handlers |
-| `commands.rs` | list/kill/attack_process, scan_wifi, scan_airodump (airodump-ng), pmkid_capture/convert/crack, capture_handshake/crack_handshake, wps_pin_bruteforce, wps_pbc_attack (reaver-wps -S), deauth/disassoc/arp_replay/chopchop_inject (aireplay-ng), beacon_flood (mdk3), rogue_ap (airbase-ng) |
+| `commands.rs` | scan_wifi, scan_airodump (airodump-ng), pmkid_capture/convert/crack, capture_handshake/crack_handshake, wps_pin_bruteforce, wps_pbc_attack (reaver-wps -S), wps_pixiedust (reaver-wps -K 1), deauth/disassoc/fakeauth/arp_replay/chopchop/cafe-latte/interactive/fragment_inject (aireplay-ng), beacon_flood (mdk3), rogue_ap (airbase-ng), injection_test (aireplay-ng), list/kill/cancel_attack, pmkid_capture_bg/capture_handshake_bg/scan_airodump_bg/wps_pin_bruteforce_bg |
 | `monitor_mode.rs` | activate_monitor, restore_managed, set_monitor_channel, monitor_status (NPcap FFI) |
 | `wifi_adapter.rs` | detect_adapters, set_monitor_mode, set_managed_mode, wsl2_run, wsl2_info |
 | `tools_detect.rs` | detect_tools, find_tool_cmd, check_tool (hcxdumptool, hashcat, bully…) |
