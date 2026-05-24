@@ -2,11 +2,23 @@ mod commands;
 mod tools_detect;
 mod wifi_adapter;
 mod monitor_mode;
+mod pcap_convert;
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri_plugin_shell::process::CommandChild;
+
+pub struct AppState {
+    pub running_attacks: Mutex<HashMap<String, CommandChild>>,
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(AppState {
+            running_attacks: Mutex::new(HashMap::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             // commands
             commands::scan_wifi,
@@ -27,6 +39,12 @@ pub fn run() {
             commands::beacon_flood,
             commands::chopchop_inject,
             commands::rogue_ap,
+            commands::injection_test,
+            commands::fakeauth_inject,
+            commands::wps_pixiedust,
+            commands::cafe_latte_attack,
+            commands::interactive_inject,
+            commands::fragment_inject,
             // tool detection
             tools_detect::detect_tools,
             tools_detect::find_tool_cmd,
@@ -35,12 +53,18 @@ pub fn run() {
             wifi_adapter::detect_adapters,
             wifi_adapter::set_monitor_mode,
             wifi_adapter::set_managed_mode,
-            wifi_adapter::wsl2_info,
+
             // modo monitor nativo NPcap
             monitor_mode::activate_monitor,
             monitor_mode::restore_managed,
             monitor_mode::set_monitor_channel,
             monitor_mode::monitor_status,
+            // background + cancel
+            commands::cancel_attack,
+            commands::pmkid_capture_bg,
+            commands::capture_handshake_bg,
+            commands::scan_airodump_bg,
+            commands::wps_pin_bruteforce_bg,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

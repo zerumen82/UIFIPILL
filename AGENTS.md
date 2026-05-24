@@ -9,9 +9,6 @@ Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + 
 - Index: `index.html` — built via Vite → `dist/`
 - Binarios de ataque Windows nativos: airodump-ng, aireplay-ng, mdk3, mdk4, airbase-ng, aircrack-ng (todos .exe sin WSL; https://github.com/aircrack-ng/aircrack-ng/releases)
 
-## Audio prompt
-`src/components/AudioPlayer.tsx` (ABner's music UI with Play when user asks for songs or audio from uploading audio file or just typing.. No yapping)
-
 ## Key commands (Rust, `src-tauri/src/`)
 | file | purpose |
 |---|---|

