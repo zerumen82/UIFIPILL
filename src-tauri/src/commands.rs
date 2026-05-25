@@ -534,7 +534,7 @@ pub async fn fragment_inject(app: AppHandle, bssid: String, source_mac: Option<S
 // ═══════════════════════════════════════════════════════════════════════════════
 
 use crate::AppState;
-use tauri::State;
+use tauri::{State, Emitter as _};
 use tauri_plugin_shell::process::CommandEvent;
 
 /// Helper: lanza un binario en background y guarda el child en el mapa de ataques
@@ -557,10 +557,34 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
     let mut exit_code = None;
     while let Some(event) = rx.recv().await {
         match event {
-            CommandEvent::Stdout(data) => { stdout.push_str(&String::from_utf8_lossy(&data)); }
-            CommandEvent::Stderr(data) => { stderr.push_str(&String::from_utf8_lossy(&data)); }
+            CommandEvent::Stdout(data) => {
+                let txt = String::from_utf8_lossy(&data);
+                stdout.push_str(&txt);
+                // Emit progress event
+                let _ = app.emit("attack-progress", serde_json::json!({
+                    "id": attack_id,
+                    "type": "stdout",
+                    "data": txt.to_string()
+                }));
+            }
+            CommandEvent::Stderr(data) => {
+                let txt = String::from_utf8_lossy(&data);
+                stderr.push_str(&txt);
+                let _ = app.emit("attack-progress", serde_json::json!({
+                    "id": attack_id,
+                    "type": "stderr",
+                    "data": txt.to_string()
+                }));
+            }
             CommandEvent::Terminated(status) => { exit_code = status.code; break; }
-            CommandEvent::Error(err) => { stderr.push_str(&format!("Error: {}", err)); break; }
+            CommandEvent::Error(err) => {
+                stderr.push_str(&format!("Error: {}", err));
+                let _ = app.emit("attack-error", serde_json::json!({
+                    "id": attack_id,
+                    "error": err.to_string()
+                }));
+                break;
+            }
             _ => {}
         }
     }
@@ -569,6 +593,14 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
         map.remove(attack_id);
     }
     let success = exit_code == Some(0);
+    // Emit final event
+    let _ = app.emit("attack-completed", serde_json::json!({
+        "id": attack_id,
+        "success": success,
+        "stdout": stdout.clone(),
+        "stderr": stderr.clone(),
+        "exit_code": exit_code
+    }));
     CmdResponse { success, output: stdout, stderr, exit_code }
 }
 

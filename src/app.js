@@ -175,6 +175,8 @@ window.capturePmkid = async function () {
   const ch    = chRaw ? parseInt(chRaw) : undefined;
   const dur   = $('pmkid-dur').value ? parseInt($('pmkid-dur').value) : 120;
   currentAttackId = `pmkid_${bssid.replace(/:/g,'')}`;
+  showProgress(true);
+  updateProgress(10, 'Iniciando...');
   return invokeAttack('pmkid_capture_bg', { bssid, channel: ch, duration_seconds: dur });
 };
 
@@ -199,6 +201,8 @@ window.wpsBrute = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
   const iface = valOrEmpty($('wps-iface').value) || 'wlan0';
   currentAttackId = `wps_${bssid.replace(/:/g,'')}`;
+  showProgress(true);
+  updateProgress(10, 'Iniciando WPS...');
   return invokeAttack('wps_pin_bruteforce_bg', { bssid, interface: iface });
 };
 
@@ -209,6 +213,8 @@ window.captureHandshake = async function () {
   const ch    = chRaw ? parseInt(chRaw) : undefined;
   const dur   = $('handshake-dur').value ? parseInt($('handshake-dur').value) : 60;
   currentAttackId = `handshake_${bssid.replace(/:/g,'')}`;
+  showProgress(true);
+  updateProgress(10, 'Iniciando captura...');
   return invokeAttack('capture_handshake_bg', { bssid, essid, channel: ch, duration_seconds: dur });
 };
 
@@ -540,6 +546,56 @@ window.startAutoAttack = async function () {
 };
 
 
+// ── Background attack state ──────────────────────────────────────────────
+let currentAttackId = null;
+
+// Progress bar support
+const progressContainer = document.getElementById('progress-container');
+const progressBar = document.getElementById('progress-bar');
+
+function showProgress(show = true) {
+  if (progressContainer) progressContainer.style.display = show ? 'block' : 'none';
+}
+
+function updateProgress(percent, text) {
+  if (progressBar) {
+    progressBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    progressBar.textContent = text || `${percent}%`;
+  }
+}
+
+// Listen for attack progress events (streaming in tiempo real)
+import { listen } from '@tauri-apps/api/event';
+
+listen('attack-progress', (event) => {
+  const { id, type, data } = event.payload;
+  if (id === currentAttackId) {
+    // Stream output en tiempo real
+    if (type === 'stdout') log(data, 'output');
+    if (type === 'stderr') log(data, 'warn');
+    // Update progress based on keywords
+    if (data.includes('received')) updateProgress(25, 'Recibiendo... 25%');
+    if (data.toLowerCase().includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
+    if (data.toLowerCase().includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');
+  }
+});
+
+listen('attack-completed', (event) => {
+  const { id } = event.payload;
+  if (id === currentAttackId) {
+    showProgress(false);
+    currentAttackId = null;
+  }
+});
+
+listen('attack-error', (event) => {
+  const { id, error } = event.payload;
+  if (id === currentAttackId) {
+    showProgress(false);
+    log(`Error ataque: ${error}`, 'error');
+    currentAttackId = null;
+  }
+});
 // ── Background attack state ──────────────────────────────────────────────
 let currentAttackId = null;
 
