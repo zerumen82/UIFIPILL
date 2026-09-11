@@ -789,6 +789,74 @@
               </div>
             </div>
 
+            <!-- ══════════════════ WPA3 ══════════════════ -->
+            <div class="atk-section">
+              <h2 class="section-title">&#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+              <div class="attack-grid">
+
+                <!-- Auditoría WPA3 -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--orange">Auditoría WPA3</h3>
+                  <p class="atk-desc">¿SAE puro o transición? Solo lectura; la transición se confirma con tshark en Linux</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>BSSID:</label>
+                      <input id="wpa3-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForWpa3()">Usar objetivo</button>
+                    <button class="atk-btn atk-btn--orange" onclick="wpa3Audit()">Auditar</button>
+                  </div>
+                  <pre id="wpa3-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
+                </div>
+
+                <!-- Rogue WPA2 para downgrade -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--orange">Rogue WPA2 (downgrade)</h3>
+                  <p class="atk-desc">Genera el .conf de hostapd-mana para capturar el handshake WPA2 en Kali</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>SSID:</label>
+                      <input id="wpa3-ssid" type="text" placeholder="MiRedWiFi">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="wpa3-chan" type="number" min="1" max="165" value="1">
+                    </div>
+                    <div class="field-row">
+                      <label>Iface (Kali):</label>
+                      <input id="wpa3-iface" type="text" placeholder="wlan1">
+                    </div>
+                    <div class="field-row">
+                      <label>Salida:</label>
+                      <input id="wpa3-confout" type="text" placeholder="rogue_SSID.conf (auto)">
+                    </div>
+                  </div>
+                  <button class="atk-btn atk-btn--orange" onclick="genRogueConf()">Generar .conf</button>
+                  <pre id="rogue-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
+                </div>
+
+                <!-- Wacker online -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--red">Wacker online (experimental)</h3>
+                  <p class="atk-desc">Fuerza bruta SAE en vivo — lento, ruidoso, solo vs claves débiles. Se ejecuta en Kali, no aquí.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Wordlist:</label>
+                      <input id="wpa3-wl" type="text" placeholder="rockyou.txt">
+                    </div>
+                    <div class="field-row">
+                      <label>Iface (Kali):</label>
+                      <input id="wpa3-miface" type="text" placeholder="wlan0 (managed)">
+                    </div>
+                  </div>
+                  <button class="atk-btn atk-btn--red" onclick="fillWacker()">Rellenar comando</button>
+                  <pre id="wacker-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap">Pulsa para generar la plantilla (revisa --help del repo Wacker en Kali).</pre>
+                </div>
+              </div>
+            </div>
+
             <!-- ══════════════════ WPS ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">&#x1F511; WPS</h2>

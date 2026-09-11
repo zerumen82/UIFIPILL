@@ -8,7 +8,6 @@
 // - Ningún ataque activo se ejecuta desde aquí: esto solo perfila.
 use serde::Serialize;
 use tauri::{command, AppHandle};
-use tauri_plugin_shell::ShellExt;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TargetProfile {
@@ -94,8 +93,30 @@ pub fn verdict_for(auth_raw: &str, cipher_raw: &str) -> (&'static str, &'static 
 static RE_BSSID_LINE: once_cell::sync::Lazy<regex::Regex> =
     once_cell::sync::Lazy::new(|| regex::Regex::new(r"^BSSID\s+\d*\s*:\s*([0-9A-Fa-f:]{17})").unwrap());
 
+/// Vuelca netsh (compartido con wpa3.rs). Puro IO, sin parseo.
+pub(crate) async fn netsh_dump(app: &tauri::AppHandle) -> Result<String, String> {
+    use std::time::Duration;
+    use tauri_plugin_shell::ShellExt;
+    let shell = app.shell();
+    let out = tokio::time::timeout(
+        Duration::from_secs(10),
+        shell
+            .command("powershell")
+            .args(["-NoProfile", "-Command", "netsh wlan show networks mode=bssid"])
+            .output(),
+    )
+    .await
+    .map_err(|_| "Timeout: netsh wlan tardó más de 10s.".to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Busca el bloque netsh del BSSID exacto y devuelve (ssid, auth, cipher, channel, signal).
-fn find_target(raw: &str, want: &str) -> Option<(String, String, String, Option<u8>, Option<u8>)> {
+/// Versión pública-para-el-crate (la usa wpa3.rs).
+pub(crate) fn find_target(
+    raw: &str,
+    want: &str,
+) -> Option<(String, String, String, Option<u8>, Option<u8>)> {
     let want_lc = want.to_lowercase();
     let mut ssid = String::new();
     let mut auth = String::new();
@@ -156,17 +177,7 @@ fn find_target(raw: &str, want: &str) -> Option<(String, String, String, Option<
 /// Comando Tauri: perfila un BSSID (solo lectura).
 #[command]
 pub async fn profile_target(app: AppHandle, bssid: String) -> Result<TargetProfile, String> {
-    use std::time::Duration;
-    let shell = app.shell();
-    let out = tokio::time::timeout(Duration::from_secs(10),
-        shell.command("powershell")
-            .args(["-NoProfile", "-Command", "netsh wlan show networks mode=bssid"])
-            .output()
-    ).await
-        .map_err(|_| "Timeout: netsh wlan tardó más de 10s.".to_string())?
-        .map_err(|e| e.to_string())?;
-
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = netsh_dump(&app).await?;
     let (ssid, auth, cipher, channel, signal) = find_target(&raw, &bssid)
         .ok_or_else(|| format!("BSSID {} no visible en el último scan. Reescanea.", bssid))?;
 

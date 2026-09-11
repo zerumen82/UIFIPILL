@@ -1,10 +1,11 @@
 mod commands;
 mod crack;
+mod profiler;
 mod tools_detect;
 mod wifi_adapter;
 mod monitor_mode;
 mod pcap_convert;
-mod profiler;
+mod wpa3;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -70,6 +71,9 @@ pub fn run() {
             crack::filter_hash,
             crack::list_crack_assets,
             crack::crack_custom,
+            // WPA3: auditoría + rogue conf (sin ejecución en Windows)
+            wpa3::wpa3_audit,
+            wpa3::gen_rogue_conf,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,
