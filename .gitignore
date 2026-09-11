@@ -1,0 +1,19 @@
+node_modules/
+dist/
+target/
+.vite/
+src-tauri/build.log
+src-tauri/target/
+*.log
+# capturas y hashes (artefactos de laboratorio, no commitear)
+*.pcap
+*.pcapng
+*.cap
+*.22000
+*.hccapx
+*.potfile
+*.csv
+# temporales OS/editor
+.DS_Store
+Thumbs.db
+*.tmp
