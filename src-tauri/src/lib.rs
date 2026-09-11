@@ -1,4 +1,5 @@
 mod commands;
+mod crack;
 mod tools_detect;
 mod wifi_adapter;
 mod monitor_mode;
@@ -64,6 +65,11 @@ pub fn run() {
             pcap_convert::pcap_to_22000,
             // perfilador de objetivo (solo lectura)
             profiler::profile_target,
+            // estrategia de crack (hashcat -m 22000, corre en Windows)
+            crack::inspect_hash,
+            crack::filter_hash,
+            crack::list_crack_assets,
+            crack::crack_custom,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,

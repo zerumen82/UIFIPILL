@@ -572,6 +572,11 @@ setTimeout(async () => {
     } catch (e) {
         console.error('Auto-scan falló:', e);
     }
+    try {
+        await window.loadCrackAssets();
+    } catch (e) {
+        console.error('Crack assets falló:', e);
+    }
 }, 600);// AUTO-ATTACK MAESTRO
 // Ejecuta todos los ataques disponibles en secuencia contra un objetivo
 
@@ -700,6 +705,77 @@ window.startAutoAttack = async function () {
   if (btn2) btn2.textContent = 'Auto-Ataque';
 };
 
+
+// ── Estrategia de crack ───────────────────────────────────────────────────
+window.loadCrackAssets = async function () {
+  try {
+    const a = await window.__invoke('list_crack_assets');
+    const ruleSel = $('crackx-rule');
+    if (ruleSel) {
+      ruleSel.innerHTML = '<option value="">(sin regla)</option>' +
+        (a.rules || []).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+    }
+    const dl = $('crackx-wl-list');
+    if (dl) {
+      dl.innerHTML = (a.wordlists || []).map(w => `<option value="${esc(w)}">`).join('');
+    }
+    const hint = $('crackx-hint');
+    if (hint) {
+      const parts = [`hashcat: ${a.hashcat === 'no encontrado' ? 'NO encontrado' : 'OK'}`,
+        `${(a.rules || []).length} reglas`, `${(a.wordlists || []).length} wordlists`];
+      if (!a.rockyou) parts.push('⚠ sin rockyou.txt — máscara o combinator recomendados');
+      hint.textContent = parts.join(' · ');
+    }
+    log(`Assets crack: ${(a.rules || []).length} reglas, ${(a.wordlists || []).length} wordlists.`, 'info');
+  } catch (e) {
+    log(`[list_crack_assets] ERROR: ${e}`, 'error');
+  }
+};
+
+window.inspectHash = async function () {
+  const f = valOrEmpty($('insp-hash').value);
+  if (!f) { log('Especifica el archivo .22000 a inspeccionar.', 'warn'); return; }
+  try {
+    const s = await window.__invoke('inspect_hash', { hashPath: f });
+    const out = `total=${s.total} · PMKID=${s.pmkid} · challenge=${s.challenge} · authorized=${s.authorized}\nESSID: ${(s.essids || []).join(', ') || '?'}`;
+    const pre = $('insp-out');
+    if (pre) pre.textContent = out;
+    log(`[inspect] ${f}: ${out.replace('\n', ' | ')}`, 'info');
+  } catch (e) {
+    log(`[inspect] ERROR: ${e}`, 'error');
+  }
+};
+
+window.filterHash = async function () {
+  const f = valOrEmpty($('insp-hash').value);
+  const kind = $('insp-kind')?.value || 'pmkid';
+  if (!f) { log('Especifica el archivo .22000 a filtrar.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('filter_hash', { hashPath: f, kind });
+    log(r.output, 'ok');
+    const cx = $('crackx-hash');
+    if (cx) cx.value = `${f}.${kind}`;
+  } catch (e) {
+    log(`[filter] ERROR: ${e}`, 'error');
+  }
+};
+
+window.launchCustomCrack = async function () {
+  const hash = valOrEmpty($('crackx-hash').value);
+  const attack = parseInt($('crackx-mode')?.value || '0');
+  const wl = valOrEmpty($('crackx-wordlist').value) || undefined;
+  const rule = $('crackx-rule')?.value || undefined;
+  const mask = valOrEmpty($('crackx-mask').value) || undefined;
+  const sess = valOrEmpty($('crackx-session').value) || undefined;
+  if (!hash) { log('Especifica el archivo .22000.', 'warn'); return; }
+  if ((attack === 0 || attack === 1 || attack === 6 || attack === 7) && !wl) {
+    log('Este modo necesita wordlist (¿sin rockyou? usa modo máscara).', 'warn'); return;
+  }
+  if ((attack === 3 || attack === 6 || attack === 7) && !mask) {
+    log('Este modo necesita máscara (elige un preset).', 'warn'); return;
+  }
+  return invokeAttack('crack_custom', { hashFile: hash, attack, wordlist: wl, mask, rule, session: sess });
+};
 
 // ── Background attack state ──────────────────────────────────────────────
 let currentAttackId = null;

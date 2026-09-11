@@ -180,7 +180,7 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
     let mode     = attack_mode.unwrap_or(0);
     let cracked_out = format!("{}.cracked", hash_file);
     let args = vec![
-        "-m".into(), "16800".into(),
+        "-m".into(), "22000".into(),
         "-a".into(), mode.to_string(),
         "-o".into(), cracked_out.clone(),
         "--force".into(),

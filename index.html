@@ -618,7 +618,7 @@
                 <!-- Crack PMKID -->
                 <div class="atk-card">
                   <h3 class="atk-title atk-title--red">&#x1F512; Crack PMKID</h3>
-                  <p class="atk-desc">Fuerza bruta con hashcat (modo 16800)</p>
+                  <p class="atk-desc">Fuerza bruta con hashcat (modo 22000)</p>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Hash .hc22000:</label>
@@ -696,6 +696,95 @@
                     </div>
                   </div>
                   <button class="atk-btn atk-btn--red" onclick="doCmd('crack_handshake', crackHandshake)">Crack con hashcat</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- ══════════════════ ESTRATEGIA DE CRACK ══════════════════ -->
+            <div class="atk-section">
+              <h2 class="section-title">&#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+              <div class="attack-grid">
+
+                <!-- Inspector .22000 -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--blue">&#x1F50D; Inspector .22000</h3>
+                  <p class="atk-desc">Qué contiene el hash antes de quemar GPU: PMKID vs EAPOL challenge/authorized</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Hash:</label>
+                      <input id="insp-hash" type="text" placeholder="capture_xxx.22000">
+                    </div>
+                    <div class="field-row">
+                      <label>Filtrar:</label>
+                      <select id="insp-kind">
+                        <option value="pmkid">PMKID</option>
+                        <option value="authorized">EAPOL authorized</option>
+                        <option value="challenge">EAPOL challenge</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn atk-btn--blue" onclick="inspectHash()">Inspeccionar</button>
+                    <button class="atk-btn" style="background:var(--gray)" onclick="filterHash()">Filtrar</button>
+                  </div>
+                  <pre id="insp-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
+                </div>
+
+                <!-- Constructor hashcat -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--red">&#x1F3AF; Constructor hashcat</h3>
+                  <p class="atk-desc">-m 22000 con las reglas y wordlists reales de tu instalación</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Hash:</label>
+                      <input id="crackx-hash" type="text" placeholder="capture_xxx.22000">
+                    </div>
+                    <div class="field-row">
+                      <label>Modo:</label>
+                      <select id="crackx-mode">
+                        <option value="0">0 — diccionario</option>
+                        <option value="6">6 — dicc + máscara</option>
+                        <option value="3">3 — máscara</option>
+                        <option value="1">1 — combinator</option>
+                        <option value="7">7 — máscara + dicc</option>
+                      </select>
+                    </div>
+                    <div class="field-row">
+                      <label>Wordlist:</label>
+                      <input id="crackx-wordlist" type="text" list="crackx-wl-list" placeholder="rockyou.txt">
+                      <datalist id="crackx-wl-list"></datalist>
+                    </div>
+                    <div class="field-row">
+                      <label>Regla:</label>
+                      <select id="crackx-rule">
+                        <option value="">(sin regla)</option>
+                      </select>
+                    </div>
+                    <div class="field-row">
+                      <label>Máscara:</label>
+                      <select id="crackx-preset" onchange="document.getElementById('crackx-mask').value=this.value">
+                        <option value="">-- preset --</option>
+                        <option value="?d?d?d?d?d?d?d?d">8 dígitos</option>
+                        <option value="?d?d?d?d?d?d?d?d?d">9 dígitos</option>
+                        <option value="?d?d?d?d?d?d?d?d?d?d">10 dígitos</option>
+                        <option value="?l?l?l?l?l?l?l?l">8 minúsculas</option>
+                        <option value="?u?l?l?l?l?l?l?d?d">Nombre+2 dígitos</option>
+                      </select>
+                    </div>
+                    <div class="field-row">
+                      <label></label>
+                      <input id="crackx-mask" type="text" placeholder="?d?d?d?d?d?d?d?d (o personalizada)">
+                    </div>
+                    <div class="field-row">
+                      <label>Sesión:</label>
+                      <input id="crackx-session" type="text" placeholder="uifipill (opcional)">
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn" style="background:var(--gray)" onclick="loadCrackAssets()">&#8635; Assets</button>
+                    <button class="atk-btn atk-btn--red" onclick="launchCustomCrack()">Lanzar crack</button>
+                  </div>
+                  <p id="crackx-hint" style="margin-top:8px;font-size:11px;color:var(--muted)"></p>
                 </div>
               </div>
             </div>
