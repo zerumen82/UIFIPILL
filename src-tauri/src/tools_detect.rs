@@ -12,7 +12,7 @@ use dirs;
 /// 1) variable de entorno NAME_PATH
 /// 2) carpetas de instalación de UIFIPILL
 /// 3) which / PATH del sistema
-fn resolve_tool(name: &str) -> (bool, String, String) {
+pub(crate) fn resolve_tool(name: &str) -> (bool, String, String) {
     // 1) Variable de entorno
     let env_var = format!("{}_PATH", name.to_uppercase().replace('.', "_"));
     if let Ok(p) = std::env::var(&env_var) {
@@ -48,12 +48,32 @@ fn resolve_tool(name: &str) -> (bool, String, String) {
 }
 
 fn install_dirs() -> Vec<std::path::PathBuf> {
+    let workspace = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf());
+
     let mut dirs: Vec<std::path::PathBuf> = vec![
         dirs::data_local_dir()
             .map(|p| p.join("UIFIPILL").join("tools")),
+        // Tauri resource dir (installed app) — resources/ subdir
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("resources"))),
+        // <exe_dir>/tools/ (dev or portable)
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.join("tools"))),
+        // Workspace tools/ (dev mode)
+        workspace.as_ref().map(|p| p.join("tools")),
+        // aircrack-ng Windows binaries subdirectory
+        workspace.as_ref().map(|p| p.join("tools").join("aircrack-ng-win")),
+        // Tauri resources/tools/ + resources/tools/aircrack-ng-win/
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("resources").join("tools"))),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("resources").join("tools").join("aircrack-ng-win"))),
     ].into_iter().filter_map(|o| o).collect();
 
     if let Ok(exe) = std::env::current_exe() {
@@ -95,36 +115,35 @@ pub struct ToolsReport {
 }
 
 const TOOL_LIST: &[&str] = &[
-    // hcxtools
-    "hcxdumptool",
-    "hcxpcapngtool",
-    // hashcat
-    "hashcat",
-    // WPS
-    "bully",
-    "reaver-wps-fork-t6x",
-    // aircrack-ng suite
-    "airodump-ng",
-    "aireplay-ng",
-    "airbase-ng",
-    "mdk3",
-    "aircrack-ng",
+    // WPS brute-force
+    "reaver.exe",
+    // WPS scanner
+    "wash.exe",
+    // aircrack-ng suite (captura + inyeccion + rogue AP)
+    "airodump-ng.exe",
+    "aireplay-ng.exe",
+    "airbase-ng.exe",
+    // cracking
+    "hashcat.exe",
     // wordlists
     "rockyou.txt",
 ];
 
 const INSTALL_HINTS: &[&str] = &[
-    "https://github.com/cipsas-uifipill/hcxtools/releases   (Win64 .exe)",
-    "Mismo paquete .zip que hcxdumptool",
-    "https://hashcat.net/hashcat/   (SE Self-Extracting .exe)",
-    "https://github.com/T6X/bully   (Win64 .exe)",
-    "https://github.com/T6X/reaver-wps-fork-t6x   (Win64 .exe)",
-    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
-    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
-    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
-    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
-    "https://github.com/aircrack-ng/aircrack-ng/releases   (Win64 .exe)",
-    "Descarga rockyou.txt y copiala en %APPDATA%\\UIFIPILL\\tools\\",
+    // 0  reaver.exe
+    "tools/reaver.exe — compilado desde fuente con MSYS2/MinGW64 (ver tools/build/BUILD.md)",
+    // 1  wash.exe
+    "tools/wash.exe — compilado desde fuente con MSYS2/MinGW64 (ver tools/build/BUILD.md)",
+    // 2  airodump-ng
+    "tools/aircrack-ng-win/airodump-ng.exe — Official 1.7 Windows build (Cygwin)",
+    // 3  aireplay-ng
+    "tools/aircrack-ng-win/aireplay-ng.exe — Official 1.7 Windows build (Cygwin)",
+    // 4  airbase-ng
+    "tools/aircrack-ng-win/airbase-ng.exe — Official 1.7 Windows build (Cygwin)",
+    // 5  hashcat
+    "https://github.com/hashcat/hcat/releases  (descarga hashcat-*.7z, extrae hashcat.exe)",
+    // 6  rockyou.txt
+    "Descarga rockyou.txt (145 MB) y copiala en %APPDATA%\\UIFIPILL\\tools\\",
 ];
 
 /// Devuelve el estado de todas las herramientas. El frontend lo consulta al iniciar.

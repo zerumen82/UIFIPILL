@@ -1,8 +1,6 @@
 // wifi_adapter.rs — detección de adaptador WiFi + chipset (AWUS036H y compatibles)
 use serde::Serialize;
 use tauri::{command, AppHandle};
-use tauri_plugin_shell::ShellExt;
-use crate::commands::CmdResponse;
 
 // chipset: (nombre_legible, vid_pid, monitor_capable, hint_instalacion, ruta_base)
 const CHIPS: &[(&str, &str, bool, &str, &str)] = &[
@@ -19,9 +17,9 @@ const CHIPS: &[(&str, &str, bool, &str, &str)] = &[
     ("Ralink RT5572",         "148F:5572", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl93xx"),
     ("MediaTek MT7612U",      "0E8D:7612", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/mt7612u"),
     ("MediaTek MT7921",       "0E8D:7921", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/mt76"),
-    ("Intel AX200",           "8086:2723", false,"Solo Linux/WSL2",               "wsl --install"),
-    ("Intel AX210",           "8086:7922", false,"Solo Linux/WSL2",               "wsl --install"),
-    ("Intel AX201",           "8086:0026", false,"Solo Linux/WSL2",               "wsl --install"),
+    ("Intel AX200",           "8086:2723", false,"No soporta modo monitor en Windows nativo. Driver Intel limitado.",               ""),
+    ("Intel AX210",           "8086:7922", false,"No soporta modo monitor en Windows nativo. Driver Intel limitado.",               ""),
+    ("Intel AX201",           "8086:0026", false,"No soporta modo monitor en Windows nativo. Driver Intel limitado.",               ""),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,8 +38,6 @@ pub struct AdapterInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct AdapterReport {
     pub adapters:         Vec<AdapterInfo>,
-    pub wsl2_available:   bool,
-    pub wsl2_usable:      bool,
     pub monitor_ready:    bool,
     pub recommended_route: String,
 }
@@ -56,19 +52,6 @@ pub struct MonitorModeResult {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-/// ¿WSL2 instalado y accesible? ¿tiene binarios Linux?
-fn check_wsl2() -> (bool, bool) {
-    let avail = std::process::Command::new("wsl").args(["--status"]).output()
-        .map(|o| o.status.success()).unwrap_or(false);
-    if !avail { return (false, false); }
-    let tools = std::process::Command::new("wsl")
-        .args(["--","bash","-c","command -v aireplay-ng >/dev/null 2>&1 && echo YES || echo NO"])
-        .output().map(|o| String::from_utf8_lossy(&o.stdout).contains("YES")).unwrap_or(false);
-    (true, tools)
-}
-
-// chipset_hwid — stub for future HWID-based lookup; currently unused
-#[allow(dead_code)]
 fn chipset_hwid(hw: &str) -> Option<(&str, bool, &str, &str)> {
     let hw = hw.to_uppercase();
     for c in CHIPS {
@@ -102,8 +85,9 @@ fn parse_pnp(raw: &str) -> Vec<AdapterInfo> {
         if line.is_empty() || line.starts_with("FriendlyName") || line.starts_with("---") { continue; }
 
         let (cname, compat, hint, _route_base) = chipset_name(line)
+            .or_else(|| chipset_hwid(line))
             .unwrap_or(("Desconocido", false,
-                        "Chip WiFi no identificado para modo monitor en Windows. Prueba WSL2.",
+                        "Chip WiFi desconocido. Se requiere AWUS036H (RTL8812AU) u otro con driver NPcap modificado.",
                         "scan-only"));
 
         let (vp, vp_clean) = vid_pid_from_hw(line)
@@ -114,12 +98,7 @@ fn parse_pnp(raw: &str) -> Vec<AdapterInfo> {
             else if vp_clean != "—" { format!("Desconocido ({})", vp_clean) }
             else { "Desconocido".into() };
 
-        let wsl2 = check_wsl2().0;
-        let route = if !compat && wsl2 {
-            "wsl2".into()
-        } else if compat && wsl2 {
-            "both".into()
-        } else if compat {
+        let route = if compat {
             "windows".into()
         } else {
             "scan-only".into()
@@ -159,111 +138,45 @@ Format-Table -AutoSize
 
 // ── COMANDOS ────────────────────────────────────────────────────────────────
 
-/// Escanea adaptadores WiFi USB + estado WSL2
+/// Escanea adaptadores WiFi USB
 #[command]
 pub async fn detect_adapters() -> AdapterReport {
-    let (wsl2_avail, wsl2_usable) = check_wsl2();
     let adapters = get_adapters();
     let monitor_ready = adapters.iter().any(|a| a.monitor_capable);
 
-    let recommended = if monitor_ready && wsl2_avail {
-        "both".into()
-    } else if monitor_ready {
+    let recommended = if monitor_ready {
         "windows-driver".into()
-    } else if wsl2_usable {
-        "wsl2".into()
-    } else if wsl2_avail {
-        "wsl2-setup".into()
     } else {
         "scan-only".into()
     };
 
     AdapterReport {
-        adapters, wsl2_available: wsl2_avail, wsl2_usable, monitor_ready, recommended_route: recommended,
+        adapters, monitor_ready, recommended_route: recommended,
     }
 }
 
-/// Instrucciones para activar modo monitor en el adaptador detectado
+/// Activa modo monitor en el adaptador vía NPcap OID (delega en monitor_mode::activate_monitor)
 #[command]
 pub async fn set_monitor_mode(_app: AppHandle, iface: String) -> MonitorModeResult {
-    let npcap = std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
-        || std::path::Path::new(r"C:\Windows\SysWOW64\Npcap.dll").exists();
-
-    let msg = if npcap {
-        format!(
-            "✅ NPcap detectado.\n\
-             Ruta recomendada: modo monitor nativo NPcap (Windows).\n\n\
-             Para activar monitor en '{}':\n\
-             1. Abre Administrador de Dispositivos\n\
-             2. Desinstala driver WiFi oficial del fabricante\n\
-             3. Instala NPcap desde https://npcap.com ('WinPcap API-compatible Mode')\n\
-             4. Instala el driver NPcap modificado para tu chipset\n\
-             5. Selecciona el adaptador en el modal y pulsa 'Activar modo monitor'\n\n\
-             Una vez en modo monitor, ejecuta airodump-ng, aireplay-ng y airbase-ng\n\
-             directamente desde Windows (binarios .exe).",
-            iface
-        )
-    } else {
-        format!(
-            "❌ NPcap no detectado.\n\n\
-             Instala NPcap desde https://npcap.com\n\
-             Marca la opcion 'Install in WinPcap API-compatible Mode'.\n\
-             Luego usa aireplay-ng, airodump-ng, airbase-ng y mdk3\n\
-             directamente en Windows (binarios .exe de aircrack-ng Windows).\n\n\
-             Binarios .exe: https://github.com/aircrack-ng/aircrack-ng/releases"
-        )
-    };
-
+    let result = crate::monitor_mode::activate_monitor(iface.clone(), None).await;
     MonitorModeResult {
-        success: false,
-        interface: iface,
-        current_mode: "sin confirmar".into(),
-        message: msg,
+        success: result.success,
+        interface: result.interface_name,
+        current_mode: result.mode,
+        message: result.message,
     }
 }
 
+/// Restaura modo managed vía NPcap OID (delega en monitor_mode::restore_managed)
 #[command]
 pub async fn set_managed_mode(_app: AppHandle, iface: String) -> MonitorModeResult {
-    let iface_ref = iface.clone();
+    let result = crate::monitor_mode::restore_managed(iface.clone()).await;
     MonitorModeResult {
-        success: true,
-        interface: iface,
-        current_mode: "managed".into(),
-        message: format!("✅ {} en modo managed.", iface_ref),
+        success: result.success,
+        interface: result.interface_name,
+        current_mode: result.mode,
+        message: result.message,
     }
 }
 
-/// Ejecuta un comando dentro de WSL2 (aireplay-ng, bully, hcxdumptool, etc.)
-#[allow(dead_code)]
-#[command]
-pub async fn wsl2_run(_app: AppHandle, cmd: String) -> CmdResponse {
-    let full = format!("wsl -- bash -c '{}'", cmd.replace("'", "'\\''"));
-    let sh = _app.shell();
-    match sh.command("powershell").args(["-NoProfile","-Command",&full]).output().await {
-        Ok(o) => {
-            let exit_code: Option<i32> = o.status.code();
-            CmdResponse {
-                success:    o.status.success(),
-                output:     String::from_utf8_lossy(&o.stdout).into_owned(),
-                stderr:     String::from_utf8_lossy(&o.stderr).into_owned(),
-                exit_code:  exit_code,
-            }
-        },
-        Err(e) => CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None::<i32> },
-    }
-}
 
-#[command]
-pub async fn wsl2_info() -> CmdResponse {
-    let (avail, _) = check_wsl2();
-    if !avail {
-        return CmdResponse {
-            success: false,
-            output: "WSL2 no detectado en este sistema.\nInstálalo con: wsl --install".into(),
-            stderr: String::new(), exit_code: None,
-        };
-    }
-    let raw = std::process::Command::new("wsl").args(["--status"]).output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-    CmdResponse { success: true, output: raw, stderr: String::new(), exit_code: None }
-}

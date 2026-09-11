@@ -3,6 +3,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   clearScreen: false,
+  base: "./",
   server: {
     port: 5173,
     strictPort: true,

@@ -95,7 +95,7 @@
     }
 
     /* ── Tabs ──────────────────────────────────────────────────────── */
-    .tab { display: none; flex-direction: column; height: 100%; }
+    .tab { display: none; flex-direction: column; height: 100%; min-height: 0; }
     .tab.active { display: flex; }
 
     /* ── Panel header ──────────────────────────────────────────────── */
@@ -479,6 +479,16 @@
               <button class="atk-btn" style="background:var(--gray);padding:5px 10px;font-size:13px" onclick="clearSelection()" title="Deseleccionar">&#x2716;</button>
             </div>
           </div>
+
+          <!-- mini console (visible always on scan tab) -->
+          <div style="margin:0 12px 12px;border-top:1px solid var(--border);padding-top:8px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <span style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)">Salida rápida</span>
+              <span style="font-size:10px;color:var(--gray)">(consola completa en pestaña Consola)</span>
+            </div>
+            <pre id="mini-cv" class="console-view"
+                 style="height:60px;overflow-y:auto;background:#0e0e14;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10.5px;line-height:1.5;color:#8080a0;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+          </div>
         </section>
 
         <!-- ATTACK TAB -->
@@ -497,17 +507,25 @@
              </div>
            </div>
 
-           <div class="attack-body"
-          </header>
-
-          <div class="attack-body" style="flex:1;overflow-y:auto;padding:18px 26px 20px">
+          <div class="attack-body" style="flex:1;min-height:0;overflow-y:auto;padding:18px 26px 20px;position:relative">
             <!-- Target select -->
             <div class="target-bar">
               <label>Objetivo BSSID:</label>
-              <select id="attack-bssid">
+              <select id="attack-bssid" onchange="if(this.value)profileTarget(this.value)">
                 <option value="">-- Selecciona una red de la lista --</option>
               </select>
               <button id="refreshTargetBtn" onclick="syncTargetList()">&#8635; Actualizar</button>
+            </div>
+
+            <!-- Veredicto del perfilador (solo lectura, sin TX) -->
+            <div id="target-verdict" style="display:none;margin:-8px 0 18px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:12px;line-height:1.6">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+                <span style="font-size:15px">&#x1F3AF;</span>
+                <strong id="verdict-title"></strong>
+                <span id="verdict-badges" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+              </div>
+              <div id="verdict-detail" style="color:var(--muted)"></div>
+              <div id="verdict-meta" style="color:var(--gray);font-size:11px;margin-top:4px"></div>
             </div>
 
             <!-- ══════════════════ AUTO ATTACK ══════════════════ -->
@@ -532,7 +550,7 @@
                     </div>
                   </div>
                   <div class="atk-btn-row">
-                    <button class="atk-btn" onclick="doCmd('auto_attack', startAutoAttack)" style="background:var(--accent)">&#x26A1; Iniciar Auto Ataque</button>
+                    <button class="atk-btn" id="autoAttackBtn" onclick="doCmd('auto_attack', startAutoAttack)" style="background:var(--accent)">&#x26A1; Iniciar Auto Ataque</button>
                   </div>
                 </div>
               </div>
@@ -578,6 +596,23 @@
                     </div>
                   </div>
                   <button class="atk-btn atk-btn--blue" onclick="doCmd('pmkid_convert', convertPmkid)">Convertir</button>
+                </div>
+
+                <!-- Convertir PMKID (nativo Rust) -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--green" style="color:var(--green)">&#x2699; Convertir .pcapng (Rust nativo)</h3>
+                  <p class="atk-desc">Convierte .pcapng &rarr; .22000 usando el parser nativo Rust (sin hcxpcapngtool)</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>.pcapng:</label>
+                      <input id="convert-native-pcap" type="text" placeholder="capture_AA-BB-CC.pcapng">
+                    </div>
+                    <div class="field-row">
+                      <label>Output dir:</label>
+                      <input id="convert-native-outdir" type="text" placeholder=". (mismo directorio)">
+                    </div>
+                  </div>
+                  <button class="atk-btn" style="background:var(--green)" onclick="doCmd('pcap_to_22000', convertPmkidNative)">Convertir (nativo)</button>
                 </div>
 
                 <!-- Crack PMKID -->
@@ -1025,7 +1060,7 @@
 
       async function showMonitorModal() {
         log('Escaneando adaptadores WiFi…', 'info');
-        const adapters = await __invoke('detect_adapters');
+        const adapters = await window.__invoke('detect_adapters');
         const list = adapters?.adapters || [];
         if (list.length === 0) {
           log('No se encontro ningún adaptador WiFi.', 'warn');
@@ -1069,7 +1104,7 @@
         if (!guid) { log('No se seleccionó un adaptador.', 'warn'); return; }
         log(`Activando modo monitor en ${guid}…`, 'info');
         try {
-          const result = await __invoke('activate_monitor', { iface_guid: guid, channel: undefined });
+          const result = await window.__invoke('activate_monitor', { ifaceGuid: guid, channel: undefined });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
         } catch (err) {
           log(`[monitor] FATAL: ${err}`, 'error');
@@ -1092,10 +1127,10 @@
         const bssid = bssidEl.value.trim();
         log(`Capturando PMKID de ${bssid}…`, 'info');
         try {
-          const result = await __invoke('pmkid_capture', {
+          const result = await window.__invoke('pmkid_capture', {
             bssid,
             channel: undefined,
-            duration_seconds: 30
+            durationSeconds: 30
           });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output}`, result.success ? 'ok' : 'warn');
         } catch (err) {

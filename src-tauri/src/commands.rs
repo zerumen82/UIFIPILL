@@ -47,10 +47,10 @@ macro_rules! re {
 static RE_SSID:   once_cell::sync::Lazy<regex::Regex> = re!(r"^SSID\s+\d+\s*:\s*(.*)");
 static RE_NEW_ID: once_cell::sync::Lazy<regex::Regex> = re!(r"^SSID\s+\d+\s*:");
 static RE_BSSID:  once_cell::sync::Lazy<regex::Regex> = re!(r"^BSSID\s+\d*\s*:\s*([0-9A-Fa-f:]{17})");
-static RE_SIG:    once_cell::sync::Lazy<regex::Regex> = re!(r"Signal|Se\u{00F1}al:\s*(\d+)%");
-static RE_CHAN:   once_cell::sync::Lazy<regex::Regex> = re!(r"Channel|Canal:\s*(\d+)");
+static RE_SIG:    once_cell::sync::Lazy<regex::Regex> = re!(r"(?:Signal|Señal)\s*:\s*(\d+)%");
+static RE_CHAN:   once_cell::sync::Lazy<regex::Regex> = re!(r"(?:Channel|Canal)\s*:\s*(\d+)");
 static RE_SEC:    once_cell::sync::Lazy<regex::Regex> =
-    re!(r"(?:Authentication|Seguridad|Autenticaci[o\u{00F3}n|Tipo de autenticaci[o\u{00F3}n])\s*:\s*(.*)");
+    re!(r"(?:Authentication|Seguridad|Autenticaci[oó]n|Tipo de autenticaci[oó]n)\s*:\s*(.*)");
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PARSEADOR NETSH

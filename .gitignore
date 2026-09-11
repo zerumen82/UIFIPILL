@@ -17,3 +17,7 @@ src-tauri/target/
 .DS_Store
 Thumbs.db
 *.tmp
+# artefactos de compilación de herramientas vendorizadas (se regeneran)
+tools/build/
+*.o
+*.obj

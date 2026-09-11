@@ -3,6 +3,7 @@ mod tools_detect;
 mod wifi_adapter;
 mod monitor_mode;
 mod pcap_convert;
+mod profiler;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -59,6 +60,10 @@ pub fn run() {
             monitor_mode::restore_managed,
             monitor_mode::set_monitor_channel,
             monitor_mode::monitor_status,
+            // pcap converter nativo (reemplaza hcxpcapngtool)
+            pcap_convert::pcap_to_22000,
+            // perfilador de objetivo (solo lectura)
+            profiler::profile_target,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,

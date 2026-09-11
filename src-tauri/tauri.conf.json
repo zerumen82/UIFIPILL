@@ -38,8 +38,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "../tools/reaver.exe",
+      "../tools/wash.exe",
+      "../tools/aircrack-ng-win/*"
+    ],
     "windows": {
-      "nsis": {}
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
