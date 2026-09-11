@@ -1,6 +1,8 @@
 mod commands;
+mod connect;
 mod crack;
 mod eviltwin;
+mod keygen;
 mod profiler;
 mod tools_detect;
 mod wifi_adapter;
@@ -78,6 +80,11 @@ pub fn run() {
             // Evil Twin: kit de lab + verificación de 1 candidato (hashcat local)
             eviltwin::gen_eviltwin_kit,
             eviltwin::verify_candidate,
+            // Conexión a la red atacada (lab): perfil netsh + keygen Comtrend
+            connect::wifi_connect,
+            connect::wifi_disconnect,
+            keygen::keygen_detect,
+            keygen::keygen_run,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,

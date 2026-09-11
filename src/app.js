@@ -878,6 +878,77 @@ window.verifyCandidate = async function () {
   }
 };
 
+// ── Acceso: conectar + keygen ─────────────────────────────────────────────
+function fillFromTarget(ssidInputId) {
+  const sel = $('attack-bssid');
+  if (!sel?.value) { log('Selecciona un objetivo BSSID primero.', 'warn'); return null; }
+  const opt = sel.options[sel.selectedIndex]?.text || '';
+  const ssid = opt.split('·')[0]?.trim();
+  if (ssid) {
+    const el = $(ssidInputId);
+    if (el) el.value = ssid;
+  }
+  return { bssid: sel.value, ssid };
+}
+
+window.useTargetForConnect = function () {
+  fillFromTarget('conn-ssid');
+};
+
+window.useTargetForKeygen = function () {
+  const t = fillFromTarget('keygen-ssid');
+  const kb = $('keygen-bssid');
+  if (t && kb) kb.value = t.bssid;
+};
+
+window.wifiConnect = async function () {
+  const ssid = valOrEmpty($('conn-ssid').value);
+  const pass = $('conn-pass')?.value || '';
+  if (!ssid || !pass) { log('SSID y clave requeridos.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('wifi_connect', { ssid, password: pass });
+    log(r.success ? `✅ ${r.output}` : `⚠️ ${r.output}\n${r.stderr}`, r.success ? 'ok' : 'warn');
+    $('conn-pass').value = '';
+  } catch (e) {
+    log(`[connect] ERROR: ${e}`, 'error');
+  }
+};
+
+window.wifiDisconnect = async function () {
+  try {
+    const r = await window.__invoke('wifi_disconnect');
+    log(r.output || r.stderr, r.success ? 'ok' : 'warn');
+  } catch (e) {
+    log(`[disconnect] ERROR: ${e}`, 'error');
+  }
+};
+
+window.keygenDetect = async function () {
+  const ssid = valOrEmpty($('keygen-ssid').value);
+  if (!ssid) { log('Especifica el SSID.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('keygen_detect', { ssid });
+    const pre = $('keygen-out');
+    if (pre) pre.textContent = r.output || r.stderr;
+  } catch (e) {
+    log(`[keygen] ERROR: ${e}`, 'error');
+  }
+};
+
+window.keygenRun = async function () {
+  const ssid = valOrEmpty($('keygen-ssid').value);
+  const bssid = valOrEmpty($('keygen-bssid').value);
+  if (!ssid || !bssid) { log('SSID y BSSID requeridos.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('keygen_run', { ssid, bssid });
+    const pre = $('keygen-out');
+    if (pre) pre.textContent = r.success ? r.output : r.stderr;
+    log(r.success ? '[keygen] candidatos generados.' : `[keygen] ${r.stderr}`, r.success ? 'ok' : 'warn');
+  } catch (e) {
+    log(`[keygen] ERROR: ${e}`, 'error');
+  }
+};
+
 // ── Background attack state ──────────────────────────────────────────────
 let currentAttackId = null;
 
