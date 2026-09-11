@@ -1,5 +1,6 @@
 mod commands;
 mod crack;
+mod eviltwin;
 mod profiler;
 mod tools_detect;
 mod wifi_adapter;
@@ -74,6 +75,9 @@ pub fn run() {
             // WPA3: auditoría + rogue conf (sin ejecución en Windows)
             wpa3::wpa3_audit,
             wpa3::gen_rogue_conf,
+            // Evil Twin: kit de lab + verificación de 1 candidato (hashcat local)
+            eviltwin::gen_eviltwin_kit,
+            eviltwin::verify_candidate,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,

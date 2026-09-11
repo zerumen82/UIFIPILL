@@ -1138,10 +1138,60 @@
 
             <!-- ══════════════════ EVIL TWIN ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F608; Evil Twin</h2>
+              <h2 class="section-title">&#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
               <div class="attack-grid">
 
-                <!-- Rogue AP -->
+                <!-- Kit Evil Twin -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--red">Kit Evil Twin (lab)</h3>
+                  <p class="atk-desc">Genera hostapd + dnsmasq + portal + verificación para Kali (2 adaptadores). Sin handshake previo no hay verificación: captúralo primero.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>SSID clon:</label>
+                      <input id="et-ssid" type="text" placeholder="MiWiFi-Casa">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="et-chan" type="number" min="1" max="165" value="1">
+                    </div>
+                    <div class="field-row">
+                      <label>Iface AP:</label>
+                      <input id="et-iface" type="text" placeholder="wlan1 (Kali)">
+                    </div>
+                    <div class="field-row">
+                      <label>Gateway:</label>
+                      <input id="et-gw" type="text" placeholder="192.168.254.1">
+                    </div>
+                    <div class="field-row">
+                      <label>Salida:</label>
+                      <input id="et-outdir" type="text" placeholder="eviltwin_SSID (auto)">
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForEvil()">Usar objetivo</button>
+                    <button class="atk-btn atk-btn--red" onclick="genEvilTwinKit()">Generar kit</button>
+                  </div>
+                  <pre id="et-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
+                </div>
+
+                <!-- Verificar 1 candidato -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--accent">Verificar 1 candidato <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h3>
+                  <p class="atk-desc">Comprueba una clave contra el .22000 con hashcat local, sin quemar GPU. La clave viaja en fichero temporal, nunca en argv.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Hash:</label>
+                      <input id="et-hash" type="text" placeholder="capture_xxx.22000">
+                    </div>
+                    <div class="field-row">
+                      <label>Clave:</label>
+                      <input id="et-pass" type="password" placeholder="candidata del portal">
+                    </div>
+                  </div>
+                  <button class="atk-btn" onclick="verifyCandidate()">Verificar</button>
+                </div>
+
+                <!-- Rogue AP clásico -->
                 <div class="atk-card">
                   <h3 class="atk-title atk-title--red">Evil Twin / Rogue AP</h3>
                   <p class="atk-desc">Clona un AP legítimo con airbase-ng para capturar handshake de clientes</p>

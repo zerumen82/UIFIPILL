@@ -835,6 +835,49 @@ window.fillWacker = function () {
   }
 };
 
+// ── Evil Twin ───────────────────────────────────────────────────────────
+window.useTargetForEvil = function () {
+  const sel = $('attack-bssid');
+  if (!sel?.value) { log('Selecciona un objetivo BSSID primero.', 'warn'); return; }
+  const opt = sel.options[sel.selectedIndex]?.text || '';
+  const ssid = opt.split('·')[0]?.trim();
+  const ssidInput = $('et-ssid');
+  if (ssid && ssidInput) ssidInput.value = ssid;
+};
+
+window.genEvilTwinKit = async function () {
+  const ssid = valOrEmpty($('et-ssid').value);
+  const ch = parseInt(valOrEmpty($('et-chan').value) || '1');
+  const iface = valOrEmpty($('et-iface').value) || undefined;
+  const gw = valOrEmpty($('et-gw').value) || undefined;
+  const out = valOrEmpty($('et-outdir').value) || undefined;
+  if (!ssid) { log('Especifica el SSID a clonar.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('gen_eviltwin_kit', {
+      ssid, channel: ch, ifaceAp: iface, gateway: gw, outputDir: out,
+    });
+    const pre = $('et-out');
+    if (pre) pre.textContent = r.output;
+    log(`[eviltwin] kit generado para "${ssid}". Coloca el .22000 y sigue README.txt en Kali.`, 'ok');
+  } catch (e) {
+    log(`[eviltwin] ERROR: ${e}`, 'error');
+  }
+};
+
+window.verifyCandidate = async function () {
+  const hash = valOrEmpty($('et-hash').value);
+  const pass = $('et-pass')?.value || '';
+  if (!hash) { log('Especifica el archivo .22000.', 'warn'); return; }
+  if (!pass) { log('Escribe la clave candidata.', 'warn'); return; }
+  try {
+    const r = await window.__invoke('verify_candidate', { hashFile: hash, password: pass });
+    log(r.success ? `✅ ${r.output}` : `❌ ${r.output || r.stderr}`, r.success ? 'ok' : 'warn');
+    $('et-pass').value = '';
+  } catch (e) {
+    log(`[verify] ERROR: ${e}`, 'error');
+  }
+};
+
 // ── Background attack state ──────────────────────────────────────────────
 let currentAttackId = null;
 
