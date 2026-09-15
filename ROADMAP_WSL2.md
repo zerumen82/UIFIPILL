@@ -13,9 +13,18 @@ verificable; no se avanza sin marcarlo. Estado actual arriba del todo.
   → `FAILED: API Timeout`. Causa oficial del desarrollador (foro #4683): el cliente
   consola EXIGE licencia de pago; con trial el USE se rechaza por diseño. NO es
   problema de elevación/driver/red (puerto accesible desde Kali, vhci cargado).
-- Siguiente (a elegir): (a) comprar licencia VH (~49 USD) y RF-check; (b) probar
-  gratis el cliente GUI Linux bajo WSLg contra el trial; (c) depurar RX usbipd;
-  (d) Kali bare-metal (cero coste, RF garantizada).
+- Decisión pendiente (única tarea abierta del proyecto): cómo conseguir RF real.
+
+| Opción | Coste | Esfuerzo | Prob. de RF real | Notas |
+|---|---|---|---|---|
+| (a) Licencia VirtualHere | ~49 USD | Muy bajo | Alta | El server ya LISTa el RT3070; lo único rechazado es el USE. Requiere RF-check después. |
+| (b) Cliente GUI Linux bajo WSLg (trial) | 0 | Bajo | Media | WSLg ya está; el cliente GUI puede tener otra ruta de licencia. Intento de ~15 min. |
+| (c) Depurar RX en usbipd | 0 | Alto | Baja-media | 0 pkts en Kali donde Windows ve 370 pkts/15 s; sin fix conocido en usbipd-win 5.3.0 + vhci. |
+| (d) Kali bare-metal (USB live/persistente) | 0 | Medio | Muy alta | Único camino sin transporte USB virtual; el RT3070 ya funciona con rt2800usb. |
+
+Recomendación: (d) como plan A para RF fiable hoy y (b) como intento gratuito de
+15 minutos antes de descartar del todo VirtualHere.
+
 - Contexto 2026-09-14: Fase 6 PARCIAL con 5 recetas + kill (smoke OK, RF muerta en
   Kali: RX 0 pkts sobre usbipd; Windows ve 370 pkts/15 s) + VM WSL2 reciclada por el
   host cada ~5–60 min (cualquier kernel). Kernels custom 6.6.123/6.6.84.1+ listos en
@@ -161,3 +170,15 @@ verificable; no se avanza sin marcarlo. Estado actual arriba del todo.
   testeable (23 tests) y mensaje STOP honesto. JS inline validado (bloque clásico
   OK; el `import` es del bridge `type=module` validado por vite). Kali dejado
   limpio (demonio de prueba muerto).
+- 2026-09-15 (revisión + limpieza de repo): el trabajo de las Fases 0-6b se
+  commiteó en 3 bloques (`7891cbb` Windows/Npcap+keygen, `08eea7e` motor dual
+  WSL2/VH + UI, `a3b42c4` docs) y se pusheó a `origin/master`; instalador NSIS
+  regenerado (7.117.995 B, 08:35). `.gitignore` arreglado: los clones anidados ya
+  no se añaden como gitlinks y el parche portable
+  `tools/build/patches/reaver-win-port.patch` queda rastreado. Limpieza: 5 ramas
+  sin commits propios y 4 worktrees scratch `D:\PROJECTS\UIFIPILL-wt-*` eliminados;
+  stash antiguo (base divergente `0e07795`, con WIP abandonado de mdk4/stream_*
+  que NO está en master) respaldado en
+  `D:\PROJECTS\uifipill-stash-backup-2026-09-15.patch` y dropeado. Estado:
+  `cargo test` 23 OK / 5 ignored, build sin warnings, 0 invokes sin handler,
+  instalador al día. Siguiente: elegir opción de RF de la matriz de arriba.
