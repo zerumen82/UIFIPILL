@@ -378,6 +378,10 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
     // Fallback reaver.exe nativo Windows
     let prog = reaver_cmd();
     let pin_warn = pin_channel_best_effort(&interface, None).await;
+    let inj = crate::capture::check_injection_capability(interface.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
     let r = run_bin(&app, &prog, &args).await;
     let pin = parse_wps_pin(&r.output);
@@ -388,6 +392,7 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
         _ => format!("reaver ejecutado (bully.exe no encontrado → fallback automático).\nRevisa la salida para el progreso del PIN.\n\n{}", r.output.lines().take(40).collect::<Vec<_>>().join("\n")),
     };
     if let Some(w) = pin_warn { summary = format!("{}\n{}", w, summary); }
+    if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
     CmdResponse {
         success: ok || r.success,
@@ -678,19 +683,24 @@ pub async fn wps_pixiedust(app: AppHandle, bssid: String, iface: Option<String>,
     let prog_s = reaver_cmd();
     let iface_in = iface.unwrap_or_else(|| "wlan0".into());
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
+    let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin(&app, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
     let psk = parse_wpa_psk(&r.output);
-    let mut body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nCanal: {}\nModo: Pixie Dust (-K 1)\n\n{}", prog.display(), bssid, iface_in, channel.map(|c| c.to_string()).unwrap_or("auto".into()), r.output);
-    if let Some(w) = ch_warn { body = format!("{}\n\n{}", w, body); }
-    let ok = pin.is_some();
-    let summary = match (&pin, &psk) {
+    let body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nCanal: {}\nModo: Pixie Dust (-K 1)\n\n{}", prog.display(), bssid, iface_in, channel.map(|c| c.to_string()).unwrap_or("auto".into()), r.output);
+    let mut summary = match (&pin, &psk) {
         (Some(p), Some(k)) => format!("OK PIN:{} PSK:{} | {}", p, k, body),
         (Some(p), None) => format!("OK PIN:{} | {}", p, body),
         _ => body.clone(),
     };
+    if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
+    if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
+    let ok = pin.is_some();
     CmdResponse { success: ok || r.success, output: wrap(&format!("WPS Pixie Dust · {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
@@ -757,6 +767,10 @@ pub async fn wps_bruteforce_reaver(app: AppHandle, bssid: String, iface: Option<
     let prog_s = reaver_cmd();
     let iface_in = iface.unwrap_or_else(|| "wlan0".into());
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
+    let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     if let Some(p) = start_pin { let p = p.trim().to_string(); if !p.is_empty() { args.push("-p".into()); args.push(p); } }
@@ -764,14 +778,15 @@ pub async fn wps_bruteforce_reaver(app: AppHandle, bssid: String, iface: Option<
     let r = run_bin(&app, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
     let psk = parse_wpa_psk(&r.output);
-    let mut body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nCanal: {}\nModo: bruteforce (-vv -L)\n\n{}", prog.display(), bssid, iface_in, channel.map(|c| c.to_string()).unwrap_or("auto".into()), r.output);
-    if let Some(w) = ch_warn { body = format!("{}\n\n{}", w, body); }
-    let ok = pin.is_some();
-    let summary = match (&pin, &psk) {
+    let body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nCanal: {}\nModo: bruteforce (-vv -L)\n\n{}", prog.display(), bssid, iface_in, channel.map(|c| c.to_string()).unwrap_or("auto".into()), r.output);
+    let mut summary = match (&pin, &psk) {
         (Some(p), Some(k)) => format!("OK PIN:{} PSK:{} | {}", p, k, body),
         (Some(p), None) => format!("OK PIN:{} | {}", p, body),
         _ => body.clone(),
     };
+    if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
+    if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
+    let ok = pin.is_some();
     CmdResponse { success: ok || r.success, output: wrap(&format!("WPS Bruteforce reaver {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
@@ -1007,15 +1022,20 @@ pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, b
         return Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Bruteforce BG bully {} {}", bssid, interface), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code });
     }
     let prog_s = reaver_cmd();
+    let inj = crate::capture::check_injection_capability(interface.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let mut args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
-    let summary = match pin {
+    let mut summary = match pin {
         Some(p) => format!("OK PIN:{} (reaver fallback BG) | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => "reaver BG ejecutado (bully.exe no encontrado, fallback).".into(),
     };
-    let summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Bruteforce BG reaver {} {}", bssid, interface), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
 
@@ -1026,10 +1046,16 @@ pub async fn wps_bruteforce_reaver_bg(app: AppHandle, state: State<'_, AppState>
     let iface_in = iface.unwrap_or_else(|| "wlan0".into());
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
+    let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa la opción 'wsl (Kali-WSL2)' en la UI para ejecutar reaver en Kali.", inj.message))
+    };
     let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
-    Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS reaver BG {}", bssid), &with_opt_warn(r.output, &ch_warn), r.success), stderr: r.stderr, exit_code: r.exit_code })
+    let mut out = with_opt_warn(r.output, &ch_warn);
+    out = with_opt_warn(out, &inj_warn);
+    Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS reaver BG {}", bssid), &out, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
 
 /// Wash scan en background
@@ -1056,15 +1082,20 @@ pub async fn wps_pbc_attack_bg(app: AppHandle, state: State<'_, AppState>, bssid
     let iface_in = iface.unwrap_or_else(|| "wlan0".into());
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
+    let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
-    let summary = match pin {
+    let mut summary = match pin {
         Some(p) => format!("OK PIN:{} | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => format!("PBC BG ejecutado. {}", r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
     };
-    let summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS PBC BG {}", bssid), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
 
@@ -1075,15 +1106,20 @@ pub async fn wps_pixiedust_bg(app: AppHandle, state: State<'_, AppState>, bssid:
     let iface_in = iface.unwrap_or_else(|| "wlan0".into());
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
+    let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
+    let inj_warn = if inj.supported { None } else {
+        Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
+    };
     let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
-    let summary = match pin {
+    let mut summary = match pin {
         Some(p) => format!("OK PIN:{} | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => format!("Pixie BG ejecutado. {}", r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
     };
-    let summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &ch_warn);
+    summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Pixie BG {}", bssid), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
 

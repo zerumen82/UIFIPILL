@@ -254,6 +254,101 @@ pub async fn native_capture(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct InjectionCheckResult {
+    pub supported: bool,
+    pub message: String,
+}
+
+#[command]
+pub async fn check_injection_capability(iface_guid: String) -> InjectionCheckResult {
+    let guid = {
+        let s = iface_guid.trim();
+        if let (Some(a), Some(b)) = (s.find('{'), s.find('}')) {
+            if b > a {
+                s[a + 1..b].to_string()
+            } else {
+                s.to_string()
+            }
+        } else {
+            s.trim_start_matches("NPF_").to_string()
+        }
+    };
+    if guid.is_empty() {
+        return InjectionCheckResult {
+            supported: false,
+            message: "GUID de interfaz vacío. Usa el modal «Activar modo monitor» para obtener el GUID NPF_{...} del adaptador.".into(),
+        };
+    }
+    let w = match unsafe { Wpcap::load() } {
+        Ok(w) => w,
+        Err(e) => {
+            return InjectionCheckResult {
+                supported: false,
+                message: format!("wpcap.dll no disponible: {}", e),
+            }
+        }
+    };
+    unsafe {
+        let dev = format!(r"\Device\NPF_WIFI_{{{}}}", guid);
+        let dev_c = match CString::new(dev.clone()) {
+            Ok(c) => c,
+            Err(_) => {
+                return InjectionCheckResult {
+                    supported: false,
+                    message: "GUID con bytes nulos.".into(),
+                }
+            }
+        };
+        let mut errbuf = [0 as c_char; 256];
+        let h = (w.open_live)(dev_c.as_ptr(), 65536, 1, 500, errbuf.as_mut_ptr());
+        if h.is_null() {
+            let e = CStr::from_ptr(errbuf.as_ptr()).to_string_lossy().into_owned();
+            return InjectionCheckResult {
+                supported: false,
+                message: format!(
+                    "X No se pudo abrir {}: {}\n¿Npcap con Dot11Support? ¿GUID correcto?",
+                    dev, e
+                ),
+            };
+        }
+        let dlt = (w.datalink)(h);
+        if dlt == 1 {
+            let msg = format!(
+                "X {} entrega Ethernet emulado (DLT 1): el adaptador NO está en modo monitor.\nActívalo primero con activate_monitor.",
+                dev
+            );
+            (w.close)(h);
+            return InjectionCheckResult {
+                supported: false,
+                message: msg,
+            };
+        }
+        let macb: Vec<u8> = vec![0xFF; 6];
+        let mut cts = vec![0xC4, 0x00, 0x00, 0x00];
+        cts.extend_from_slice(&macb);
+        let rc = (w.sendpacket)(h, cts.as_ptr(), cts.len() as c_int);
+        (w.close)(h);
+        if rc == 0 {
+            return InjectionCheckResult {
+                supported: true,
+                message: format!(
+                    "✅ Inyección soportada: pcap_sendpacket rc=0 en {} (DLT {}).",
+                    dev, datalink_name(dlt)
+                ),
+            };
+        }
+        let e = w.err_str(h);
+        InjectionCheckResult {
+            supported: false,
+            message: format!(
+                "X Inyección NO soportada: pcap_sendpacket rc=-1 en {} (DLT {}).\nError: {}\n\nEste adaptador/driver no permite inyección 802.11 en Windows+Npcap.\nOpciones:\n  1) Usa un adaptador con driver Dot11 completo (RTL8812AU/AR9271).\n  2) Usa el motor WSL2/Kali (requiere usbipd + distro Kali).",
+                dev, datalink_name(dlt), e
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod lab_capture_tests {
     //! Captura real con HW (ignorado por defecto).

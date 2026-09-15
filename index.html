@@ -942,11 +942,11 @@
                 <!-- WPS PIN bruteforce -->
                 <div class="atk-card">
                   <h3 class="atk-title atk-title--orange">WPS PIN bruteforce</h3>
-                  <p class="atk-desc">reaver.exe por defecto; bully.exe solo si existe (opcional). Fija canal: reaver Win no cambia solo. Npcap + RTL8812AU/AR9271.</p>
+                  <p class="atk-desc">reaver.exe por defecto; bully.exe solo si existe (opcional). WSL2/Kali como alternativa si la interfaz no soporta inyección en Windows. Fija canal: reaver Win no cambia solo. Npcap + RTL8812AU/AR9271.</p>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Tool:</label>
-                      <select id="wps-tool"><option value="auto">auto (reaver, bully si existe)</option><option value="reaver">reaver.exe</option><option value="bully">bully.exe (opcional)</option></select>
+                       <select id="wps-tool"><option value="auto">auto (reaver, bully si existe)</option><option value="reaver">reaver.exe</option><option value="bully">bully.exe (opcional)</option><option value="wsl">wsl (Kali-WSL2)</option></select>
                     </div>
                     <div class="field-row">
                       <label>Interface:</label>
@@ -1319,6 +1319,7 @@
                 <div class="atk-card">
                   <h3 class="atk-title">WSL2 / Kali — puente RF</h3>
                   <p class="atk-desc">Ejecuta en Kali lo que Windows no puede (canal, inyección, hcxdumptool). Requiere Kali + usbipd.</p>
+                  <div id="wsl-status" class="atk-desc" style="margin:4px 0 6px">Estado: sin verificar</div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>busid USB:</label>
@@ -1520,93 +1521,7 @@
         }
       }
 
-      // ── Puente WSL2/Kali (ROADMAP_WSL2 Fase 5) ────────────────────────
-      function wslBusid() {
-        const el = document.getElementById('wsl-busid');
-        return (el && el.value || '1-5').trim();
-      }
-      async function doWslAttach() {
-        log(`Moviendo USB ${wslBusid()} a Kali…`, 'info');
-        try {
-          const r = await window.__invoke('wsl_attach', { busid: wslBusid() });
-          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
-          if (r.stdout) log(r.stdout, 'info');
-          if (!r.success && r.stderr) log(r.stderr, 'warn');
-        } catch (err) { log(`[wsl_attach] FATAL: ${err}`, 'error'); }
-      }
-      async function doWslDetach() {
-        log(`Devolviendo USB ${wslBusid()} a Windows…`, 'info');
-        try {
-          const r = await window.__invoke('wsl_detach', { busid: wslBusid() });
-          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
-          if (r.stdout) log(r.stdout, 'info');
-          if (!r.success && r.stderr) log(r.stderr, 'warn');
-        } catch (err) { log(`[wsl_detach] FATAL: ${err}`, 'error'); }
-      }
-      async function doWslExec() {
-        const el = document.getElementById('wsl-cmd');
-        const raw = (el && el.value || 'echo ok').trim() || 'echo ok';
-        const parts = raw.split(/\s+/);
-        const command = parts[0];
-        const args = parts.slice(1);
-        log(`>>> Kali: ${raw}`, 'info');
-        try {
-          const r = await window.__invoke('wsl_exec', { command, args });
-          if (r.stdout) log(r.stdout, 'ok');
-          if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
-          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
-        } catch (err) { log(`[wsl_exec] FATAL: ${err}`, 'error'); }
-      }
-      // ── Recetas RF Fase 6 (SOLO AP propio; ver ROADMAP_WSL2) ──────────
-      function wslTarget() {
-        const b = document.getElementById('wsl-bssid');
-        const c = document.getElementById('wsl-chan');
-        return {
-          bssid: (b && b.value || '').trim(),
-          channel: c && parseInt(c.value) ? parseInt(c.value) : 11
-        };
-      }
-      async function wslShow(tag, p) {
-        try {
-          const r = await p;
-          if (r.stdout) log(r.stdout, 'ok');
-          if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
-          log(`[${tag} ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
-        } catch (err) { log(`[${tag}] FATAL: ${err}`, 'error'); }
-      }
-      async function doWslPmkid() {
-        const t = wslTarget();
-        log(`>>> Kali: PMKID ${t.channel} 60s…`, 'info');
-        await wslShow('pmkid', window.__invoke('wsl_pmkid_capture', { iface: 'wlan0', channel: t.channel, durationSecs: 60 }));
-      }
-      async function doWslAirodump() {
-        const t = wslTarget();
-        log(`>>> Kali: airodump ${t.channel} 20s…`, 'info');
-        await wslShow('airodump', window.__invoke('wsl_airodump', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
-      }
-      async function doWslWash() {
-        const t = wslTarget();
-        log(`>>> Kali: wash ${t.channel} 20s…`, 'info');
-        await wslShow('wash', window.__invoke('wsl_wash', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
-      }
-      async function doWslDeauth() {
-        const t = wslTarget();
-        if (!t.bssid) { log('Deauth cancelada: escribe el BSSID de TU ap.', 'warn'); return; }
-        log(`>>> Kali: deauth x10 a ${t.bssid} (AP propio)…`, 'info');
-        await wslShow('deauth', window.__invoke('wsl_deauth', { iface: 'wlan0', bssid: t.bssid, count: 10, channel: t.channel }));
-      }
-      async function doWslReaver() {
-        const t = wslTarget();
-        if (!t.bssid) { log('Reaver cancelado: escribe el BSSID de TU ap.', 'warn'); return; }
-        log(`>>> Kali: reaver 60s contra ${t.bssid} (AP propio)…`, 'info');
-        await wslShow('reaver', window.__invoke('wsl_reaver', { iface: 'wlan0', bssid: t.bssid, channel: t.channel, durationSecs: 60 }));
-      }
-      async function doWslKill() {
-        log('>>> Kali: pkill -INT (hcxdumptool|airodump-ng|wash|aireplay-ng|reaver)…', 'info');
-        for (const p of ['hcxdumptool', 'airodump-ng', 'wash', 'aireplay-ng', 'reaver']) {
-          await wslShow('kill', window.__invoke('wsl_kill', { pattern: p }));
-        }
-      }
+
       // ── VirtualHere (transporte alternativo a usbipd, ROADMAP Fase 6b) ──
       function vhServer() {
         const el = document.getElementById('vh-server');

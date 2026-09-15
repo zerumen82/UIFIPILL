@@ -376,6 +376,18 @@ window.wpsBrute = async function () {
     } catch (e) { log('check bully: ' + e, 'warn'); }
   }
   showProgress(true);
+  if (tool === 'wsl') {
+    updateProgress(10, 'Iniciando WPS bruteforce en Kali-WSL2 (reaver)...');
+    currentAttackId = `wpswsl_${bssid.replace(/:/g,'')}`;
+    try {
+      const r = await window.__invoke('wsl_reaver', { iface: 'wlan0', bssid, channel: ch || 11, durationSecs: 60, pixie: false });
+      if (r.stdout) log(r.stdout, 'ok');
+      if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
+      log(`[Kali reaver ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+    } catch (e) { log('[Kali reaver] FATAL: ' + e, 'error'); }
+    showProgress(false);
+    return;
+  }
   updateProgress(10, 'Iniciando WPS bruteforce (reaver por defecto, bully opcional)...');
   if (tool === 'reaver' || tool === 'auto') {
     currentAttackId = `wpsr_${bssid.replace(/:/g,'')}`;
@@ -1136,3 +1148,96 @@ listen('attack-error', (event) => {
     currentAttackId = null;
   }
 });
+
+// ── Puente WSL2/Kali (ROADMAP_WSL2 Fase 5) ──────────────────────────────
+window.wslBusid = function () {
+  const el = document.getElementById('wsl-busid');
+  return (el && el.value || '1-5').trim();
+};
+window.doWslAttach = async function () {
+  const status = document.getElementById('wsl-status');
+  if (status) status.textContent = 'Estado: attach…';
+  log(`Moviendo USB ${window.wslBusid()} a Kali…`, 'info');
+  try {
+    const r = await window.__invoke('wsl_attach', { busid: window.wslBusid() });
+    log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+    if (r.stdout) log(r.stdout, 'info');
+    if (!r.success && r.stderr) log(r.stderr, 'warn');
+    if (status) status.textContent = r.success ? 'Estado: ✅ Kali (USB attach)' : 'Estado: ❌ attach fallido';
+  } catch (err) { log(`[wsl_attach] FATAL: ${err}`, 'error'); if (status) status.textContent = 'Estado: ❌ error'; }
+};
+window.doWslDetach = async function () {
+  const status = document.getElementById('wsl-status');
+  if (status) status.textContent = 'Estado: detach…';
+  log(`Devolviendo USB ${window.wslBusid()} a Windows…`, 'info');
+  try {
+    const r = await window.__invoke('wsl_detach', { busid: window.wslBusid() });
+    log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+    if (r.stdout) log(r.stdout, 'info');
+    if (!r.success && r.stderr) log(r.stderr, 'warn');
+    if (status) status.textContent = r.success ? 'Estado: 🔒 Windows (USB devuelto)' : 'Estado: ❌ detach fallido';
+  } catch (err) { log(`[wsl_detach] FATAL: ${err}`, 'error'); if (status) status.textContent = 'Estado: ❌ error'; }
+};
+window.doWslExec = async function () {
+  const el = document.getElementById('wsl-cmd');
+  const raw = (el && el.value || 'echo ok').trim() || 'echo ok';
+  const parts = raw.split(/\s+/);
+  const command = parts[0];
+  const args = parts.slice(1);
+  log(`>>> Kali: ${raw}`, 'info');
+  try {
+    const r = await window.__invoke('wsl_exec', { command, args });
+    if (r.stdout) log(r.stdout, 'ok');
+    if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
+    log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+  } catch (err) { log(`[wsl_exec] FATAL: ${err}`, 'error'); }
+};
+window.wslTarget = function () {
+  const b = document.getElementById('wsl-bssid');
+  const c = document.getElementById('wsl-chan');
+  return {
+    bssid: (b && b.value || '').trim(),
+    channel: c && parseInt(c.value) ? parseInt(c.value) : 11
+  };
+};
+window.wslShow = async function (tag, p) {
+  try {
+    const r = await p;
+    if (r.stdout) log(r.stdout, 'ok');
+    if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
+    log(`[${tag} ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+  } catch (err) { log(`[${tag}] FATAL: ${err}`, 'error'); }
+};
+window.doWslPmkid = async function () {
+  const t = window.wslTarget();
+  log(`>>> Kali: PMKID ${t.channel} 60s…`, 'info');
+  await window.wslShow('pmkid', window.__invoke('wsl_pmkid_capture', { iface: 'wlan0', channel: t.channel, durationSecs: 60 }));
+};
+window.doWslAirodump = async function () {
+  const t = window.wslTarget();
+  log(`>>> Kali: airodump ${t.channel} 20s…`, 'info');
+  await window.wslShow('airodump', window.__invoke('wsl_airodump', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
+};
+window.doWslWash = async function () {
+  const t = window.wslTarget();
+  log(`>>> Kali: wash ${t.channel} 20s…`, 'info');
+  await window.wslShow('wash', window.__invoke('wsl_wash', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
+};
+window.doWslDeauth = async function () {
+  const t = window.wslTarget();
+  if (!t.bssid) { log('Deauth cancelada: escribe el BSSID de TU ap.', 'warn'); return; }
+  log(`>>> Kali: deauth x10 a ${t.bssid} (AP propio)…`, 'info');
+  await window.wslShow('deauth', window.__invoke('wsl_deauth', { iface: 'wlan0', bssid: t.bssid, count: 10, channel: t.channel }));
+};
+window.doWslReaver = async function () {
+  const t = window.wslTarget();
+  if (!t.bssid) { log('Reaver cancelado: escribe el BSSID de TU ap.', 'warn'); return; }
+  log(`>>> Kali: reaver 60s contra ${t.bssid} (AP propio)…`, 'info');
+  await window.wslShow('reaver', window.__invoke('wsl_reaver', { iface: 'wlan0', bssid: t.bssid, channel: t.channel, durationSecs: 60 }));
+};
+window.doWslKill = async function () {
+  log('>>> Kali: pkill -INT (hcxdumptool|airodump-ng|wash|aireplay-ng|reaver)…', 'info');
+  for (const p of ['hcxdumptool', 'airodump-ng', 'wash', 'aireplay-ng', 'reaver']) {
+    await window.wslShow('kill', window.__invoke('wsl_kill', { pattern: p }));
+  }
+};

@@ -132,37 +132,22 @@ tools_detect, wifi_adapter, monitor_mode, pcap_convert, wpa3.
   `-liphlpapi`, DLLs libpcap/libwinpthread/libcrypto/libssl incluidas — sin ellas 0xC0000135),
   hashcat 7.1.2 oficial (exe+modules/rules/masks/OpenCL), rockyou.txt (140 MB),
   suite aircrack-ng 1.7 Cygwin. `reaver -h` / `wash -h` / `hashcat --version` verificados.
-  Binarios ignorados en git (ver `.gitignore`); SÍ se rastrean fuentes, stubs y el parche
-  portable `tools/build/patches/reaver-win-port.patch`; los clones anidados quedan ignorados
-  (`tools/build/BUILD.md` documenta upstream, HEAD usado y receta de rebuild).
+  Binarios ignorados en git (ver `.gitignore`). Nota: el sistema de build de reaver (stubs,
+  scripts y parches) fue eliminado del repo; si hace falta recompilar, usar upstream +
+  parche portable fuera de este repo.
 - Frontend: AUTO-attack 9 pasos y quick-attack mezclan comandos sanos con comandos sin binario
   (ahora fallan con mensaje claro, no críptico); consola tiene matar-PID; scan tiene restaurar-managed.
-
-## Stubs/fakes — estado tras la reparación 2026-09-13
-1. `tools/build/stubs/` (arpa, linux/*.h, net/*, sys/*, unistd.h…): shims POSIX SOLO de compilación
-   para reaver en MinGW64. No son runtime; se quedan (sin ellos no compila). Fuente de reaver sí reparada.
-2. ✅ reaver Win `iface.c` REPARADO: `read_iface_mac()` real vía GetAdaptersAddresses (match por
-   GUID/nombre, `-liphlpapi` añadido al link MinGW); `next_channel()` no-op deliberado y
-   `change_channel()` registra+avisa (Npcap no deja a reaver mover la radio; el canal se fija con
-   `-c` + `set_monitor_channel`). Requiere recompilar con `tools/build/build_all.ps1` (MSYS2/MinGW64).
-3. ✅ `keygen.rs` Thomson REAL: SHA1("CP"+YY+WW+hex3) con diccionario [A-Z0-9]³ generado (46656) ×
-   años 2004-2012 × semanas 01-52 = 21.840.192 hashes con threads + early-exit; verificado con el
-   vector público (SpeedTouchF8A3D0 → 742DA831D2, S/N CP0615313039). `thomson_run` REGISTRADO en
-   `lib.rs`; `keygen_run` deriva Thomson automáticamente (máx. 5).
-4. ✅ `pcap_convert.rs` limpio: eliminados structs `PcapHdr`/`PktHdr` sin uso y `a4()` placeholder;
-   `cargo build` sin warnings (las fns frame_type/to_ds/mac_str/hex SÍ se usan en el parser M1/KDE+EAPOL).
-5. ✅ `wifi_adapter.rs` REAL: `Get-NetAdapter → CSV` (nombre, descripción, estado, MAC con `:`,
-   InterfaceGuid, PnPDeviceID para VID:PID); `monitor_active` vía `monitor_status` (GET OID);
-   `AdapterInfo.guid` nuevo (el modal usaba VID:PID como GUID — bug); URL AR9271 corregida.
-6. ✅ `monitor_mode.rs` (trabajo previo sin commitear) NO COMPILABA (partial moves en
-   set_monitor_channel/restore_managed): reparado cerrando el handle dentro de cada rama.
-7. Doc vieja: decía "4 attacks", `wsl2_run/wsl2_info` (no existen), `mdk4` (no existe).
-   `crack.rs` menciona "placeholders" solo como sintaxis de máscara hashcat, no es stub.
+- **Pre-vuelo inyección**: `check_injection_capability(iface_guid)` prueba `pcap_sendpacket`
+  (CTS-to-self) y devuelve `supported: true/false` + mensaje detallado. Todos los comandos
+  WPS nativos (reaver/pixie/pbc) la consultan antes de lanzar; si falla, sugieren
+  «wsl (Kali-WSL2)» en la UI como alternativa.
+- **WSL2 en WPS UI**: el selector de tool de WPS PIN bruteforce ahora incluye `wsl (Kali-WSL2)`
+  que invoca `wsl_reaver` directamente (60s, canal desde scan). Idem disponible en auto-attack.
 
 ## Estado verificado 2026-09-15 (revisión completa; commits 7891cbb / 08eea7e)
 - `cargo test --lib`: 28 tests → **23 passed / 5 ignored** (los `lab_*` que exigen HW real).
-  `cargo build --release` limpio (**0 warnings**, 1m48s).
-- `npm run lint` OK; `npx vite build` OK (`dist/index.html` 88.8 kB + 32.4 kB JS).
+  `cargo build --release` limpio (**0 warnings**, 1m 16s).
+- `npm run lint` OK; `npx vite build` OK (`dist/index.html` 84.5 kB + 36.5 kB JS).
 - JS inline de `index.html` validado: 1 `<script type=module>` (bridge Tauri) + 1 clásico
   de 246 líneas, ambos compilan sin errores.
 - Cableado UI↔backend re-auditado con script (43 invokes literales): **0 invokes sin
@@ -171,8 +156,8 @@ tools_detect, wifi_adapter, monitor_mode, pcap_convert, wpa3.
   (interno, lo usa `detect_adapters`), `set_monitor_mode`, `set_managed_mode`,
   `set_monitor_channel`, `set_monitor_freq`, `wash_scan_bg` (la UI usa `wash_scan`),
   `wps_bruteforce_reaver` (la UI usa `_bg`) y `wsl_from_win`/`wsl_to_win` (helpers internos).
-- Instalador regenerado: `target/release/bundle/nsis/UIFIPILL_1.0.0_x64-setup.exe`
-  (7.117.995 B, 2026-09-15 08:35).
+- Instalador regenerado: `src-tauri/target/release/bundle/nsis/UIFIPILL_1.0.0_x64-setup.exe`
+  (7.119.830 B ≈ 6,8 MB, 2026-09-15 11:14).
 - Limpieza de repo: 5 ramas sin commits propios borradas (+ 4 worktrees scratch
   `D:\PROJECTS\UIFIPILL-wt-*` liberados) y el stash antiguo (base divergente `0e07795`,
   con WIP abandonado de mdk4/stream_* que NO está en master) respaldado en

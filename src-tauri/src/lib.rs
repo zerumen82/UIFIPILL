@@ -74,6 +74,7 @@ pub fn run() {
             monitor_mode::monitor_status,
             // captura nativa Npcap (wpcap.dll, sin binarios externos)
             capture::native_capture,
+            capture::check_injection_capability,
             // pcap converter nativo (reemplaza hcxpcapngtool)
             pcap_convert::pcap_to_22000,
             // perfilador de objetivo (solo lectura)

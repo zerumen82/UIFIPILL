@@ -20,14 +20,9 @@ Thumbs.db
 # artefactos de compilación de herramientas vendorizadas (se regeneran)
 *.o
 *.obj
-# Fuentes de herramientas: SI se commitean (stubs, scripts y parches Win portables).
-# Los clones git anidados NO: su port Win vive como parche aplicable en
-# tools/build/patches/ (ver tools/build/BUILD.md).
-tools/build/reaver/
-tools/build/bully/
-tools/build/hcxdumptool/
-tools/build/hcxtools/
-tools/build/mdk3/
+# Fuentes de herramientas: solo se commitean parches/scripts necesarios.
+# Clones git anidados NO: su port Win vive como parche aplicable.
+tools/build/
 # Binarios y blobs descargados en tools/ (~500 MB, no commitear):
 tools/*.exe
 tools/*.dll
