@@ -1,4 +1,5 @@
 mod commands;
+mod capture;
 mod connect;
 mod crack;
 mod eviltwin;
@@ -9,6 +10,7 @@ mod wifi_adapter;
 mod monitor_mode;
 mod pcap_convert;
 mod wpa3;
+mod wsl;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -48,6 +50,10 @@ pub fn run() {
             commands::injection_test,
             commands::fakeauth_inject,
             commands::wps_pixiedust,
+            commands::wash_scan,
+            commands::wash_scan_bg,
+            commands::wps_bruteforce_reaver,
+            commands::wps_bruteforce_reaver_bg,
             commands::cafe_latte_attack,
             commands::interactive_inject,
             commands::fragment_inject,
@@ -64,7 +70,10 @@ pub fn run() {
             monitor_mode::activate_monitor,
             monitor_mode::restore_managed,
             monitor_mode::set_monitor_channel,
+            monitor_mode::set_monitor_freq,
             monitor_mode::monitor_status,
+            // captura nativa Npcap (wpcap.dll, sin binarios externos)
+            capture::native_capture,
             // pcap converter nativo (reemplaza hcxpcapngtool)
             pcap_convert::pcap_to_22000,
             // perfilador de objetivo (solo lectura)
@@ -85,12 +94,36 @@ pub fn run() {
             connect::wifi_disconnect,
             keygen::keygen_detect,
             keygen::keygen_run,
+            keygen::thomson_run,
             // background + cancel
             commands::cancel_attack,
             commands::pmkid_capture_bg,
             commands::capture_handshake_bg,
             commands::scan_airodump_bg,
             commands::wps_pin_bruteforce_bg,
+            commands::wps_pbc_attack_bg,
+            commands::wps_pixiedust_bg,
+            // puente WSL2/Kali (motor RF dual, ROADMAP_WSL2 Fase 5)
+            wsl::wsl_exec,
+            wsl::wsl_attach,
+            wsl::wsl_detach,
+            wsl::wsl_from_win,
+            wsl::wsl_to_win,
+            wsl::wsl_pmkid_capture,
+            wsl::wsl_airodump,
+            wsl::wsl_wash,
+            wsl::wsl_deauth,
+            wsl::wsl_reaver,
+            wsl::wsl_kill,
+            // VirtualHere: transporte USB alternativo a usbipd (Fase 6b)
+            wsl::vh_server_check,
+            wsl::vh_provision,
+            wsl::vh_daemon,
+            wsl::vh_hub_add,
+            wsl::vh_list,
+            wsl::vh_use,
+            wsl::vh_stop,
+            wsl::vh_rf_check,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

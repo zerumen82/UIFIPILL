@@ -419,8 +419,13 @@
               <button class="scan-btn" id="scanBtn" onclick="doScan()">
                 &#8635; Escanear ahora
               </button>
+              <input id="monChan" type="number" min="1" max="165" placeholder="CH" title="Canal a fijar al activar (verificado por lectura; algunos drivers lo ignoran sin admin)"
+                     style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:9px 10px;font-size:12px;font-family:inherit;width:64px;outline:none">
               <button class="scan-btn" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
                 &#x1F4E2; Activar modo monitor
+              </button>
+              <button class="scan-btn" id="restoreBtn" onclick="doRestoreManaged()" style="background:#3a3a52" title="Devuelve el adaptador a modo managed">
+                &#x1F504; Restaurar managed
               </button>
               <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green);min-width:160px">
                 &#x1F4F6; Capturar PMKID
@@ -537,7 +542,7 @@
                 <!-- Keygen claves por defecto -->
                 <div class="atk-card">
                   <h3 class="atk-title atk-title--yellow">&#x1F511; Keygen por defecto</h3>
-                  <p class="atk-desc">Claves de fábrica derivadas de SSID/BSSID (Comtrend Jazztel_/WLAN_). Sin RF, sin captura.</p>
+                  <p class="atk-desc">Claves de fábrica derivadas de SSID/BSSID: Comtrend (Jazztel_/WLAN_, directo) y Thomson/familia (búsqueda SHA1 ~21.8M, tarda segundos). Sin RF, sin captura.</p>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>SSID:</label>
@@ -546,6 +551,10 @@
                     <div class="field-row">
                       <label>BSSID:</label>
                       <input id="keygen-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                    <div class="field-row">
+                      <label>Máx (Thomson):</label>
+                      <input id="keygen-max" type="number" min="1" max="50" value="5" title="Candidatos máximos en la búsqueda Thomson">
                     </div>
                   </div>
                   <div class="atk-btn-row">
@@ -631,6 +640,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn" onclick="doCmd('pmkid_capture',capturePmkid)">&#x25B6; Iniciar captura</button>
+                    <button class="atk-btn" style="background:var(--green)" onclick="doCmd('native_capture',captureNative)" title="Captura 802.11 con Npcap (wpcap.dll, sin hcxdumptool). Requiere modo monitor activo.">&#x25BC; Npcap nativo</button>
                     <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
                   </div>
                 </div>
@@ -912,14 +922,39 @@
               <h2 class="section-title">&#x1F511; WPS</h2>
               <div class="attack-grid">
 
-                <!-- WPS PIN bruteforce -->
+                <!-- Wash scan -->
                 <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">WPS PIN bruteforce</h3>
-                  <p class="atk-desc">Ataque WPS con reaver · requiere chipset compatible</p>
+                  <h3 class="atk-title atk-title--blue">Wash scan (WPS)</h3>
+                  <p class="atk-desc">Enumera APs con WPS y locked — wash.exe nativo. Lab-only.</p>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Interface:</label>
+                      <input id="wash-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="wash-chan" type="number" min="1" max="165" placeholder="auto">
+                    </div>
+                  </div>
+                  <button class="atk-btn atk-btn--blue" onclick="doCmd('wash_scan', doWashScan)">Escanear WPS</button>
+                </div>
+
+                <!-- WPS PIN bruteforce -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--orange">WPS PIN bruteforce</h3>
+                  <p class="atk-desc">reaver.exe por defecto; bully.exe solo si existe (opcional). Fija canal: reaver Win no cambia solo. Npcap + RTL8812AU/AR9271.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Tool:</label>
+                      <select id="wps-tool"><option value="auto">auto (reaver, bully si existe)</option><option value="reaver">reaver.exe</option><option value="bully">bully.exe (opcional)</option></select>
+                    </div>
+                    <div class="field-row">
+                      <label>Interface:</label>
                       <input id="wps-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="wps-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
                   </div>
                   <div class="atk-btn-row">
@@ -941,8 +976,15 @@
                       <label>Interface:</label>
                       <input id="wpspbc-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="wpspbc-chan" type="number" min="1" max="165" placeholder="auto">
+                    </div>
                   </div>
-                  <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pbc_attack', doWpsPbc)">WPS PBC</button>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pbc_attack', doWpsPbc)">WPS PBC</button>
+                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
+                  </div>
                 </div>
 
                 <!-- WPS Pixie Dust -->
@@ -958,8 +1000,15 @@
                       <label>Interface:</label>
                       <input id="pixie-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
+                    <div class="field-row">
+                      <label>Canal:</label>
+                      <input id="pixie-chan" type="number" min="1" max="165" placeholder="auto">
+                    </div>
                   </div>
-                  <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pixiedust', doWpsPixieDust)">&#x26A1; Pixie Dust</button>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pixiedust', doWpsPixieDust)">&#x26A1; Pixie Dust</button>
+                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1265,6 +1314,71 @@
                   </div>
                   <button class="atk-btn atk-btn--red" onclick="doCmd('rogue_ap', doRogueAp)">&#x1F608; Lanzar Evil Twin</button>
                 </div>
+
+                <!-- Puente WSL2/Kali (motor RF dual, ROADMAP_WSL2 Fase 5) -->
+                <div class="atk-card">
+                  <h3 class="atk-title">WSL2 / Kali — puente RF</h3>
+                  <p class="atk-desc">Ejecuta en Kali lo que Windows no puede (canal, inyección, hcxdumptool). Requiere Kali + usbipd.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>busid USB:</label>
+                      <input id="wsl-busid" type="text" placeholder="1-7" value="1-7">
+                    </div>
+                    <div class="field-row">
+                      <label>Comando Kali:</label>
+                      <input id="wsl-cmd" type="text" placeholder="iw dev wlan0 info" value="echo ok">
+                    </div>
+                    <div class="field-row">
+                      <label>BSSID (solo AP propio):</label>
+                      <input id="wsl-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal 1-14:</label>
+                      <input id="wsl-chan" type="number" min="1" max="14" value="11">
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="atk-btn" onclick="doWslAttach()">&#x1F517; Attach a Kali</button>
+                    <button class="atk-btn" onclick="doWslDetach()">&#x1F519; Detach a Win</button>
+                    <button class="atk-btn" onclick="doWslExec()">&#x25B6; Ejecutar en Kali</button>
+                  </div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                    <button class="atk-btn" onclick="doWslPmkid()">PMKID 60s</button>
+                    <button class="atk-btn" onclick="doWslAirodump()">Airodump 20s</button>
+                    <button class="atk-btn" onclick="doWslWash()">Wash 20s</button>
+                    <button class="atk-btn" onclick="doWslDeauth()">Deauth x10</button>
+                    <button class="atk-btn" onclick="doWslReaver()">Reaver 60s</button>
+                    <button class="atk-btn" style="background:#3a3a52" onclick="doWslKill()">&#x25A0; Kill RF</button>
+                  </div>
+                  <p class="atk-desc" style="margin-top:6px">Deauth/Reaver SOLO contra tu AP. Requieren RF funcional en Kali (ver ROADMAP Fase 6).</p>
+                </div>
+
+                <!-- VirtualHere: transporte USB alternativo a usbipd (ROADMAP_WSL2 Fase 6b) -->
+                <div class="atk-card">
+                  <h3 class="atk-title">VirtualHere — USB a Kali</h3>
+                  <p class="atk-desc">Alternativa a usbipd para mover el RT3070 a Kali. Requiere el servidor VH en Windows (puerto 7575). OJO: el USE por consola exige licencia de pago; con trial da API Timeout.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>Servidor VH:</label>
+                      <input id="vh-server" type="text" placeholder="172.29.80.1" value="172.29.80.1">
+                    </div>
+                    <div class="field-row">
+                      <label>Dispositivo (del List):</label>
+                      <input id="vh-device" type="text" placeholder="DESKTOP-33B27GN.8">
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="atk-btn" onclick="doVhCheck()">&#x1F50D; Servidor</button>
+                    <button class="atk-btn" onclick="doVhProvision()">&#x1F4E5; Provision</button>
+                    <button class="atk-btn" onclick="doVhDaemon()">&#x2699; Demonio</button>
+                    <button class="atk-btn" onclick="doVhHub()">&#x1F517; +Hub</button>
+                    <button class="atk-btn" onclick="doVhList()">&#x2630; List</button>
+                    <button class="atk-btn" onclick="doVhUse()">&#x1F4E1; USE WLAN</button>
+                    <button class="atk-btn" style="background:#3a3a52" onclick="doVhStop()">&#x25A0; STOP</button>
+                    <button class="atk-btn" onclick="doVhRf()">&#x1F4F6; RF-check 15s</button>
+                  </div>
+                  <p class="atk-desc" style="margin-top:6px">Orden: Servidor → Provision → Demonio → +Hub → List → USE → RF-check. STOP devuelve el USB a Windows.</p>
+                </div>
               </div>
             </div>
 
@@ -1296,6 +1410,11 @@
             </div>
             <button class="scan-btn" style="background:#3a3a52" onclick="clearConsole()">
               &#10005; Limpiar
+            </button>
+            <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
+                   style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:9px 10px;font-size:12px;font-family:inherit;width:90px;outline:none">
+            <button class="scan-btn" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">
+              &#x25A0; Matar PID
             </button>
           </header>
           <div class="console-wrap">
@@ -1329,11 +1448,12 @@
         overlay.id = 'monitor-modal-overlay';
         let rows = '';
         list.forEach((a, i) => {
-          const key = a.chipset_key || a.name;
+          const key = a.guid || a.chipset_key || a.name;
+          const mon = a.monitor_active ? ' · <span style="color:var(--orange)">MONITOR</span>' : '';
           rows += `<tr style="cursor:pointer" onclick="window._pickedGuid='${key}';document.getElementById('monitor-modal-overlay').remove();doMonitorReal()">
             <td style="padding:8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
-            <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:600;color:var(--text)">${esc(a.chipset||a.name)}</td>
-            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(a.name)}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:600;color:var(--text)">${esc(a.chipset||a.name)}${mon}</td>
+            <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(a.name)} · ${esc(a.mac||'')} · ${esc(a.status||'')}</td>
             <td style="padding:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${esc(key)}</td>
           </tr>`;
         });
@@ -1359,9 +1479,12 @@
       async function doMonitorReal() {
         const guid = window._pickedGuid || '';
         if (!guid) { log('No se seleccionó un adaptador.', 'warn'); return; }
-        log(`Activando modo monitor en ${guid}…`, 'info');
+        const chEl = document.getElementById('monChan');
+        const chRaw = chEl ? parseInt(chEl.value) : NaN;
+        const ch = (chRaw >= 1 && chRaw <= 165) ? chRaw : undefined;
+        log(`Activando modo monitor en ${guid}${ch ? ' CH' + ch : ''}…`, 'info');
         try {
-          const result = await window.__invoke('activate_monitor', { ifaceGuid: guid, channel: undefined });
+          const result = await window.__invoke('activate_monitor', { ifaceGuid: guid, channel: ch });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
         } catch (err) {
           log(`[monitor] FATAL: ${err}`, 'error');
@@ -1370,6 +1493,164 @@
 
       async function doMonitor() {
         await showMonitorModal();
+      }
+
+      async function doRestoreManaged() {
+        const guid = window._pickedGuid || '';
+        if (!guid) { log('Sin adaptador seleccionado: usa "Activar modo monitor" primero para elegir.', 'warn'); return; }
+        log(`Restaurando modo managed en ${guid}…`, 'info');
+        try {
+          const result = await window.__invoke('restore_managed', { ifaceGuid: guid });
+          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.message}`, result.success ? 'ok' : 'error');
+        } catch (err) {
+          log(`[restore] FATAL: ${err}`, 'error');
+        }
+      }
+
+      async function doKillPid() {
+        const el = document.getElementById('killPid');
+        const pid = el && parseInt(el.value);
+        if (!pid || pid <= 0) { log('Escribe un PID válido (mira la lista de Procesos).', 'warn'); return; }
+        try {
+          const result = await window.__invoke('kill_attack_process', { pid });
+          log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output || result.stderr}`, result.success ? 'ok' : 'error');
+          if (el) el.value = '';
+        } catch (err) {
+          log(`[kill] FATAL: ${err}`, 'error');
+        }
+      }
+
+      // ── Puente WSL2/Kali (ROADMAP_WSL2 Fase 5) ────────────────────────
+      function wslBusid() {
+        const el = document.getElementById('wsl-busid');
+        return (el && el.value || '1-5').trim();
+      }
+      async function doWslAttach() {
+        log(`Moviendo USB ${wslBusid()} a Kali…`, 'info');
+        try {
+          const r = await window.__invoke('wsl_attach', { busid: wslBusid() });
+          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+          if (r.stdout) log(r.stdout, 'info');
+          if (!r.success && r.stderr) log(r.stderr, 'warn');
+        } catch (err) { log(`[wsl_attach] FATAL: ${err}`, 'error'); }
+      }
+      async function doWslDetach() {
+        log(`Devolviendo USB ${wslBusid()} a Windows…`, 'info');
+        try {
+          const r = await window.__invoke('wsl_detach', { busid: wslBusid() });
+          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+          if (r.stdout) log(r.stdout, 'info');
+          if (!r.success && r.stderr) log(r.stderr, 'warn');
+        } catch (err) { log(`[wsl_detach] FATAL: ${err}`, 'error'); }
+      }
+      async function doWslExec() {
+        const el = document.getElementById('wsl-cmd');
+        const raw = (el && el.value || 'echo ok').trim() || 'echo ok';
+        const parts = raw.split(/\s+/);
+        const command = parts[0];
+        const args = parts.slice(1);
+        log(`>>> Kali: ${raw}`, 'info');
+        try {
+          const r = await window.__invoke('wsl_exec', { command, args });
+          if (r.stdout) log(r.stdout, 'ok');
+          if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
+          log(`[${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+        } catch (err) { log(`[wsl_exec] FATAL: ${err}`, 'error'); }
+      }
+      // ── Recetas RF Fase 6 (SOLO AP propio; ver ROADMAP_WSL2) ──────────
+      function wslTarget() {
+        const b = document.getElementById('wsl-bssid');
+        const c = document.getElementById('wsl-chan');
+        return {
+          bssid: (b && b.value || '').trim(),
+          channel: c && parseInt(c.value) ? parseInt(c.value) : 11
+        };
+      }
+      async function wslShow(tag, p) {
+        try {
+          const r = await p;
+          if (r.stdout) log(r.stdout, 'ok');
+          if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
+          log(`[${tag} ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+        } catch (err) { log(`[${tag}] FATAL: ${err}`, 'error'); }
+      }
+      async function doWslPmkid() {
+        const t = wslTarget();
+        log(`>>> Kali: PMKID ${t.channel} 60s…`, 'info');
+        await wslShow('pmkid', window.__invoke('wsl_pmkid_capture', { iface: 'wlan0', channel: t.channel, durationSecs: 60 }));
+      }
+      async function doWslAirodump() {
+        const t = wslTarget();
+        log(`>>> Kali: airodump ${t.channel} 20s…`, 'info');
+        await wslShow('airodump', window.__invoke('wsl_airodump', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
+      }
+      async function doWslWash() {
+        const t = wslTarget();
+        log(`>>> Kali: wash ${t.channel} 20s…`, 'info');
+        await wslShow('wash', window.__invoke('wsl_wash', { iface: 'wlan0', channel: t.channel, durationSecs: 20 }));
+      }
+      async function doWslDeauth() {
+        const t = wslTarget();
+        if (!t.bssid) { log('Deauth cancelada: escribe el BSSID de TU ap.', 'warn'); return; }
+        log(`>>> Kali: deauth x10 a ${t.bssid} (AP propio)…`, 'info');
+        await wslShow('deauth', window.__invoke('wsl_deauth', { iface: 'wlan0', bssid: t.bssid, count: 10, channel: t.channel }));
+      }
+      async function doWslReaver() {
+        const t = wslTarget();
+        if (!t.bssid) { log('Reaver cancelado: escribe el BSSID de TU ap.', 'warn'); return; }
+        log(`>>> Kali: reaver 60s contra ${t.bssid} (AP propio)…`, 'info');
+        await wslShow('reaver', window.__invoke('wsl_reaver', { iface: 'wlan0', bssid: t.bssid, channel: t.channel, durationSecs: 60 }));
+      }
+      async function doWslKill() {
+        log('>>> Kali: pkill -INT (hcxdumptool|airodump-ng|wash|aireplay-ng|reaver)…', 'info');
+        for (const p of ['hcxdumptool', 'airodump-ng', 'wash', 'aireplay-ng', 'reaver']) {
+          await wslShow('kill', window.__invoke('wsl_kill', { pattern: p }));
+        }
+      }
+      // ── VirtualHere (transporte alternativo a usbipd, ROADMAP Fase 6b) ──
+      function vhServer() {
+        const el = document.getElementById('vh-server');
+        return (el && el.value || '172.29.80.1').trim();
+      }
+      function vhDevice() {
+        const el = document.getElementById('vh-device');
+        return (el && el.value || '').trim();
+      }
+      async function doVhCheck() {
+        log(`>>> VH: comprobando servidor ${vhServer()}:7575…`, 'info');
+        await wslShow('vh', window.__invoke('vh_server_check', { serverIp: vhServer() }));
+      }
+      async function doVhProvision() {
+        log('>>> VH: instalando cliente consola en Kali si falta…', 'info');
+        await wslShow('vh', window.__invoke('vh_provision', {}));
+      }
+      async function doVhDaemon() {
+        log('>>> VH: modprobe vhci-hcd + demonio…', 'info');
+        await wslShow('vh', window.__invoke('vh_daemon', {}));
+      }
+      async function doVhHub() {
+        log(`>>> VH: MANUAL HUB ADD ${vhServer()}…`, 'info');
+        await wslShow('vh', window.__invoke('vh_hub_add', { serverIp: vhServer() }));
+      }
+      async function doVhList() {
+        log('>>> VH: LIST de dispositivos…', 'info');
+        await wslShow('vh', window.__invoke('vh_list', {}));
+      }
+      async function doVhUse() {
+        const d = vhDevice();
+        if (!d) { log('USE cancelado: pega la dirección del List (p. ej. DESKTOP-33B27GN.8).', 'warn'); return; }
+        log(`>>> VH: USE ${d} (el USB sale de Windows)…`, 'info');
+        await wslShow('vh', window.__invoke('vh_use', { address: d }));
+      }
+      async function doVhStop() {
+        const d = vhDevice();
+        if (!d) { log('STOP cancelado: falta la dirección del dispositivo.', 'warn'); return; }
+        log(`>>> VH: STOP USING ${d} (vuelve a Windows)…`, 'info');
+        await wslShow('vh', window.__invoke('vh_stop', { address: d }));
+      }
+      async function doVhRf() {
+        log('>>> VH: RF-check wlan0 15s (iw + up + tcpdump + firmware)…', 'info');
+        await wslShow('vh', window.__invoke('vh_rf_check', { iface: 'wlan0', durationSecs: 15 }));
       }
 
       async function doCapture() {
