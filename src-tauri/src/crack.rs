@@ -168,6 +168,13 @@ pub async fn list_crack_assets() -> CrackAssets {
     for extra in [
         dirs::data_local_dir().map(|p| p.join("UIFIPILL").join("tools")),
         std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.join("tools"))),
+        // Workspace tools/ (modo dev: hashcat.exe, rockyou.txt, reglas)
+        Some(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(|p| p.join("tools"))
+                .unwrap_or_default(),
+        ),
     ]
     .into_iter()
     .flatten()

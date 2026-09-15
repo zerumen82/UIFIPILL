@@ -4,28 +4,9 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use tauri::command;
 
-// — pcap global header (classic libpcap format) —
-#[allow(dead_code)]
-#[repr(C, packed)]
-struct PcapHdr {
-    magic:    u32,  // 0xa1b2c3d4
-    version_major: u16,
-    version_minor: u16,
-    thiszone: i32,
-    sigfigs:  u32,
-    snaplen:  u32,
-    network:  u32,  // 105 = IEEE802_11_RADIOTAP
-}
-
-// per-packet header
-#[allow(dead_code)]
-#[repr(C, packed)]
-struct PktHdr {
-    ts_sec:   u32,
-    ts_usec:  u32,
-    incl_len: u32,
-    orig_len: u32,
-}
+// Nota: el parsing del header global pcap y de cada paquete se hace manualmente
+// (little/big-endian según magic); no se usan structs packed para evitar UB de
+// alineamiento en slices.
 
 // radiotap header: version(1) + pad(1) + len(2) + present(4) + optional fields
 const RADIOTAP_LEN_OFFSET: usize = 2;
@@ -55,32 +36,17 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
-// RSNE (IE 48 / 0x30) parser: return (count, list) of PMKIDs
-fn parse_rsne_pmkid(ie_data: &[u8]) -> (u16, Vec<[u8; 16]>) {
-    if ie_data.len() < 2 { return (0, vec![]) }
-    let ver = u16::from_le_bytes([ie_data[0], ie_data[1]]);
-    if ver != 1 { return (0, vec![]) }
-    // skip version(2) + group_cipher(4) + pairwise_count(2) + pairwise(4*count) + akm_count(2) + akm(4*count) + rsn_caps(2)
-    let mut off = 2;
-    off += 4; // group cipher
-    if off + 2 > ie_data.len() { return (0, vec![]) }
-    let pairwise_count = u16::from_le_bytes([ie_data[off], ie_data[off+1]]);
-    off += 2 + (pairwise_count as usize * 4);
-    if off + 2 > ie_data.len() { return (0, vec![]) }
-    let akm_count = u16::from_le_bytes([ie_data[off], ie_data[off+1]]);
-    off += 2 + (akm_count as usize * 4);
-    if off + 2 > ie_data.len() { return (0, vec![]) }
-    let pmkid_count = u16::from_le_bytes([ie_data[off], ie_data[off+1]]);
-    off += 2;
-    let mut pmkids = vec![];
-    for _ in 0..pmkid_count {
-        if off + 16 > ie_data.len() { break }
-        let mut kid = [0u8; 16];
-        kid.copy_from_slice(&ie_data[off..off+16]);
-        pmkids.push(kid);
-        off += 16;
-    }
-    (pmkid_count, pmkids)
+// (eliminado: parser RSNE de beacons — hcxpcapngtool no saca PMKIDs de beacons,
+//  el PMKID útil vive en el PMKID-KDE del EAPOL M1)
+
+// — PMKID obtenido del PMKID-KDE dentro del EAPOL M1 (AP→STA) —
+// (hcxpcapngtool nunca saca el PMKID del RSNE de beacons: solo de M1,
+//  (Re)AssocReq o EAPOL M2 con KDE. El RSNE de beacon lleva lista vacía.)
+#[derive(Debug, Clone)]
+struct PmkidEntry {
+    apmac:   [u8; 6],
+    stmac:   [u8; 6],
+    pmkid:   [u8; 16],
 }
 
 // — Handshake state per (APMAC, STMAC) pair —
@@ -174,9 +140,9 @@ pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> Co
     }
 
     let raws = if swap { u32::from_be_bytes } else { u32::from_le_bytes };
-    let raws16 = if swap { u16::from_be_bytes } else { u16::from_le_bytes };
+    let _raws16 = if swap { u16::from_be_bytes } else { u16::from_le_bytes };
 
-    let mut pmkids: Vec<HashLine> = vec![];
+    let mut pmkid_entries: Vec<PmkidEntry> = vec![];
     let mut handshakes: BTreeMap<[u8; 12], HandshakeState> = BTreeMap::new();
 
     let mut offset = 24; // skip global header
@@ -199,16 +165,31 @@ pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> Co
             if pkt.len() < 4 { offset += incl_len; continue }
             let rt_len = u16::from_le_bytes([pkt[RADIOTAP_LEN_OFFSET], pkt[RADIOTAP_LEN_OFFSET+1]]) as usize;
             if rt_len > pkt.len() { offset += incl_len; continue }
-            process_80211_frame(pkt, rt_len, &mut pmkids, &mut handshakes, &raws, &raws16);
+            process_80211_frame(pkt, rt_len, &mut pmkid_entries, &mut handshakes);
         }
 
         offset += incl_len;
     }
 
-    // Build output
+    // Build output (formato hc22000: WPA*01*PMKID*MAC_AP*MAC_STA*ESSID_HEX***)
     let mut out_lines: Vec<String> = vec![];
-    for h in &pmkids {
-        out_lines.push(h.line.clone());
+    let mut pmkid_lines: Vec<HashLine> = vec![];
+    for e in &pmkid_entries {
+        let pmkid_hex = hex(&e.pmkid);
+        let line = format!(
+            "WPA*01*{}*{}*{}***",
+            pmkid_hex,
+            mac_str(&e.apmac, 0),
+            mac_str(&e.stmac, 0),
+        );
+        pmkid_lines.push(HashLine {
+            line: line.clone(),
+            ap_mac: mac_str_colon(&e.apmac, 0),
+            client_mac: mac_str_colon(&e.stmac, 0),
+            hash_type: "PMKID".into(),
+            pmkid: Some(pmkid_hex),
+        });
+        out_lines.push(line);
     }
     for (_key, hs) in &handshakes {
         if let Some(line) = build_hash_line(hs) {
@@ -217,7 +198,7 @@ pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> Co
     }
 
     let hash_count = out_lines.len();
-    let pmkid_count = pmkids.len();
+    let pmkid_count = pmkid_lines.len();
     let handshake_count = handshakes.len();
 
     if let Err(e) = std::fs::write(&output_path, out_lines.join("\n")) {
@@ -246,10 +227,8 @@ fn mac_at(pkt: &[u8], off: usize) -> [u8; 6] {
 
 fn process_80211_frame(
     pkt: &[u8], rt_len: usize,
-    pmkids: &mut Vec<HashLine>,
+    pmkids: &mut Vec<PmkidEntry>,
     handshakes: &mut BTreeMap<[u8; 12], HandshakeState>,
-    _raws: &dyn Fn([u8; 4]) -> u32,
-    _raw16: &dyn Fn([u8; 2]) -> u16,
 ) {
     let fc_off = rt_len;
     if fc_off + 2 > pkt.len() { return }
@@ -268,42 +247,11 @@ fn process_80211_frame(
         (true,  true)  => (a3, [0; 6], a1),
     };
 
-    // Beacon (0x80) or Probe Resp (0x50)
-    if ftype == 0 {
-        if fsub == 8 || fsub == 5 {
-            // Parse tagged parameters for RSNE (IE 48)
-            let frame_body_off = fc_off + 24; // 24-byte 802.11 header + optional HT Control (unlikely)
-            if frame_body_off + 2 > pkt.len() { return }
-            // Fixed params: timestamp(8) + beacon_interval(2) + caps(2) = 12 bytes
-            let mut tp_off = frame_body_off + 12;
-            while tp_off + 2 < pkt.len() {
-                let ie_type = pkt[tp_off];
-                let ie_len  = pkt[tp_off + 1] as usize;
-                if tp_off + 2 + ie_len > pkt.len() { break }
-                if ie_type == 48 && ie_len >= 10 { // RSNE
-                    let ie_data = &pkt[tp_off+2..tp_off+2+ie_len];
-                    let (count, pmlist) = parse_rsne_pmkid(ie_data);
-                    if count > 0 {
-                        for pmkid_bytes in &pmlist {
-                            let pmkid_hex = hex(pmkid_bytes);
-                            let bssid_mac = mac_str(&bssid, 0);
-                            let line = format!("WPA*01*{bssid_mac}*{bssid_mac}*{}***", pmkid_hex);
-                            pmkids.push(HashLine {
-                                line: line.clone(),
-                                ap_mac: mac_str_colon(&bssid, 0),
-                                client_mac: mac_str_colon(&bssid, 0),
-                                hash_type: "PMKID".into(),
-                                pmkid: Some(pmkid_hex.clone()),
-                            });
-                        }
-                    }
-                }
-                tp_off += 2 + ie_len;
-            }
-        }
-    }
+    // Mgmt frames: no producen hashes aquí (el PMKID real viene del EAPOL M1
+    // o de (Re)AssocReq; el RSNE de beacon lleva el PMKID list vacío).
+    let _ = (ftype, fsub, da, sa, bssid);
 
-    // EAPOL (Data frame, subtype 0x00 or 0x01)
+    // EAPOL (Data frame, subtype 0x00 o QoS-Data 0x01)
     if ftype == 2 && (fsub == 0 || fsub == 1) {
         // After 802.11 header (24 bytes min), look for LLC/SNAP + EAPOL
         // Check for QoS (FC byte 1, bit 7)
@@ -327,12 +275,13 @@ fn process_80211_frame(
 
         let key_off = eapol_off + 4;
 
-        // Determine (apmac, stmac) for this frame
-        let (apmac, stmac) = if !from_ds(fc) && to_ds(fc) {
-            // AP transmitting: src = AP, dst = client
-            (sa, da)
+        // Determinar (apmac, stmac) según la dirección del frame:
+        //   STA→DS (to_ds=1):  TA=SA es el cliente, RA=A1 es el AP
+        //   DS→STA (from_ds=1): TA=SA es el AP,     DA=A1 es el cliente
+        //   ad-hoc/IBSS:        bssid (a3) es el AP,  DA es el cliente
+        let (apmac, stmac) = if to_ds(fc) && !from_ds(fc) {
+            (bssid, sa)
         } else if from_ds(fc) && !to_ds(fc) {
-            // AP transmitting: src = AP, dst = client
             (sa, da)
         } else {
             (bssid, da)
@@ -370,7 +319,7 @@ fn process_80211_frame(
         // M4: Install=0, Ack=0, MIC=1, Pairwise=1 (replay counter matches M3)
 
         if !install && key_ack && !key_mic_valid {
-            // M1
+            // M1: guardar EAPOL + ANONCE y extraer el PMKID-KDE si existe
             if state.eapol_m1.is_none() {
                 state.eapol_m1 = Some(full_eapol.clone());
                 state.anonce = {
@@ -379,6 +328,31 @@ fn process_80211_frame(
                     Some(n)
                 };
                 state.keyver = if desc_type == 1 { 1 } else { 2 };
+            }
+            // PMKID-KDE: en key_data, IE vendor 00:0F:AC type 4, len 0x14 (20)
+            let kd_off = key_off + 99;
+            if kd_off + 2 <= pkt.len() {
+                let kd_len = u16::from_be_bytes([pkt[key_off+97], pkt[key_off+98]]) as usize;
+                let kd_end = (kd_off + kd_len).min(pkt.len());
+                let mut p = kd_off;
+                while p + 8 <= kd_end {
+                    let ie_type = pkt[p];
+                    let ie_len  = pkt[p + 1] as usize;
+                    if ie_len < 20 || p + 2 + ie_len > kd_end { break }
+                    // OUI 00:0F:AC (802.11) + type 4 = PMKID KDE
+                    if ie_type == 0xDD && pkt[p+2] == 0x00 && pkt[p+3] == 0x0F && pkt[p+4] == 0xAC && pkt[p+5] == 0x04 {
+                        let mut kid = [0u8; 16];
+                        kid.copy_from_slice(&pkt[p+6..p+6+16]);
+                        // Descartar PMKID cero o todos-iguales (corrupto)
+                        if kid != [0u8; 16] {
+                            if !pmkids.iter().any(|e| e.apmac == apmac && e.stmac == stmac && e.pmkid == kid) {
+                                pmkids.push(PmkidEntry { apmac, stmac, pmkid: kid });
+                            }
+                        }
+                        break;
+                    }
+                    p += 2 + ie_len;
+                }
             }
         } else if pairwise && key_mic_valid && !key_ack {
             // M2 or M4
@@ -401,27 +375,35 @@ fn process_80211_frame(
     }
 }
 
-#[allow(dead_code)] fn a4() -> [u8; 6] { [0; 6] } // WDS addr4 placeholder
-
+/// Construye la línea hc22000 de un handshake M1+M2 (message pair 00 = challenge).
+/// Formato (hcxpcapngtool): WPA*02*MIC*MAC_AP*MAC_STA*ESSID_HEX*ANONCE*EAPOL_MIC_CERO*MP
+/// - EAPOL = mensaje completo (header EAPOL + Key) con los 16 bytes del MIC a 0.
+/// - MP 00 = M1+M2 con EAPOL tomado de M2 (challenge).
 fn build_hash_line(hs: &HandshakeState) -> Option<String> {
     let m1 = hs.eapol_m1.as_ref()?;
     let m2 = hs.eapol_m2.as_ref()?;
     let anonce = hs.anonce.as_ref()?;
-    let snonce = hs.snonce.as_ref()?;
 
     let ap_mac = mac_str(&hs.apmac, 0);
     let st_mac = mac_str(&hs.stmac, 0);
-    let m1_hex = hex(m1);
-    let m2_hex = hex(m2);
-    let m3_hex = hs.eapol_m3.as_ref().map(|m| hex(m)).unwrap_or_default();
-    let m4_hex = hs.eapol_m4.as_ref().map(|m| hex(m)).unwrap_or_default();
 
-    let keyver = hs.keyver;
-    let anonce_hex = hex(anonce);
-    let snonce_hex = hex(snonce);
+    // EAPOL del M2 con MIC zeroed (los 16 bytes del MIC en el Key frame)
+    let mut eapol = m2.clone();
+    // Key frame: type(1)+key_info(2)+key_len(2)+replay(8)+nonce(32)+iv(16)+rsc(8)+id(8) = 77 → MIC en [77..93] del Key
+    // full EAPOL = header(4) + Key → MIC en [4+77 .. 4+93]
+    let mic_off = 4 + 77;
+    if eapol.len() >= mic_off + 16 {
+        for b in &mut eapol[mic_off..mic_off + 16] { *b = 0; }
+    } else {
+        return None; // EAPOL demasiado corto: no es un M2 válido
+    }
+
+    let mic_hex = hex(&eapol[mic_off..mic_off + 16]); // cero a cero tras el wipe (hashcat recalcula)
+    let essid_hex = String::new(); // ESSID desconocido en capturas crudas
+    let _ = m1;
 
     Some(format!(
-        "WPA*{:02}*{ap_mac}*{st_mac}*{anonce_hex}*{snonce_hex}*{m1_hex}*{m2_hex}*{m3_hex}*{m4_hex}*",
-        keyver
+        "WPA*02*{}*{}*{}*{}*{}*{}*00",
+        mic_hex, ap_mac, st_mac, essid_hex, hex(anonce), hex(&eapol)
     ))
 }

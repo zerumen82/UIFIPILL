@@ -18,6 +18,62 @@ src-tauri/target/
 Thumbs.db
 *.tmp
 # artefactos de compilación de herramientas vendorizadas (se regeneran)
-tools/build/
 *.o
 *.obj
+# Fuentes de herramientas: SI se commitean (stubs, scripts y parches Win portables).
+# Los clones git anidados NO: su port Win vive como parche aplicable en
+# tools/build/patches/ (ver tools/build/BUILD.md).
+tools/build/reaver/
+tools/build/bully/
+tools/build/hcxdumptool/
+tools/build/hcxtools/
+tools/build/mdk3/
+# Binarios y blobs descargados en tools/ (~500 MB, no commitear):
+tools/*.exe
+tools/*.dll
+tools/*.txt
+tools/*.dict
+tools/*.bin
+tools/*.hcstat2
+tools/*.cmd
+tools/*.hash
+tools/example*
+tools/rules/
+tools/masks/
+tools/charsets/
+tools/modules/
+tools/OpenCL/
+tools/extra/
+tools/layouts/
+tools/bridges/
+tools/docs/
+tools/Python/
+tools/Rust/
+tools/tunings/
+tools/tools/
+tools/aircrack-ng-win/
+tools/aircrack-win/
+tools/*.exe
+tools/*.dll
+tools/*.txt
+tools/*.dict
+tools/*.bin
+tools/*.hcstat2
+tools/*.cmd
+tools/*.hash
+tools/example*
+tools/rules/
+tools/masks/
+tools/charsets/
+tools/modules/
+tools/OpenCL/
+tools/extra/
+tools/layouts/
+tools/bridges/
+tools/docs/
+tools/Python/
+tools/Rust/
+tools/tunings/
+tools/tools/
+tools/aircrack-ng-win/
+tools/aircrack-win/

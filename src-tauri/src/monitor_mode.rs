@@ -1,16 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// MODO MONITOR WINDOWS NATIVO — NPcap directo, sin WSL
+// MODO MONITOR WINDOWS NATIVO — Npcap Dot11 + OIDs 802.11 nativos
 //
-// Flujo:
-//   Npcap.dll  ──CreateFile──►  \Device\NPF_{GUID}
-//              ──DeviceIoControl──► OID_RT2870_SET_MONITOR = 1  (modo monitor HW)
-//              ──DeviceIoControl──► OID_RT2870_SET_CHANNEL = N  (canal)
-//              ──ReadFile──►  buffer 802.11 crudo (hasta 65536 bytes)
+// Técnica idéntica a la de WlanHelper.exe (herramienta oficial de Npcap):
+//   1. CreateFile sobre  \Device\Npcap\WIFI_{GUID}  (requiere Npcap con
+//      la opción "Support raw 802.11 traffic" = Dot11Support).
+//   2. DeviceIoControl(BIOCSETOID, PACKET_OID_DATA) con
+//      OID_DOT11_CURRENT_OPERATION_MODE = Network Monitor (0x80000000).
+//   3. DeviceIoControl(BIOCSETOID) con OID_DOT11_CURRENT_CHANNEL = N.
+//
+// Honestidad: solo funciona si el driver del adaptador implementa los OIDs
+// nativos 802.11. Los Intel no anuncian NETWORK_MONITOR y aquí se reporta
+// tal cual, sin fingir éxito.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-// Infrastructure scaffolding intentionally not yet exposed to frontend;
-// dead_code + unnecessary unsafe block warnings are suppressed.
-#[allow(dead_code, unused_unsafe)]
 
 use serde::Serialize;
 use std::ffi::{c_void, CString};
@@ -26,20 +27,32 @@ const OPEN_EXISTING:     u32 = 3;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const INVALID_HANDLE_VALUE: *mut c_void = (-1isize) as *mut c_void;
 
-// NPcap IOCTL codes (pre-computados: device<<16 | access<<14 | func<<2 | method)
-// METHOD_IN_DIRECT=0x01 WRITE=0x02 FUNC=0x13B → 0x8000<<16 | 0x02<<14 | 0x13B<<2 | 0x01
-const IOCTL_NPF_SET_OID: u32 = 0x8000_1001;
-// METHOD_BUFFERED=0x00 READ=0x01 FUNC=0x13C → 0x8000<<16 | 0x01<<14 | 0x13C<<2 | 0x00
-const IOCTL_NPF_GET_OID: u32 = 0x8000_0C40;
+// ── IOCTL codes de Npcap (packetWin7/npf/npf/ioctls.h) ───────────────────────
+// CTL_CODE(DeviceType, Function, Method, Access)
+//   = (DeviceType<<16) | (Access<<14) | (Function<<2) | Method
+const FILE_DEVICE_TRANSPORT: u32 = 0x00000021;
+const METHOD_BUFFERED:       u32 = 0x00000000;
+const FILE_WRITE_DATA:       u32 = 0x00000002;
+const FILE_READ_DATA:        u32 = 0x00000001;
 
-// OID RT2870 modo monitor y canal
-const OID_RT2870_MONITOR: u32 = 0xFF0100C0;
-const OID_RT2870_CHANNEL: u32 = 0xFF0100C8;
-// OID_DOT11_* reserved for future use (dot11 extended channel table / monitor flags)
-#[allow(dead_code)]
-const OID_DOT11_CHANNEL:  u32 = 0x0D010104;
-#[allow(dead_code)]
-const OID_DOT11_MONITOR:  u32 = 0xFF0100C0;
+const fn ctl_code(dev: u32, func: u32, method: u32, access: u32) -> u32 {
+    (dev << 16) | (access << 14) | (func << 2) | method
+}
+
+// BIOCSETOID   = CTL_CODE(FILE_DEVICE_TRANSPORT, 0xa08, METHOD_BUFFERED, FILE_WRITE_DATA)
+const BIOCSETOID: u32 = ctl_code(FILE_DEVICE_TRANSPORT, 0x0A08, METHOD_BUFFERED, FILE_WRITE_DATA);
+// BIOCQUERYOID = CTL_CODE(FILE_DEVICE_TRANSPORT, 0xa09, METHOD_BUFFERED, FILE_READ_DATA)
+const BIOCQUERYOID: u32 = ctl_code(FILE_DEVICE_TRANSPORT, 0x0A09, METHOD_BUFFERED, FILE_READ_DATA);
+
+// ── OIDs nativos 802.11 (shared/windot11.h, OID_DOT11_NDIS_START=0x0D010300) ─
+const OID_DOT11_OPERATION_MODE_CAPABILITY: u32 = 0x0D010300 + 7;  // GET
+const OID_DOT11_CURRENT_OPERATION_MODE:    u32 = 0x0D010300 + 8;  // GET/SET
+const OID_DOT11_CURRENT_CHANNEL:           u32 = 0x0D010300 + 53; // GET/SET (ULONG)
+const OID_DOT11_CURRENT_FREQUENCY:         u32 = 0x0D010300 + 54; // GET/SET (ULONG kHz)
+
+// Valores DOT11_OPERATION_MODE_*
+const DOT11_OPERATION_MODE_EXTENSIBLE_STATION: u32 = 0x00000004; // managed
+const DOT11_OPERATION_MODE_NETWORK_MONITOR:    u32 = 0x80000000; // monitor
 
 // ── Win32 FFI ────────────────────────────────────────────────────────────────
 
@@ -68,159 +81,142 @@ unsafe extern "C" {
         lp_overlapped: *mut c_void,
     ) -> c_int;
 
-    // ReadFile — reserved for packet-capture loop (not yet wired into a handler)
-    #[allow(dead_code)]
-    fn ReadFile(
-        h_file: *mut c_void,
-        lp_buffer: *mut c_void,
-        n_number_of_bytes_to_read: u32,
-        lp_number_of_bytes_read: *mut u32,
-        lp_overlapped: *mut c_void,
-    ) -> c_int;
-
     fn GetLastError() -> u32;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers de dispositivo ───────────────────────────────────────────────────
 
-/// Abre el dispositivo NPF de Npcap por GUID:  \Device\NPF_{GUID}
-unsafe fn open_npf_device(guid: &str) -> Option<*mut c_void> {
-    // Aceptar GUID limpio o con prefijo NPF_
-    let guid_clean = guid.trim_start_matches("NPF_").trim_start_matches("\\Device\\NPF_").trim_start_matches("\\\\Device\\NPF_");
-    let path = format!("\\Device\\NPF_{}", guid_clean);
-    let c_path = CString::new(path).ok()?;
-    let handle = CreateFileA(
-        c_path.as_ptr(),
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        ptr::null_mut(),
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        ptr::null_mut(),
-    );
-    if handle == INVALID_HANDLE_VALUE || handle.is_null() { None }
-    else { Some(handle) }
+/// Normaliza el identificador a GUID limpio (sin llaves ni prefijos).
+/// Acepta: "{...}", "NPF_{...}", "\\.\Npcap\WIFI_{...}", GUID a secas.
+fn normalize_guid(input: &str) -> String {
+    let s = input.trim();
+    if let (Some(a), Some(b)) = (s.find('{'), s.find('}')) {
+        if b > a {
+            return s[a + 1..b].trim().to_string();
+        }
+    }
+    s.trim_start_matches("\\\\.\\")
+        .trim_start_matches("\\Device\\")
+        .trim_start_matches("Npcap\\")
+        .trim_start_matches("WIFI_")
+        .trim_start_matches("NPF_")
+        .trim_matches(['{', '}'])
+        .trim()
+        .to_string()
+}
+
+/// Abre el dispositivo NPF probando las rutas usadas por Npcap/WinPcap.
+/// Devuelve (handle, ruta_abierta) para poder informar al usuario.
+fn open_npf_device(guid_clean: &str) -> Option<(*mut c_void, String)> {
+    let g = format!("{{{}}}", guid_clean);
+    // WIFI_ = captura raw 802.11 (Dot11Support). Sin WIFI_ = captura normal.
+    let candidates = [
+        format!(r"\\.\Npcap\WIFI_{}", g),
+        format!(r"\Device\Npcap\WIFI_{}", g),
+        format!(r"\\.\Npcap\{}", g),
+        format!(r"\Device\Npcap\{}", g),
+        format!(r"\\.\NPF_{}", g),
+        format!(r"\Device\NPF_{}", g),
+    ];
+    for path in candidates {
+        if let Ok(c_path) = CString::new(path.clone()) {
+            let handle = unsafe {
+                CreateFileA(
+                    c_path.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    ptr::null_mut(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    ptr::null_mut(),
+                )
+            };
+            if handle != INVALID_HANDLE_VALUE && !handle.is_null() {
+                return Some((handle, path));
+            }
+        }
+    }
+    None
 }
 
 fn close_handle(h: *mut c_void) {
     unsafe { let _ = CloseHandle(h); }
 }
 
-/// Envía un OID SET al driver NPcap y devuelve la respuesta
-fn npf_set_oid(handle: *mut c_void, oid: u32, value: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    let (in_ptr, in_len) = match value {
-        Some(b) => (b.as_ptr() as *const c_void, b.len() as u32),
-        None    => (ptr::null(), 0),
-    };
-    let mut out: [u8; 256] = [0; 256];
+// ── PACKET_OID_DATA (Common/Packet32.h) ──────────────────────────────────────
+// struct _PACKET_OID_DATA { ULONG Oid; ULONG Length; UCHAR Data[1]; }
+// Con METHOD_BUFFERED el mismo buffer sirve de entrada y salida.
+
+fn oid_buffer(oid: u32, data: &[u8]) -> Vec<u8> {
+    let mut buf = vec![0u8; 8 + data.len()];
+    buf[0..4].copy_from_slice(&oid.to_le_bytes());
+    buf[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
+    buf[8..].copy_from_slice(data);
+    buf
+}
+
+/// OID SET al driver Npcap. `data` es el valor crudo del OID.
+fn npf_set_oid(handle: *mut c_void, oid: u32, data: &[u8]) -> Result<(), String> {
+    let mut buf = oid_buffer(oid, data);
     let mut ret: u32 = 0;
     let ok = unsafe {
-        DeviceIoControl(handle, IOCTL_NPF_SET_OID,
-            in_ptr, in_len,
-            out.as_mut_ptr() as *mut c_void, out.len() as u32,
-            &mut ret, ptr::null_mut())
+        DeviceIoControl(
+            handle, BIOCSETOID,
+            buf.as_ptr() as *const c_void, buf.len() as u32,
+            buf.as_mut_ptr() as *mut c_void, buf.len() as u32,
+            &mut ret, ptr::null_mut(),
+        )
     };
     if ok == 0 {
-        return Err(format!("DeviceIoControl OID_SET 0x{:08X} falló (err={})", oid, unsafe { GetLastError() }));
+        return Err(format!(
+            "DeviceIoControl(BIOCSETOID, OID 0x{:08X}) fallo (err=0x{:08X}). El driver no acepto el OID.",
+            oid, unsafe { GetLastError() }
+        ));
     }
-    Ok(out[..ret as usize].to_vec())
+    Ok(())
 }
 
-/// Envía un OID GET al driver NPcap y devuelve la respuesta
-fn npf_get_oid(handle: *mut c_void, oid: u32) -> Result<Vec<u8>, String> {
-    let mut out: [u8; 256] = [0; 256];
+/// OID GET al driver Npcap; devuelve los bytes de datos recibidos.
+fn npf_get_oid(handle: *mut c_void, oid: u32, data_len: usize) -> Result<Vec<u8>, String> {
+    let data_len = data_len.max(1);
+    let mut buf = vec![0u8; 8 + data_len];
+    buf[0..4].copy_from_slice(&oid.to_le_bytes());
+    // En QUERY, Length = bytes que esperamos recibir (el driver lo exige).
+    buf[4..8].copy_from_slice(&(data_len as u32).to_le_bytes());
     let mut ret: u32 = 0;
     let ok = unsafe {
-        DeviceIoControl(handle, IOCTL_NPF_GET_OID,
-            ptr::null(), 0,
-            out.as_mut_ptr() as *mut c_void, out.len() as u32,
-            &mut ret, ptr::null_mut())
+        DeviceIoControl(
+            handle, BIOCQUERYOID,
+            buf.as_ptr() as *const c_void, buf.len() as u32,
+            buf.as_mut_ptr() as *mut c_void, buf.len() as u32,
+            &mut ret, ptr::null_mut(),
+        )
     };
     if ok == 0 {
-        return Err(format!("DeviceIoControl OID_GET 0x{:08X} falló (err={})", oid, unsafe { GetLastError() }));
+        return Err(format!(
+            "DeviceIoControl(BIOCQUERYOID, OID 0x{:08X}) fallo (err=0x{:08X}).",
+            oid, unsafe { GetLastError() }
+        ));
     }
-    Ok(out[..ret as usize].to_vec())
+    let total = (ret as usize).min(buf.len());
+    if total < 8 {
+        return Ok(vec![]);
+    }
+    Ok(buf[8..total].to_vec())
 }
 
-// ── Parseo 802.11 ─────────────────────────────────────────────────────────────
+/// ULONG LE (formato de los valores OID_DOT11_* tipo ULONG).
+fn ulong_le(v: u32) -> [u8; 4] { v.to_le_bytes() }
 
-/// Extrae (src_mac, dst_mac, bssid) de un frame 802.11 sniffado por Npcap
-/// Header 802.11: 2 bytes FC + 2 bytes Duration + 3 pares MAC (addr1,2,3,4) + 2 bytes SC
-#[allow(dead_code)]
-fn parse_80211_macs(data: &[u8]) -> (String, String, String) {
-    let mac_at = |i: usize| -> String {
-        if i + 5 < data.len() {
-            format!("{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                data[i], data[i+1], data[i+2], data[i+3], data[i+4], data[i+5])
-        } else { "??:??:??:??:??:??".into() }
-    };
-    if data.len() < 24 { return (mac_at(10), mac_at(4), mac_at(16)); }
-
-    let fc: u16 = (data[0] as u16) | ((data[1] as u16) << 8);
-    let to_ds   = (fc >> 8)  & 1 != 0;
-    let from_ds = (fc >> 9)  & 1 != 0;
-
-    // Formato de direcciones 802.11:
-    // addr1 (offset  4): DA / BSSID / RA
-    // addr2 (offset 10): SA / TA  / RA2
-    // addr3 (offset 16): BSSID / SA / TA2
-    match (to_ds, from_ds) {
-        (false, false) => (mac_at(10), mac_at(4),  mac_at(16)),  // IBSS: SA→DA, BSSID
-        (true,  false) => (mac_at(16), mac_at(10), mac_at(4)),   // From DS: BSSID→SA, DA
-        (false, true)  => (mac_at(4),  mac_at(16), mac_at(10)),  // To DS:   DA→BSSID, SA
-        (true,  true)  => (mac_at(16), mac_at(4),  mac_at(10)),  // WDS
+fn read_ulong_le(b: &[u8]) -> Option<u32> {
+    if b.len() >= 4 {
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    } else {
+        None
     }
 }
-
-// frame-type label helper — reserved for packet-capture (not yet wired)
-#[allow(dead_code)]
-fn frame_label(data: &[u8]) -> String {
-    if data.len() < 2 { return "?".into() }
-    let fc: u16 = (data[0] as u16) | ((data[1] as u16) << 8);
-    let ftype  = (fc >> 2) & 0b11;
-    let fsub   = (fc >> 4) & 0b1111;
-    match ftype {
-        0x00 => match fsub {
-            0x08 => "Beacon".into(),
-            0x04 => "ProbeReq".into(),
-            0x05 => "ProbeResp".into(),
-            0x0A => "Disassoc".into(),
-            0x0C => "Deauth".into(),
-            0x0B => "Auth".into(),
-            0x00 => "AssocReq".into(),
-            0x01 => "AssocResp".into(),
-            0x0D => "Action".into(),
-            _     => format!("Mgmt/0x{:X}", fsub),
-        },
-        0x01 => match fsub {
-            0x0B => "ACK".into(),
-            0x0C => "RTS".into(),
-            0x0D => "CTS".into(),
-            _     => format!("Ctrl/0x{:X}", fsub),
-        },
-        0x02 => "Data".into(),
-        _     => format!("?/0x{:X}", ftype),
-    }
-}
-
-/// Convierte el byte RSSI de Npcap a dBm aproximado
-#[allow(dead_code)]
-fn rssi_to_dbm(raw: i8) -> i8 { raw }
 
 // ── Modelos ──────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-// PacketEntry — reserved for streaming packet capture (not yet exposed to frontend)
-#[allow(dead_code)]
-pub struct PacketEntry {
-    pub ts:         String,
-    pub src_mac:    String,
-    pub dst_mac:    String,
-    pub bssid:      String,
-    pub signal_dbm: i8,
-    pub frame_type: String,
-    pub channel:    Option<u8>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MonitorCapResult {
@@ -239,150 +235,241 @@ pub struct ChannelResult {
     pub message:  String,
 }
 
+/// Canal 2.4 GHz → kHz para OID_DOT11_CURRENT_FREQUENCY (1→2412000 … 14→2484000).
+pub(crate) fn channel_to_khz(ch: u8) -> Option<u32> {
+    match ch {
+        1..=13 => Some(2_407_000 + ch as u32 * 5_000),
+        14 => Some(2_484_000),
+        _ => None,
+    }
+}
+
+/// Lee el canal actual abriendo el dispositivo (None si no se puede leer).
+fn read_channel(guid: &str) -> Option<u8> {
+    let (h, _) = open_npf_device(guid)?;
+    let ch = npf_get_oid(h, OID_DOT11_CURRENT_CHANNEL, 4)
+        .ok()
+        .and_then(|b| read_ulong_le(&b))
+        .filter(|c| *c >= 1 && *c <= 233)
+        .map(|c| c as u8);
+    close_handle(h);
+    ch
+}
+
+fn npcap_installed() -> bool {
+    std::path::Path::new(r"C:\Windows\System32\Npcap\wpcap.dll").exists()
+        || std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
+        || std::path::Path::new(r"C:\Windows\SysWOW64\Npcap.dll").exists()
+}
+
 // ── COMANDOS ─────────────────────────────────────────────────────────────────
 
-/// Activa modo monitor en el adaptador NPF especificado por GUID.
-/// Envía OID RT2870_SET_MONITOR=1 al driver NPcap modificado del chipset.
+/// Activa modo monitor (Network Monitor) en el adaptador cuyo GUID se pasa.
 #[command]
 pub async fn activate_monitor(iface_guid: String, channel: Option<u8>) -> MonitorCapResult {
-    let npcap_ok  = std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
-        || std::path::Path::new(r"C:\Windows\SysWOW64\Npcap.dll").exists();
-
-    if !npcap_ok {
+    if !npcap_installed() {
         return MonitorCapResult {
             success: false, interface_name: iface_guid.clone(),
             mode: "npcap-missing".into(), channel_set: None,
-            message: "\u{274C} Npcap.dll no encontrado.\nInstala NPcap desde https://npcap.com\nMarca 'Install in WinPcap API-compatible Mode'".into(),
+            message: "X Npcap no encontrado.\nInstala NPcap desde https://npcap.com\nMarca 'Install in WinPcap API-compatible Mode'\ny 'Support raw 802.11 traffic (Dot11Support)'".into(),
             npcap_installed: false,
         };
     }
 
-    // Normalizar GUID: aceptar solo el UUID o con prefijo NPF_
-    let guid = iface_guid
-        .replace("\\\\Device\\\\NPF_", "")
-        .replace("\\Device\\NPF_", "")
-        .replace("NPF_", "")
-        .replace("{", "").replace("}", "")
-        .trim().to_string();
+    let guid = normalize_guid(&iface_guid);
+    if guid.is_empty() {
+        return MonitorCapResult {
+            success: false, interface_name: iface_guid.clone(),
+            mode: "invalid-guid".into(), channel_set: None,
+            message: "X GUID de interfaz vacio o invalido.".into(),
+            npcap_installed: true,
+        };
+    }
 
-    let raw_handle = unsafe { open_npf_device(&guid) };
-    let result = match raw_handle {
-        Some(handle) => {
-            // ── OID 1: activar modo monitor ──
-            let mon_buf: [u8; 4] = [1, 0, 0, 0]; // 1 = monitor mode ON
-            let mon_res = npf_set_oid(handle, OID_RT2870_MONITOR, Some(&mon_buf));
+    let opened = open_npf_device(&guid);
+    let result = match opened {
+        Some((handle, dev_path)) => {
+            // 1) ¿El driver anuncia Network Monitor?
+            let cap = npf_get_oid(handle, OID_DOT11_OPERATION_MODE_CAPABILITY, 8)
+                .ok()
+                .and_then(|b| read_ulong_le(&b));
+            let monitor_supported = matches!(cap, Some(c) if c & DOT11_OPERATION_MODE_NETWORK_MONITOR != 0);
 
-            // ── OID 2: setear canal ──
+            // 2) SET modo monitor: DOT11_CURRENT_OPERATION_MODE {0, NETWORK_MONITOR}
+            let mut mode_data = vec![0u8; 8];
+            mode_data[4..8].copy_from_slice(&ulong_le(DOT11_OPERATION_MODE_NETWORK_MONITOR));
+            let mon_res = npf_set_oid(handle, OID_DOT11_CURRENT_OPERATION_MODE, &mode_data);
+
+            // 3) SET canal (ULONG LE)
             if let Some(ch) = channel {
-                let mut ch_buf: [u8; 4] = [0; 4];
-                ch_buf[0] = ch;
-                let _ = npf_set_oid(handle, OID_RT2870_CHANNEL, Some(&ch_buf));
+                let _ = npf_set_oid(handle, OID_DOT11_CURRENT_CHANNEL, &ulong_le(ch as u32));
             }
 
-            // ── OID 3: consultar canal actual ──
-            let ch_res = npf_get_oid(handle, OID_RT2870_CHANNEL).ok();
-            let ch_opt = ch_res.as_ref().and_then(|b| b.first()).copied();
+            // 4) Confirmar canal actual con un GET
+            let ch_now = npf_get_oid(handle, OID_DOT11_CURRENT_CHANNEL, 4)
+                .ok()
+                .and_then(|b| read_ulong_le(&b))
+                .filter(|c| *c >= 1 && *c <= 233)
+                .map(|c| c as u8);
 
             close_handle(handle);
 
-            let (success, msg) = match mon_res {
-                Ok(_) => (true, format!(
-                    "\u{2705} Modo monitor ACTIVADO\nInterfaz: NPF_{{{}}}\nCanal: {:?}\nOID RT2870 aceptado por el driver NPcap.\nEl adaptador est\u{E1} listo para capturar paquetes 802.11.",
-                    guid, ch_opt
-                )),
-                Err(e) => (false, format!(
-                    "\u{26A0}\u{FE0F} OID RT2870 no aceptado pero NPF abierto.\n{}\n\nPuedes intentar usar el adaptador en modo monitor\nsi el driver NPcap modificado lo soporta.\nGUID: NPF_{{{}}}", e, guid
-                )),
-            };
-
-            MonitorCapResult {
-                success, interface_name: format!("NPF_{}", guid),
-                mode: if success { "monitor" } else { "managed(?)" }.into(),
-                channel_set: ch_opt,
-                message: msg,
-                npcap_installed: true,
+            match mon_res {
+                Ok(()) => {
+                    let mut msg = format!(
+                        "[OK] Modo monitor (Network Monitor) ACTIVADO\nInterfaz: {}\nDriver: OID_DOT11_CURRENT_OPERATION_MODE aceptado.\n",
+                        dev_path
+                    );
+                    if let Some(c) = ch_now { msg.push_str(&format!("Canal confirmado: {}\n", c)); }
+                    if let Some(want) = channel {
+                        if ch_now != Some(want) {
+                            msg.push_str(&format!(
+                                "AVISO: canal pedido {} pero la radio está en {:?} (driver sin admin suele ignorarlo; usa set_monitor_freq o admin).\n",
+                                want, ch_now));
+                        }
+                    }
+                    msg.push_str("El adaptador esta listo para capturar 802.11 con Npcap Dot11.");
+                    MonitorCapResult {
+                        success: true, interface_name: dev_path,
+                        mode: "monitor".into(), channel_set: ch_now,
+                        message: msg, npcap_installed: true,
+                    }
+                }
+                Err(e) => {
+                    let hint = if !monitor_supported {
+                        "El driver NO anuncia DOT11_OPERATION_MODE_NETWORK_MONITOR:\neste adaptador no soporta modo monitor en Windows (tipico de Intel).\nUsa un RTL8812AU/AR9271 con driver con Dot11Support."
+                    } else {
+                        "El driver anuncia Network Monitor pero rechazo el SET.\nPrueba a desactivar/reconectar el adaptador o a reinstalar Npcap\ncon 'Support raw 802.11 traffic'."
+                    };
+                    MonitorCapResult {
+                        success: false, interface_name: dev_path,
+                        mode: "managed".into(), channel_set: None,
+                        message: format!("[X] No se pudo activar modo monitor.\n{}\n\n{}", hint, e),
+                        npcap_installed: true,
+                    }
+                }
             }
         }
-        None => {
-            MonitorCapResult {
-                success: false, interface_name: iface_guid.clone(),
-                mode: "not-found".into(), channel_set: None,
-                message: format!(
-                    "\u{274C} Dispositivo NPF no encontrado.\n\
-                     GUID buscado: {{{}}}\n\
-                     \nPara obtener el GUID correcto de tu AWUS036H:\n\
-                     1. Abre Administrador de dispositivos\n\
-                     2. Redes -> tu adaptador ALFA -> Propiedades\n\
-                     3. Detalles -> Ruta de la instancia de hardware\n\
-                     4. Copia el valor completo y p\u{E9}galo aqu\u{ED}.\n\
-                     \nEl GUID tiene forma: {{4F9B9A0B-0000-0000-0000-00248BCC3F4B}}",
-                    guid
-                ),
-                npcap_installed: true,
-            }
-        }
+        None => MonitorCapResult {
+            success: false, interface_name: iface_guid.clone(),
+            mode: "not-found".into(), channel_set: None,
+            message: format!(
+                "[X] Dispositivo NPF no encontrado.\nGUID buscado: {{{}}}\n\nRequisitos:\n1. Npcap instalado con 'Support raw 802.11 traffic (Dot11Support)'.\n2. Usa el InterfaceGuid de Get-NetAdapter,\n   p. ej. {{4F9B9A0B-....-00248BCC3F4B}}.",
+                guid
+            ),
+            npcap_installed: true,
+        },
     };
 
     result
 }
 
-/// Cambia canal en modo monitor sin reiniciar la interfaz
+/// Cambia canal en modo monitor sin reiniciar la interfaz.
+/// Verifica con lectura posterior: algunos drivers (p. ej. RT3070 sin admin)
+/// aceptan el IOCTL pero no mueven la radio; en ese caso success=false honesto.
 #[command]
 pub async fn set_monitor_channel(iface_guid: String, channel: u8) -> ChannelResult {
     if !(1..=165).contains(&channel) {
         return ChannelResult {
             success: false, channel: 0,
-            message: format!("Canal inv\u{E1}lido: {} (v\u{E1}lidos 1-165)", channel),
+            message: format!("Canal invalido: {} (validos 1-165)", channel),
         };
     }
-    let guid = iface_guid.replace("\\\\Device\\\\NPF_", "").replace("\\Device\\NPF_", "").replace("NPF_", "");
-    let handle = unsafe { open_npf_device(&guid) };
+    let guid = normalize_guid(&iface_guid);
+    let handle = open_npf_device(&guid);
 
     let r = match handle {
-        Some(h) => {
-            let mut buf: [u8; 4] = [0; 4];
-            buf[0] = channel;
-            match npf_set_oid(h, OID_RT2870_CHANNEL, Some(&buf)) {
-                Ok(_) => ChannelResult { success: true, channel,
-                    message: format!("\u{2705} Canal {} seteado correctamente en NPF_{{{}}}", channel, guid) },
+        Some((h, path)) => {
+            let set_res = npf_set_oid(h, OID_DOT11_CURRENT_CHANNEL, &ulong_le(channel as u32));
+            close_handle(h);
+            match set_res {
                 Err(e) => ChannelResult { success: false, channel: 0,
-                    message: format!("\u{274C} No se pudo cambiar canal: {}", e) },
+                    message: format!("[X] No se pudo cambiar canal: {}", e) },
+                Ok(()) => {
+                    let actual = read_channel(&guid);
+                    if actual == Some(channel) {
+                        ChannelResult { success: true, channel,
+                            message: format!("[OK] Canal {} confirmado en {}", channel, path) }
+                    } else {
+                        ChannelResult { success: false, channel: actual.unwrap_or(0),
+                            message: format!(
+                                "[X] Canal pedido {} pero la radio sigue en {:?} ({}).\n\
+                                 El driver no aplicó el cambio: prueba como administrador o fija \
+                                 la frecuencia con set_monitor_freq.",
+                                channel, actual, path) }
+                    }
+                }
             }
         }
         None => ChannelResult { success: false, channel: 0,
-            message: format!("No se pudo abrir NPF_{{{}}}. Verifica el GUID.", guid) },
+            message: format!("No se pudo abrir el dispositivo NPF para {{{}}}. Verifica el GUID y que Npcap tenga Dot11Support.", guid) },
     };
-    if let Some(h) = handle { close_handle(h); }
+    r
+}
+
+/// Fija frecuencia (kHz) en modo monitor — vía alternativa cuando el driver
+/// ignora OID_DOT11_CURRENT_CHANNEL. También verifica con lectura posterior.
+#[command]
+pub async fn set_monitor_freq(iface_guid: String, freq_khz: u32) -> ChannelResult {
+    if !(2_400_000..=2_500_000).contains(&freq_khz) && !(5_000_000..=6_000_000).contains(&freq_khz) {
+        return ChannelResult {
+            success: false, channel: 0,
+            message: format!("Frecuencia inválida: {} kHz (2.4/5 GHz)", freq_khz),
+        };
+    }
+    let guid = normalize_guid(&iface_guid);
+    let handle = open_npf_device(&guid);
+    let r = match handle {
+        Some((h, path)) => {
+            let set_res = npf_set_oid(h, OID_DOT11_CURRENT_FREQUENCY, &freq_khz.to_le_bytes());
+            close_handle(h);
+            match set_res {
+                Err(e) => ChannelResult { success: false, channel: 0,
+                    message: format!("[X] No se pudo fijar frecuencia: {}", e) },
+                Ok(()) => {
+                    let actual = read_channel(&guid);
+                    ChannelResult { success: true, channel: actual.unwrap_or(0),
+                        message: format!("[OK] Frecuencia {} kHz enviada en {} (canal leído: {:?})", freq_khz, path, actual) }
+                }
+            }
+        }
+        None => ChannelResult { success: false, channel: 0,
+            message: format!("No se pudo abrir el dispositivo NPF para {{{}}}.", guid) },
+    };
     r
 }
 
 /// Consulta estado actual de la interfaz NPF
 #[command]
 pub async fn monitor_status(iface_guid: String) -> MonitorCapResult {
-    let npcap_ok = std::path::Path::new(r"C:\Windows\System32\Npcap.dll").exists()
-        || std::path::Path::new(r"C:\Windows\SysWOW64\Npcap.dll").exists();
-
-    if !npcap_ok {
+    if !npcap_installed() {
         return MonitorCapResult { success: false, interface_name: "".into(),
             mode: "npcap-missing".into(), channel_set: None,
             message: "Npcap no instalado".into(), npcap_installed: false };
     }
 
-    let guid = iface_guid.replace("\\\\Device\\\\NPF_", "").replace("\\Device\\NPF_", "").replace("NPF_", "");
-    let handle = unsafe { open_npf_device(&guid) };
+    let guid = normalize_guid(&iface_guid);
+    let handle = open_npf_device(&guid);
 
     let result = match handle {
-        Some(h) => {
-            let mode_data = npf_get_oid(h, OID_RT2870_MONITOR).ok();
-            let ch_data   = npf_get_oid(h, OID_RT2870_CHANNEL).ok();
-            let mode_val  = mode_data.as_ref().and_then(|b| b.first()).copied().unwrap_or(0);
-            let channel   = ch_data.as_ref().and_then(|b| b.first()).copied();
-            let mode_str  = if mode_val == 1 { "monitor" } else { "managed" };
-
+        Some((h, path)) => {
+            let mode_data = npf_get_oid(h, OID_DOT11_CURRENT_OPERATION_MODE, 8)
+                .ok()
+                .and_then(|b| b.get(4..8).and_then(|s| read_ulong_le(s)));
+            let channel = npf_get_oid(h, OID_DOT11_CURRENT_CHANNEL, 4)
+                .ok()
+                .and_then(|b| read_ulong_le(&b))
+                .filter(|c| *c >= 1 && *c <= 233)
+                .map(|c| c as u8);
+            let mode_str = match mode_data {
+                Some(m) if m == DOT11_OPERATION_MODE_NETWORK_MONITOR => "monitor",
+                Some(m) if m == DOT11_OPERATION_MODE_EXTENSIBLE_STATION => "managed",
+                _ => "unknown",
+            };
             close_handle(h);
 
             MonitorCapResult {
-                success: true, interface_name: format!("NPF_{}", guid),
+                success: true, interface_name: path,
                 mode: mode_str.into(), channel_set: channel,
                 message: format!("Estado: {} | Canal: {:?}", mode_str, channel),
                 npcap_installed: true,
@@ -390,45 +477,145 @@ pub async fn monitor_status(iface_guid: String) -> MonitorCapResult {
         }
         None => MonitorCapResult { success: false, interface_name: "".into(),
             mode: "not-found".into(), channel_set: None,
-            message: format!("NPF no encontrado: {}", guid),
+            message: format!("NPF no encontrado: {{{}}}", guid),
             npcap_installed: true },
     };
 
     result
 }
 
-/// Restaura modo managed
+/// Restaura modo managed (Extensible Station)
 #[command]
 pub async fn restore_managed(iface_guid: String) -> MonitorCapResult {
-    let guid = iface_guid.replace("\\\\Device\\\\NPF_", "").replace("\\Device\\NPF_", "").replace("NPF_", "");
-    let handle = unsafe { open_npf_device(&guid) };
+    let guid = normalize_guid(&iface_guid);
+    let handle = open_npf_device(&guid);
 
     let r = match handle {
-        Some(h) => {
-            let buf: [u8; 4] = [0, 0, 0, 0]; // 0 = managed mode
-            match npf_set_oid(h, OID_RT2870_MONITOR, Some(&buf)) {
-                Ok(_) => MonitorCapResult {
-                    success: true, interface_name: format!("NPF_{}", guid),
+        Some((h, path)) => {
+            let mut mode_data = vec![0u8; 8];
+            mode_data[4..8].copy_from_slice(&ulong_le(DOT11_OPERATION_MODE_EXTENSIBLE_STATION));
+            let res = match npf_set_oid(h, OID_DOT11_CURRENT_OPERATION_MODE, &mode_data) {
+                Ok(()) => MonitorCapResult {
+                    success: true, interface_name: path.clone(),
                     mode: "managed".into(), channel_set: None,
-                    message: format!("\u{2705} NPF_{{{}}} restaurada a modo managed.", guid),
+                    message: format!("[OK] {} restaurada a modo managed.", path),
                     npcap_installed: true,
                 },
                 Err(e) => MonitorCapResult {
-                    success: false, interface_name: format!("NPF_{}", guid),
+                    success: false, interface_name: path.clone(),
                     mode: "unknown".into(), channel_set: None,
-                    message: format!("\u{274C} No se pudo restaurar: {}", e),
+                    message: format!("[X] No se pudo restaurar {}: {}", path, e),
                     npcap_installed: true,
                 }
-            }
+            };
+            close_handle(h);
+            res
         }
         None => MonitorCapResult {
-            success: false, interface_name: format!("NPF_{}", guid),
+            success: false, interface_name: iface_guid.clone(),
             mode: "not-found".into(), channel_set: None,
-            message: format!("Dispositivo NPF no encontrado: {}", guid),
+            message: format!("Dispositivo NPF no encontrado: {{{}}}", guid),
             npcap_installed: true,
         }
     };
-    if let Some(h) = handle { close_handle(h); }
     r
 }
 
+#[cfg(test)]
+mod lab_tests {
+    //! Pruebas de laboratorio con hardware real (Npcap + adaptador USB).
+    //! - `lab_detect_and_status`: solo lectura, corre en CI (no exige HW).
+    //! - `lab_monitor_cycle`: IGNORADO por defecto; cambia el modo de la radio.
+    //!   Ejecutar con HW: `cargo test --lib lab_monitor_cycle -- --ignored --nocapture`
+    use super::*;
+
+    #[tokio::test]
+    async fn lab_detect_and_status() {
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        println!("monitor_ready={} route={}", rep.monitor_ready, rep.recommended_route);
+        for a in &rep.adapters {
+            println!(
+                "ADAPTER name={} mac={} status={} guid={} chipset={} capable={} active={}",
+                a.name, a.mac, a.status, a.guid, a.chipset, a.monitor_capable, a.monitor_active
+            );
+            if !a.guid.is_empty() {
+                let st = monitor_status(a.guid.clone()).await;
+                println!("  STATUS mode={} channel={:?} ok={} msg={}", st.mode, st.channel_set, st.success, st.message.lines().next().unwrap_or(""));
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lab_vendor_channel() {
+        //! Experimento: OID privado Ralink RT2870 (0xFF0100C8) para mover canal.
+        //! Indocumentado; se verifica por lectura del OID estándar. Reversible.
+        const OID_RT2870_CHANNEL: u32 = 0xFF0100C8;
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        let target = rep.adapters.iter().find(|a| a.monitor_capable && !a.guid.is_empty());
+        let guid = match target {
+            Some(a) => { println!("TARGET {} {}", a.name, a.guid); normalize_guid(&a.guid) }
+            None => { println!("SKIP: sin adaptador"); return; }
+        };
+        // Asegurar modo monitor primero (canal se fija solo en monitor)
+        let act = activate_monitor(guid.clone(), None).await;
+        println!("ACTIVATE ok={} mode={}", act.success, act.mode);
+        let before = read_channel(&guid);
+        println!("BEFORE ch={:?}", before);
+        if let Some((h, _)) = open_npf_device(&guid) {
+            let r = npf_set_oid(h, OID_RT2870_CHANNEL, &ulong_le(1));
+            println!("VENDOR-SET ch1 -> {:?}", r.as_ref().map(|_| "OK").unwrap_or("ERR"));
+            if let Err(e) = &r { println!("  detail: {}", e); }
+            close_handle(h);
+        } else {
+            println!("VENDOR-SET: no se pudo abrir NPF");
+        }
+        // Releer un par de veces (algunos drivers aplican con retardo)
+        for i in 0..3 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            println!("READBACK[{}] ch={:?}", i, read_channel(&guid));
+        }
+        let rs = restore_managed(guid.clone()).await;
+        println!("RESTORE ok={}", rs.success);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lab_monitor_cycle() {
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        let target = rep.adapters.iter().find(|a| a.monitor_capable && !a.guid.is_empty());
+        let guid = match target {
+            Some(a) => {
+                println!("TARGET {} {} {}", a.name, a.guid, a.chipset);
+                a.guid.clone()
+            }
+            None => {
+                println!("SKIP: sin adaptador monitor-capable con GUID");
+                return;
+            }
+        };
+        // 1) activar en canal 6
+        let act = activate_monitor(guid.clone(), Some(6)).await;
+        println!("ACTIVATE ok={} mode={} ch={:?}\n{}", act.success, act.mode, act.channel_set, act.message);
+        assert!(act.success, "activate_monitor falló: {}", act.message);
+        // 2) cambiar a canal 1 (el RT3070 sin admin lo ignora: se informa, no se falla)
+        let ch = set_monitor_channel(guid.clone(), 1).await;
+        println!("CHANNEL ok={} {}", ch.success, ch.message.lines().next().unwrap_or(""));
+        // 2b) vía alternativa por frecuencia
+        if let Some(khz) = channel_to_khz(1) {
+            let f = set_monitor_freq(guid.clone(), khz).await;
+            println!("FREQ ok={} {}", f.success, f.message.lines().next().unwrap_or(""));
+        }
+        // 3) estado
+        let st = monitor_status(guid.clone()).await;
+        println!("STATUS mode={} ch={:?}", st.mode, st.channel_set);
+        assert_eq!(st.mode, "monitor");
+        // 4) restaurar managed
+        let rs = restore_managed(guid.clone()).await;
+        println!("RESTORE ok={} {}", rs.success, rs.message);
+        assert!(rs.success, "restore_managed falló: {}", rs.message);
+        let st2 = monitor_status(guid.clone()).await;
+        println!("STATUS2 mode={} ch={:?}", st2.mode, st2.channel_set);
+        assert_eq!(st2.mode, "managed");
+    }
+}
