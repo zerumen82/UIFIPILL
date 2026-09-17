@@ -19,21 +19,32 @@ function el(tag, cls, html) {
 }
 
 // ── Log ──────────────────────────────────────────────────────────────────
+// RENDIMIENTO: textContent += recopia TODO el texto en cada línea — con cientos
+// de líneas de ataques congela el hilo de UI (clicks lentos/muertos). Solución:
+// appendChild de un nodo por línea + cap estricto de nodos en el DOM.
+const LOG_MAX_LINES = 500;
 function log(msg, level = 'info') {
   const now = new Date().toLocaleTimeString('es-ES', { hour12: false });
   const line = `[${now}] [${level.toUpperCase()}] ${msg}`;
   logLines.push(line);
+  if (logLines.length > LOG_MAX_LINES) logLines.splice(0, logLines.length - LOG_MAX_LINES);
 
   const cv = $('cv');
   if (cv) {
-    cv.textContent += logLines.length === 1 ? line : '\n' + line;
+    const span = document.createElement('div');
+    span.textContent = line;
+    if (level === 'error') span.style.color = '#f07178';
+    else if (level === 'warn') span.style.color = '#e6b455';
+    else if (level === 'ok') span.style.color = '#7dcf8e';
+    cv.appendChild(span);
+    // Cap de nodos DOM: conserva los últimos LOG_MAX_LINES
+    while (cv.childNodes.length > LOG_MAX_LINES) cv.removeChild(cv.firstChild);
     cv.scrollTop = cv.scrollHeight;
   }
 
   const mini = $('mini-cv');
   if (mini) {
-    const lines = logLines.slice(-3).join('\n');
-    mini.textContent = lines;
+    mini.textContent = logLines.slice(-3).join('\n');
     mini.scrollTop = mini.scrollHeight;
   }
 
@@ -183,6 +194,12 @@ function renderProfile(p) {
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
+// Respaldo del tab Consola: listener directo (a prueba de escapes de Vite en
+// onclick inline — Vite convierte "=>" en "=&gt;" y el atributo deja de compilar).
+document.getElementById('nav-console')?.addEventListener('click', () => {
+  try { window.showTab('console'); } catch (e) { console.error('tab console:', e); }
+});
+
 window.showTab = function (id) {
   try {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
