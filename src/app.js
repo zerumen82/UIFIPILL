@@ -283,7 +283,7 @@ window.doScan = async function () {
     renderRows([]);
   } finally {
     btn.disabled = false;
-    btn.textContent = '&#8635; Escanear ahora';
+    btn.textContent = '&#x1F50D; Escanear ahora';
   }
 };
 
@@ -404,7 +404,7 @@ window.scanAndAutoAttack = async function () {
     log('Scan & Auto-Attack error: ' + err, 'error');
   } finally {
     const btn = document.getElementById('scanBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '&#8635; Escanear ahora'; }
+    if (btn) { btn.disabled = false; btn.textContent = '&#x1F50D; Escanear ahora'; }
   }
 };
 
