@@ -103,12 +103,30 @@ async fn run_bin(app: &AppHandle, exe: &str, args: &[String]) -> CmdResponse {
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
     match shell.command(exe).args(&arg_refs).output().await {
-        Ok(data) => CmdResponse {
-            success:   data.status.success(),
-            output:    String::from_utf8_lossy(&data.stdout).into_owned(),
-            stderr:    String::from_utf8_lossy(&data.stderr).into_owned(),
-            exit_code: data.status.code(),
-        },
+        Ok(data) => {
+            let stdout = String::from_utf8_lossy(&data.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&data.stderr).into_owned();
+            // Streaming en vivo también para comandos síncronos: emite el evento
+            // con id="sync" línea a línea (el frontend filtra por currentAttackId
+            // nulo o el propio "sync" para mostrarlo en el panel live).
+            let sync_id = "sync";
+            for line in stdout.lines() {
+                let _ = app.emit("attack-progress", serde_json::json!({
+                    "id": sync_id, "type": "stdout", "data": format!("{line}\n")
+                }));
+            }
+            for line in stderr.lines() {
+                let _ = app.emit("attack-progress", serde_json::json!({
+                    "id": sync_id, "type": "stderr", "data": format!("{line}\n")
+                }));
+            }
+            CmdResponse {
+                success:   data.status.success(),
+                output:    stdout,
+                stderr,
+                exit_code: data.status.code(),
+            }
+        }
         Err(e) => CmdResponse {
             success: false, output: String::new(),
             stderr: e.to_string(), exit_code: None,

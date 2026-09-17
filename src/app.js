@@ -552,6 +552,7 @@ window.doDeauth = async function () {
 
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`Deauth: AP=${bssid} client=${client || 'broadcast'} cnt=${cnt} iface=${iface}`, 'warn');
+  showProgress(true);
   return invokeAttack('deauth_inject', { bssid, clientMac: client, count: parseInt(cnt) || 10, iface });
 };
 
@@ -563,6 +564,7 @@ window.doDisassoc = async function () {
 
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`Disassoc: AP=${bssid} client=${client || 'broadcast'} cnt=${cnt} iface=${iface}`, 'warn');
+  showProgress(true);
   return invokeAttack('disassoc_inject', { bssid, clientMac: client, count: parseInt(cnt) || 5, iface });
 };
 
@@ -573,6 +575,7 @@ window.doBeaconFlood = async function () {
   const iface = valOrEmpty($('beacon-iface').value) || undefined;
   if (!essid) { log('Especifica un ESSID para el beacon flood.', 'warn'); return; }
   log(`Beacon flood: ESSID=${essid} chan=${ch} beacons=${cnt} iface=${iface || 'auto'}`, 'warn');
+  showProgress(true);
   return invokeAttack('beacon_flood', { essid, bssid: undefined, channel: parseInt(ch) || 1, beaconCount: parseInt(cnt) || 50, iface });
 };
 
@@ -595,6 +598,7 @@ window.doArpreply = async function () {
   const iface = valOrEmpty($('arpreply-iface').value) || 'wlan0mon';
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`ARP Replay: AP=${bssid} mac=${mac} iface=${iface}`, 'warn');
+  showProgress(true);
   return invokeAttack('arp_replay_inject', { targetBssid: bssid, address: mac, iface });
 };
 
@@ -617,6 +621,7 @@ window.doChopChop = async function () {
   const iface    = valOrEmpty($('chopchop-iface').value) || 'wlan0mon';
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`ChopChop: AP=${bssid} src=${srcMac || '00:11:22:33:44:55'} iface=${iface}`, 'warn');
+  showProgress(true);
   return invokeAttack('chopchop_inject', { targetBssid: bssid, sourceMac: srcMac, iface });
 };
 
@@ -627,6 +632,7 @@ window.doRogueAp = async function () {
   const iface  = valOrEmpty($('rogue-iface').value) || 'wlan0mon';
   if (!essid) { log('Especifica el ESSID del AP falso.', 'warn'); return; }
   log(`Evil Twin: ESSID=${essid} BSSID=${bssid || '00:11:22:33:44:55'} chan=${ch} iface=${iface}`, 'warn');
+  showProgress(true);
   return invokeAttack('rogue_ap', { essid, bssid, channel: parseInt(ch) || 1, iface });
 };
 
@@ -798,11 +804,13 @@ window.quickAttack = function (type) {
   if (type === 'pmkid') {
     const iface = valOrEmpty($('pmkid-iface').value) || undefined;
     log('Quick attack: PMKID capture en ' + bssid, 'warn');
+    showProgress(true);
     return invokeAttack('pmkid_capture', { bssid, channel: selectedChannel(), durationSeconds: 60, iface });
   }
   if (type === 'deauth') {
     const iface = valOrEmpty($('deauth-iface').value) || undefined;
     log('Quick attack: Deauth en ' + bssid, 'warn');
+    showProgress(true);
     return invokeAttack('deauth_inject', { bssid, clientMac: undefined, count: 5, iface });
   }
 };
@@ -834,6 +842,7 @@ window.doFragment = async function () {
   const bssid = valOrEmpty(document.getElementById('frag-bssid').value);
   const iface = valOrEmpty(document.getElementById('frag-iface').value) || undefined;
   if (!bssid) { log('Especifica el BSSID del AP.', 'warn'); return; }
+  showProgress(true);
   return invokeAttack('fragment_inject', { bssid, iface });
 };
 
@@ -843,12 +852,14 @@ window.doCafeLatte = async function () {
   const mac   = valOrEmpty(document.getElementById('latte-mac').value);
   const iface = valOrEmpty(document.getElementById('latte-iface').value) || undefined;
   if (!bssid || !mac) { log('Especifica BSSID y MAC del cliente.', 'warn'); return; }
+  showProgress(true);
   return invokeAttack('cafe_latte_attack', { bssid, clientMac: mac, iface });
 };
 
 // Interactive Inject
 window.doInteractive = async function () {
   const iface = valOrEmpty($('inter-iface').value) || undefined;
+  showProgress(true);
   return invokeAttack('interactive_inject', { iface });
 };
 
@@ -1361,6 +1372,7 @@ window.doFakeauth = async function () {
   const iface = valOrEmpty($('fakeauth-iface').value) || '';
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`Fakeauth: AP=${bssid} mac=${mac || '00:11:22:33:44:55'} iface=${iface || '(requerida)'}`, 'warn');
+  showProgress(true);
   return invokeAttack('fakeauth_inject', { bssid, sourceMac: mac, iface });
 };
 
@@ -1408,10 +1420,15 @@ function liveAppend(txt, level) {
   cv.scrollTop = cv.scrollHeight;
 }
 
-// Listen for attack progress events (streaming en tiempo real)
+// Listen for attack progress events (streaming en tiempo real).
+// Acepta dos orígenes: ataques en background (id = currentAttackId) y comandos
+// síncronos (run_bin emite con id="sync" — se muestra si no hay bg en curso,
+// para no mezclar salidas de un ataque bg y un síncrono simultáneos).
 listen('attack-progress', (event) => {
   const { id, type, data } = event.payload;
-  if (id === currentAttackId) {
+  const isSync = id === 'sync' && !currentAttackId;
+  if (id === currentAttackId || isSync) {
+    if (isSync) showProgress(true); // los síncronos no pasan por showProgress antes
     if (type === 'stdout') log(data, 'output');
     if (type === 'stderr') log(data, 'warn');
     if (type === 'stdout' || type === 'stderr') liveAppend(data, type);
