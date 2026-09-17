@@ -35,7 +35,7 @@ cd src-tauri && cargo build --release # backend Rust
 npx tauri build --bundles nsis        # instalador → src-tauri/target/release/bundle/nsis/
 ```
 
-## Qué corre dónde (mapa honesto, 2026-09-15)
+## Qué corre dónde (mapa honesto, 2026-09-17)
 
 | Área | Estado | Dónde |
 |---|---|---|
@@ -74,6 +74,24 @@ npx tauri build --bundles nsis        # instalador → src-tauri/target/release/
   escaneado.
 - `airodump-ng` / `aireplay-ng` de Windows responden `Adapter not supported` (esperan
   AirPcap): para RF real hay que ir a Kali con un chipset compatible.
+
+## Auditoría de stubs/fakes (2026-09-17)
+
+Revisión completa buscando código que simule éxito o ignore entradas. Corregidos:
+
+- **Capturas hcxdumptool**: `pmkid_capture(_bg)` y `capture_handshake(_bg)` lanzaban
+  `-i` sin interfaz (el flag se tragaba `-t`). Ahora aceptan el campo Interfaz de la
+  tarjeta y, si falta, avisan con el GUID NPF a pegar (igual que el resto de comandos).
+- **Crack sin falsos positivos**: el éxito de `pmkid_crack`/`crack_handshake` se
+  confirma leyendo el `.cracked` que escribe hashcat, no parseando su stdout
+  (lleno de líneas con `:` que antes daban "PASSWORD CRACKEADA" en falso).
+- **Conversor nativo**: `pcap_to_22000` trata bien las capturas DLT 105 (802.11 sin
+  radiotap); antes las corrompía saltando 4 bytes inexistentes de cabecera.
+- `list_attack_processes` ya no devuelve éxito si powershell falla.
+
+Todo lo demás se revisó y es real: OIDs Npcap, captura wpcap.dll, parser .22000,
+keygen con vectores de test, validadores anti-inyección en WSL y veredictos
+medidos (no simulados) de inyección/canal.
 
 Bloqueadores abiertos del motor dual (detalle y bitácora en `ROADMAP_WSL2.md`): RX muerta
 en Kali sobre usbipd, VM WSL2 reciclada por el host cada 5–60 min y VirtualHere `USE` →

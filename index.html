@@ -573,7 +573,7 @@
             <!-- Target select -->
             <div class="target-bar">
               <label>Objetivo BSSID:</label>
-              <select id="attack-bssid" onchange="if(this.value)profileTarget(this.value)">
+              <select id="attack-bssid" onchange="onTargetChange()">
                 <option value="">-- Selecciona una red de la lista --</option>
               </select>
               <button id="refreshTargetBtn" onclick="syncTargetList()">&#8635; Actualizar</button>
@@ -1582,12 +1582,17 @@
           return;
         }
         const bssid = bssidEl.value.trim();
-        log(`Capturando PMKID de ${bssid}…`, 'info');
+        const log3 = (id) => { const e = document.getElementById(id); return e && e.value ? e.value.trim() : undefined; };
+        const iface = log3('pmkid-iface');
+        const chRaw = log3('pmkid-chan');
+        const ch = chRaw ? parseInt(chRaw) : (window.selectedChannel ? window.selectedChannel() : undefined);
+        log(`Capturando PMKID de ${bssid}${ch ? ' CH' + ch : ''}…`, 'info');
         try {
           const result = await window.__invoke('pmkid_capture', {
             bssid,
-            channel: undefined,
-            durationSeconds: 30
+            channel: ch,
+            durationSeconds: 30,
+            iface
           });
           log(`[${result.success ? 'OK' : 'ERROR'}] ${result.output}`, result.success ? 'ok' : 'warn');
         } catch (err) {

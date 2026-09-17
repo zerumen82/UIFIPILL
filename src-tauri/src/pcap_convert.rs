@@ -160,12 +160,16 @@ pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> Co
         let pkt = &data[offset..offset+incl_len];
         pkt_num += 1;
 
-        // Skip radiotap header
-        if network == 105 || network == 127 { // IEEE802_11_RADIOTAP or IEEE802_11_RADIOTAP_AIRPCAP
+        // Skip radiotap header SOLO en DLT 127 (IEEE802_11_RADIO, lleva cabecera
+        // radiotap real). DLT 105 (IEEE802_11) son tramas 802.11 sin radiotap:
+        // rt_len = 0 para que fc_off empiece en el frame control.
+        if network == 127 {
             if pkt.len() < 4 { offset += incl_len; continue }
             let rt_len = u16::from_le_bytes([pkt[RADIOTAP_LEN_OFFSET], pkt[RADIOTAP_LEN_OFFSET+1]]) as usize;
             if rt_len > pkt.len() { offset += incl_len; continue }
             process_80211_frame(pkt, rt_len, &mut pmkid_entries, &mut handshakes);
+        } else if network == 105 {
+            process_80211_frame(pkt, 0, &mut pmkid_entries, &mut handshakes);
         }
 
         offset += incl_len;

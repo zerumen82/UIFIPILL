@@ -218,21 +218,23 @@ pub async fn scan_wifi(app: AppHandle) -> ScanResult {
 // COMANDO 2 — CAPTURAR PMKID  (hcxdumptool)
 // ═══════════════════════════════════════════════════════════════════════════════
 #[command]
-pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>) -> CmdResponse {
+pub async fn pmkid_capture(app: AppHandle, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>, iface: Option<String>) -> CmdResponse {
     let prog  = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
     let ch    = channel.unwrap_or(1);
     let dur   = duration_seconds.unwrap_or(120);
     let outfile = format!("capture_{}.pcapng", bssid.replace(':', ""));
+    let (iface_in, iface_warn) = resolve_iface(iface, "wlan0mon");
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
-        "-i".into(),
+        "-i".into(), iface_in.clone(),
         "-t".into(), dur.to_string(),
         "-w".into(), outfile.clone(),
         "--bssid".into(), bssid.clone(),
     ];
     if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
     let r = run_bin(&app, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
-    let body = format!("Binario: {}\nArchivo: {}\n\n{}", prog.display(), outfile, r.output);
+    let mut body = format!("Binario: {}\nArchivo: {}\nInterface: {}\n\n{}", prog.display(), outfile, iface_in, r.output);
+    body = with_iface_warn(body, &iface_warn);
     CmdResponse { success: r.success, output: wrap(&format!("PMKID Capture · {} · Canal={} · {}s", bssid, ch, dur), &body, r.success), stderr: r.stderr, exit_code: r.exit_code }
 }
 
@@ -284,13 +286,15 @@ pub async fn pmkid_crack(app: AppHandle, hash_file: String, wordlist: Option<Str
         wordlist_bin.clone(),
     ];
     let r = run_bin(&app, prog.to_str().unwrap_or("hashcat.exe"), &args).await;
-    let pw_opt   = r.output.lines().find(|l| l.contains(':')).map(|s| s.to_string());
-    let body = if let Some(ref p) = pw_opt {
+    // Éxito real = hashcat escribió el .cracked (ver nota en crack_handshake).
+    let pw_line = std::fs::read_to_string(&cracked_out).ok()
+        .and_then(|t| t.lines().map(str::trim).find(|l| !l.is_empty()).map(|s| s.to_string()));
+    let body = if let Some(ref p) = pw_line {
         format!("\u{1F512} PASSWORD: {}\n\n{}", p, r.output)
     } else {
         format!("Sin resultado aun. Hash: {}\nModo: {}  Wordlist: {}\n\n{}", hash_file, mode, wordlist_bin, r.output)
     };
-    CmdResponse { success: pw_opt.is_some() || r.success, output: wrap(&format!("PMKID Crack \u{00B7} {hash_file}"), &body, pw_opt.is_some()), stderr: r.stderr, exit_code: r.exit_code }
+    CmdResponse { success: pw_line.is_some(), output: wrap(&format!("PMKID Crack \u{00B7} {hash_file}"), &body, pw_line.is_some()), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ── Helpers WPS (Opción C: reaver por defecto, bully opcional) ────────────────
@@ -459,7 +463,7 @@ pub async fn list_attack_processes(_app: AppHandle) -> CmdResponse {
     let shell = _app.shell();
     let ps = "Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.ProcessName -match 'hcxdumptool|hashcat|bully|reaver|wash|pixiewps'} | Format-Table Id, ProcessName, Path -AutoSize";
     let out = match shell.command("powershell").args(["-NoProfile", "-Command", ps]).output().await { Ok(o) => o, Err(e) => return CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None } };
-    CmdResponse { success: true, output: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::new(), exit_code: out.status.code() }
+    CmdResponse { success: out.status.success(), output: String::from_utf8_lossy(&out.stdout).into_owned(), stderr: String::from_utf8_lossy(&out.stderr).into_owned(), exit_code: out.status.code() }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -478,15 +482,17 @@ pub async fn kill_attack_process(_app: AppHandle, pid: u32) -> CmdResponse {
 // COMANDO 10 — CAPTURAR HANDSHAKE WPA/WPA2 (EAPOL 4-way)
 // ═══════════════════════════════════════════════════════════════════════════════
 #[command]
-pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>) -> CmdResponse {
+pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>, iface: Option<String>) -> CmdResponse {
     let dur  = duration_seconds.unwrap_or(60);
     let ch   = channel.unwrap_or(1);
     let bssid_clean = bssid.replace(':', "");
     let pcap  = format!("handshake_{}.pcapng", bssid_clean);
     let hccapx = format!("handshake_{}.hccapx", bssid_clean);
+    let (iface_in, iface_warn) = resolve_iface(iface, "wlan0mon");
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
-        "-i".into(), "-t".into(), dur.to_string(),
+        "-i".into(), iface_in.clone(),
+        "-t".into(), dur.to_string(),
         "-w".into(), pcap.clone(),
         "--bssid".into(), bssid.clone(),
         "--channel".into(), ch.to_string(),
@@ -497,7 +503,8 @@ pub async fn capture_handshake(app: AppHandle, bssid: String, essid: Option<Stri
     let conv = if cap.success {
         convert_capture(&app, &pcap, &hccapx).await
     } else { CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code } };
-    let body = format!("Paso 1 — Captura:\n{}\n\n{}\n", cap.output, conv.output);
+    let mut body = format!("Interface: {}\n\nPaso 1 — Captura:\n{}\n\n{}\n", iface_in, cap.output, conv.output);
+    body = with_iface_warn(body, &iface_warn);
     let ok = conv.success;
     CmdResponse { success: ok, output: wrap(&format!("Handshake Capture · {} · Canal={} · {}s", bssid, ch, dur), &body, ok), stderr: format!("{}\n{}", cap.stderr, conv.stderr), exit_code: conv.exit_code }
 }
@@ -520,13 +527,16 @@ pub async fn crack_handshake(app: AppHandle, hash_file: String, wordlist: Option
         hash_file.clone(), wordlist_bin.clone(),
     ];
     let r = run_bin(&app, prog.to_str().unwrap_or("hashcat.exe"), &args).await;
-    let pw_opt = r.output.lines().find(|l| l.contains(':') && !l.starts_with('#')).map(|s| s.to_string());
-    let body   = if let Some(ref p) = pw_opt {
+    // Éxito real = hashcat escribió el .cracked (stdout siempre contiene ':' por
+    // los status/headers: parsear ahí da falsos positivos).
+    let pw_line = std::fs::read_to_string(&cracked_out).ok()
+        .and_then(|t| t.lines().map(str::trim).find(|l| !l.is_empty()).map(|s| s.to_string()));
+    let body = if let Some(ref p) = pw_line {
         format!("\u{1F512} PASSWORD CRACKEADA:\n{}\n\n{}", p, r.output)
     } else {
         format!("Sin resultado aun.\nHash: {}\nModo: {}  Ataque: {}  Wordlist: {}\n\n{}", hash_file, mode_str, atk, wordlist_bin, r.output)
     };
-    let ok = pw_opt.is_some();
+    let ok = pw_line.is_some();
     CmdResponse { success: ok, output: wrap(&format!("Handshake Crack \u{00B7} {hash_file} \u{00B7} -a{atk}"), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
@@ -957,35 +967,40 @@ pub async fn cancel_attack(state: State<'_, AppState>, attack_id: String) -> Res
 
 /// PMKID Capture en background
 #[command]
-pub async fn pmkid_capture_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>) -> Result<CmdResponse, String> {
+pub async fn pmkid_capture_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, channel: Option<u8>, duration_seconds: Option<u64>, iface: Option<String>) -> Result<CmdResponse, String> {
     let attack_id = format!("pmkid_{}", bssid.replace(':', ""));
     let prog = tool_path("HCXDUMPTOOL_PATH", "hcxdumptool.exe");
     let ch = channel.unwrap_or(1);
     let dur = duration_seconds.unwrap_or(120);
     let outfile = format!("capture_{}.pcapng", bssid.replace(':', ""));
+    let (iface_in, iface_warn) = resolve_iface(iface, "wlan0mon");
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
-        "-i".into(), "-t".into(), dur.to_string(),
+        "-i".into(), iface_in.clone(),
+        "-t".into(), dur.to_string(),
         "-w".into(), outfile.clone(), "--bssid".into(), bssid.clone(),
     ];
     if ch > 0 { args.push("--channel".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, prog.to_str().unwrap_or("hcxdumptool.exe"), &args).await;
-    let body = format!("Binario: {}\nArchivo: {}\n\n{}", prog.display(), outfile, r.output);
+    let mut body = format!("Binario: {}\nArchivo: {}\nInterface: {}\n\n{}", prog.display(), outfile, iface_in, r.output);
+    body = with_iface_warn(body, &iface_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("PMKID Capture BG · {} · Canal={} · {}s", bssid, ch, dur), &body, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
 
 /// Handshake Capture en background
 #[command]
-pub async fn capture_handshake_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>) -> Result<CmdResponse, String> {
+pub async fn capture_handshake_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, essid: Option<String>, channel: Option<u8>, duration_seconds: Option<u64>, iface: Option<String>) -> Result<CmdResponse, String> {
     let attack_id = format!("handshake_{}", bssid.replace(':', ""));
     let dur = duration_seconds.unwrap_or(60);
     let ch = channel.unwrap_or(1);
     let bssid_clean = bssid.replace(':', "");
     let pcap = format!("handshake_{}.pcapng", bssid_clean);
     let hccapx = format!("handshake_{}.hccapx", bssid_clean);
+    let (iface_in, iface_warn) = resolve_iface(iface, "wlan0mon");
     let mut args = vec![
         "--fcs".into(), "--enable_status=1".into(), "--status_interval=5000".into(),
-        "-i".into(), "-t".into(), dur.to_string(),
+        "-i".into(), iface_in.clone(),
+        "-t".into(), dur.to_string(),
         "-w".into(), pcap.clone(), "--bssid".into(), bssid.clone(),
         "--channel".into(), ch.to_string(),
     ];
@@ -996,7 +1011,8 @@ pub async fn capture_handshake_bg(app: AppHandle, state: State<'_, AppState>, bs
         convert_capture(&app, &pcap, &hccapx).await
     } else { CmdResponse { success: false, output: cap.output.clone(), stderr: cap.stderr.clone(), exit_code: cap.exit_code } };
     let ok = conv.success;
-    let body = format!("Paso 1 — Captura:\n{}\n\n{}\n", cap.output, conv.output);
+    let mut body = format!("Interface: {}\n\nPaso 1 — Captura:\n{}\n\n{}\n", iface_in, cap.output, conv.output);
+    body = with_iface_warn(body, &iface_warn);
     Ok(CmdResponse { success: ok, output: wrap(&format!("Handshake Capture BG · {} · Canal={} · {}s", bssid, ch, dur), &body, ok), stderr: format!("{}\n{}", cap.stderr, conv.stderr), exit_code: conv.exit_code })
 }
 

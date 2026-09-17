@@ -164,6 +164,24 @@ tools_detect, wifi_adapter, monitor_mode, pcap_convert, wpa3.
   `D:\PROJECTS\uifipill-stash-backup-2026-09-15.patch` antes de dropearlo.
 
 
+## Correcciones fakes/stubs — ronda 2026-09-17 (2ª auditoría)
+- `pmkid_capture(_bg)` y `capture_handshake(_bg)`: pasaban `-i` SIN valor a hcxdumptool
+  (el flag se tragaba el siguiente arg `-t`). Ahora param `iface: Option<String>` real +
+  `resolve_iface()` con aviso NPF. La UI ya pasa `pmkid-iface`/`handshake-iface`, que
+  existían en el HTML pero nadie leía.
+- Falso éxito en crack: `pmkid_crack` y `crack_handshake` daban "PASSWORD CRACKEADA" si
+  cualquier línea del stdout de hashcat contenía `:` (los status/headers siempre la
+  contienen). Ahora el éxito SOLO se declara si hashcat escribió el `.cracked`.
+- `pcap_convert.rs` DLT 105: aplicaba el skip de cabecera radiotap también en DLT 105
+  (que NO lleva radiotap) → habría corrompido el parseo de capturas sin radiotap. Solo
+  en DLT 127 ahora; en 105 el frame control empieza en offset 0.
+- `list_attack_processes`: devolvía `success: true` aunque powershell fallara; ahora
+  refleja el exit status real y propaga stderr.
+- Nota no-bug: `wps_pin_bruteforce` et al. usan `success: ok || r.success` — reporta el
+  éxito del proceso y destaca el PIN parseado aparte; no es fake.
+- Verificación: `cargo test --lib` 23 passed / 0 failed (5 ignored), `cargo build
+  --release` 0 warnings, `npm run lint` OK, `npx vite build` OK.
+
 ## External tools required (lab machine)
 - Npcap (NPcap.dll driver)
 - hcxdumptool + hcxpcapngtool (hcxtools)
