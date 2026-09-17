@@ -221,7 +221,26 @@ pub async fn scan_wifi(app: AppHandle) -> ScanResult {
             return ScanResult::err("Timeout: netsh wlan tardó más de 15s.");
         }
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    // PowerShell lanzado desde una app GUI puede emitir UTF-16LE (BOM FF FE o NULs
+    // intercalados); detectarlo y decodificar antes de parsear.
+    let bytes = out.stdout.clone();
+    let stdout = if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let utf16: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        log::warn!("scan_wifi: stdout en UTF-16LE (BOM), decodificado");
+        String::from_utf16_lossy(&utf16)
+    } else if bytes.contains(&0) {
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        log::warn!("scan_wifi: stdout en UTF-16LE (NULs), decodificado");
+        String::from_utf16_lossy(&utf16)
+    } else {
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
     let stderr = String::from_utf8_lossy(&out.stderr);
     log::info!("scan_wifi stdout len={} stderr len={} exit={:?}", stdout.len(), stderr.len(), out.status.code());
     if !stderr.is_empty() { log::warn!("scan_wifi stderr: {}", stderr); }
@@ -229,7 +248,24 @@ pub async fn scan_wifi(app: AppHandle) -> ScanResult {
         log::warn!("scan_wifi: netsh devolvió stdout vacío");
         return ScanResult::err("netsh devolvió salida vacía. ¿WiFi habilitado? ¿Servicio WLAN corriendo?");
     }
-    ScanResult::ok(parse_netsh(&stdout))
+    let nets = parse_netsh(&stdout);
+    if nets.is_empty() {
+        // Diagnóstico accionable en vez de un «0 redes» silencioso: estados típicos
+        // son radio recién re-enumerada (usbipd detach) o adaptador sin asociar.
+        let low = stdout.to_lowercase();
+        if low.contains("0 redes visibles") || low.contains("0 networks visible") || low.contains("0 redes") || low.contains("0 networks") {
+            log::warn!("scan_wifi: el adaptador ve 0 redes (radio sin escanear o recién re-enumerada)");
+            return ScanResult::err(
+                "El adaptador WiFi ve 0 redes ahora mismo. Causas típicas:\n\
+                 · El adaptador acaba de volver de Kali-WSL (usbipd detach) — espera 5-10 s y reescanea.\n\
+                 · Radio recién cambiada monitor↔managed.\n\
+                 · Señal demasiado débil. Pulsa «Escanear ahora» de nuevo.",
+            );
+        }
+        log::warn!("scan_wifi: salida de netsh no contuvo SSIDs parseables ({} bytes). Primeras líneas: {}",
+            stdout.len(), stdout.lines().take(5).collect::<Vec<_>>().join(" | "));
+    }
+    ScanResult::ok(nets)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
