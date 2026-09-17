@@ -52,6 +52,22 @@ fn valid_busid(b: &str) -> bool {
         && b.chars().any(|c| c.is_ascii_digit())
 }
 
+/// Comprueba si WSL2 está disponible ejecutando `wsl --version`.
+#[command]
+pub async fn wsl_is_available(app: AppHandle) -> WslExecResult {
+    let shell = app.shell();
+    match tokio::time::timeout(Duration::from_secs(10), shell.command("wsl").args(["--version"]).output()).await {
+        Ok(Ok(o)) => {
+            let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+            let ok = o.status.success() || stdout.contains("WSL");
+            WslExecResult::ok(stdout, stderr, o.status.code(), if ok { "WSL2 disponible".into() } else { "WSL2 no detectado".into() })
+        }
+        Ok(Err(e)) => WslExecResult::err(format!("No se pudo lanzar `wsl`: {}", e)),
+        Err(_) => WslExecResult::err("Timeout: `wsl --version` tardó más de 10s.".into()),
+    }
+}
+
 /// Ejecuta `comando + args` DENTRO de Kali sin shell intermedia (sin inyección
 /// sh): `wsl -d {distro} -- {command} {args…}`. Timeout 5–600 s (def. 60 s).
 #[command]

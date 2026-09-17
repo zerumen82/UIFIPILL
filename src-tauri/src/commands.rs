@@ -2,6 +2,7 @@ use serde::Serialize;
 use tauri::{command, AppHandle};
 use tauri_plugin_shell::process::Output;
 use tauri_plugin_shell::ShellExt;
+use log;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PATHS
@@ -187,16 +188,30 @@ fn wrap(title: &str, body: &str, ok: bool) -> String {
 pub async fn scan_wifi(app: AppHandle) -> ScanResult {
     use std::time::Duration;
     let shell = app.shell();
-    let out: Output = match tokio::time::timeout(Duration::from_secs(10),
+    let out: Output = match tokio::time::timeout(Duration::from_secs(15),
         shell.command("powershell")
             .args(["-NoProfile", "-Command", "netsh wlan show networks mode=bssid"])
             .output()
     ).await {
         Ok(Ok(o)) => o,
-        Ok(Err(e)) => return ScanResult::err(&e.to_string()),
-        Err(_) => return ScanResult::err("Timeout: netsh wlan tardó más de 10s."),
+        Ok(Err(e)) => {
+            log::error!("scan_wifi: powershell error: {}", e);
+            return ScanResult::err(&format!("Error powershell: {}", e));
+        }
+        Err(_) => {
+            log::error!("scan_wifi: timeout (>15s)");
+            return ScanResult::err("Timeout: netsh wlan tardó más de 15s.");
+        }
     };
-    ScanResult::ok(parse_netsh(&String::from_utf8_lossy(&out.stdout)))
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    log::info!("scan_wifi stdout len={} stderr len={} exit={:?}", stdout.len(), stderr.len(), out.status.code());
+    if !stderr.is_empty() { log::warn!("scan_wifi stderr: {}", stderr); }
+    if stdout.trim().is_empty() {
+        log::warn!("scan_wifi: netsh devolvió stdout vacío");
+        return ScanResult::err("netsh devolvió salida vacía. ¿WiFi habilitado? ¿Servicio WLAN corriendo?");
+    }
+    ScanResult::ok(parse_netsh(&stdout))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1121,6 +1136,70 @@ pub async fn wps_pixiedust_bg(app: AppHandle, state: State<'_, AppState>, bssid:
     summary = with_opt_warn(summary, &ch_warn);
     summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Pixie BG {}", bssid), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LIMPIEZA DE TEMPORALES POST-AUTO-ATTACK
+// ═══════════════════════════════════════════════════════════════════════════════
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupResult {
+    pub deleted: Vec<String>,
+    pub kept: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+#[command]
+pub async fn cleanup_temp_files(_app: AppHandle, bssid: Option<String>, keep_results: Option<bool>) -> CleanupResult {
+    let base = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let keep_results = keep_results.unwrap_or(true);
+    let mut deleted = vec![];
+    let mut kept = vec![];
+    let mut errors = vec![];
+
+    let patterns: Vec<String> = vec![
+        "capture_*.pcapng".into(),
+        "handshake_*.pcapng".into(),
+        "handshake_*.hccapx".into(),
+        "*.22000".into(),
+        "*.cracked".into(),
+    ];
+
+    for pattern in &patterns {
+        let glob_pattern = base.join(pattern).to_string_lossy().into_owned();
+        let iter = match glob::glob(&glob_pattern) {
+            Ok(it) => it,
+            Err(_) => continue,
+        };
+        for entry in iter {
+            match entry {
+                Ok(path) => {
+                    let path_str = path.to_string_lossy().into_owned();
+                    if let Some(ref b) = bssid {
+                        let bclean = b.replace(':', "");
+                        if !path_str.contains(&bclean) {
+                            continue;
+                        }
+                    }
+                    let should_keep = keep_results && (
+                        path_str.contains(".cracked") ||
+                        path_str.ends_with(".22000") ||
+                        path_str.ends_with(".hccapx")
+                    );
+                    if should_keep {
+                        kept.push(path_str);
+                    } else {
+                        match std::fs::remove_file(&path) {
+                            Ok(_) => deleted.push(path_str),
+                            Err(e) => errors.push(format!("{}: {}", path_str, e)),
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("glob error: {}", e)),
+            }
+        }
+    }
+
+    CleanupResult { deleted, kept, errors }
 }
 
 

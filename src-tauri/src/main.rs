@@ -2,5 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  uifipill_lib::run();
+    env_logger::init();
+    uifipill_lib::run();
 }

@@ -436,6 +436,9 @@
               <button class="scan-btn" id="procBtn" onclick="doListProcs()" style="background:#3a3a52">
                 &#x1F4CB; Procesos
               </button>
+              <button class="scan-btn" id="cleanupBtn" onclick="doCleanup()" style="background:#3a3a52" title="Elimina temporales de captura; conserva resultados crackeados">
+                &#x1F9F9; Limpiar temporales
+              </button>
             </div>
           </header>
 
@@ -610,6 +613,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn" id="autoAttackBtn" onclick="doCmd('auto_attack', startAutoAttack)" style="background:var(--accent)">&#x26A1; Iniciar Auto Ataque</button>
+                    <button class="atk-btn" onclick="doCmd('scan_auto', scanAndAutoAttack)" style="background:var(--green)">&#x1F4E2; Scan + Auto Ataque</button>
                   </div>
                 </div>
               </div>
