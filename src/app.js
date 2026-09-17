@@ -1370,6 +1370,11 @@ const progressBar = document.getElementById('progress-bar');
 
 function showProgress(show = true) {
   if (progressContainer) progressContainer.style.display = show ? 'block' : 'none';
+  if (show) {
+    // Reset del panel verbose al iniciar un ataque (respeta visibilidad elegida).
+    const cv = $('live-cv');
+    if (cv) cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
+  }
 }
 
 function updateProgress(percent, text) {
@@ -1379,12 +1384,37 @@ function updateProgress(percent, text) {
   }
 }
 
+// ── Salida verbose en tiempo real (panel live bajo la barra de progreso) ──
+let liveVisible = true;
+window.toggleLive = function () {
+  liveVisible = !liveVisible;
+  const cv = $('live-cv');
+  const btn = $('live-toggle');
+  if (cv) cv.style.display = liveVisible ? 'block' : 'none';
+  if (btn) btn.innerHTML = liveVisible ? '&#x1F4FA; Ocultar verbose' : '&#x1F4FA; Verbose oculto (clic para ver)';
+};
+
+function liveAppend(txt, level) {
+  const cv = $('live-cv');
+  if (!cv || !txt) return;
+  // Colorea por nivel: stderr/negativo en rojo suave, stdout normal.
+  const color = level === 'stderr' ? '#f07178' : '#b8b8d0';
+  const span = document.createElement('span');
+  span.style.color = color;
+  span.textContent = txt.endsWith('\n') ? txt : txt + '\n';
+  cv.appendChild(span);
+  // Cap de contenido: conserva los últimos ~400 nodos para no crecer sin fin.
+  while (cv.childNodes.length > 400) cv.removeChild(cv.firstChild);
+  cv.scrollTop = cv.scrollHeight;
+}
+
 // Listen for attack progress events (streaming en tiempo real)
 listen('attack-progress', (event) => {
   const { id, type, data } = event.payload;
   if (id === currentAttackId) {
     if (type === 'stdout') log(data, 'output');
     if (type === 'stderr') log(data, 'warn');
+    if (type === 'stdout' || type === 'stderr') liveAppend(data, type);
     if (data.includes('received')) updateProgress(25, 'Recibiendo... 25%');
     if (data.toLowerCase().includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
     if (data.toLowerCase().includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');

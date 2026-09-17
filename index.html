@@ -513,6 +513,12 @@
              <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
                <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
              </div>
+             <!-- Salida verbose en tiempo real (streaming attack-progress) -->
+             <pre id="live-cv" style="display:none;margin-top:8px;height:180px;overflow-y:auto;background:#0e0e14;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;line-height:1.5;color:#b8b8d0;white-space:pre-wrap;word-break:break-word;margin-top:8px">─ Salida en tiempo real (stdout/stderr del ataque) ─</pre>
+             <div style="display:flex;gap:8px;margin-top:6px">
+               <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
+               <button onclick="document.getElementById('live-cv').textContent='─ Salida en tiempo real (stdout/stderr del ataque) ─'" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
+             </div>
            </div>
 
           <div class="attack-body" style="flex:1;min-height:0;overflow-y:auto;padding:18px 26px 20px;position:relative">
