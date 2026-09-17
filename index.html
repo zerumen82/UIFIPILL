@@ -396,7 +396,7 @@
         <button class="nav-btn" id="nav-attack" onclick="showTab('attack')">
           &#9886; Ataque
         </button>
-         <button class="nav-btn" id="nav-console" onclick="showTab('console')">
+         <button class="nav-btn" id="nav-console" onclick="if(window.showTab)showTab('console');else{document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById('tab-console').classList.add('active');this.classList.add('active')}">
            &#9881; Consola
          </button>
          </div><!-- /nav-group -->
@@ -507,6 +507,14 @@
               <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · aireplay-ng · evil twin · solo redes propias en laboratorio</p>
             </div>
 </header>
+
+           <!-- Guía rápida: cómo se realiza un ataque -->
+           <div style="margin:10px 26px 0;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;line-height:1.7;color:var(--muted)">
+             <b style="color:var(--text)">&#9209; Cómo se lanza un ataque:</b>
+             <b style="color:var(--accent)">1.</b> Escanea y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal).&nbsp;
+             <b style="color:var(--accent)">2.</b> Pulsa <b>&#9889; Auto-Ataque</b> para la secuencia completa (perfil → monitor → captura → crack → keygen → conexión), o abre una tarjeta concreta y pulsa su botón.&nbsp;
+             <b style="color:var(--accent)">3.</b> El <b>progreso y la salida en vivo</b> aparecen bajo la barra de progreso aquí arriba; el detalle completo queda en la pestaña &#9881; Consola.
+           </div>
 
            <!-- Progress Bar para ataques en background -->
            <div id="progress-container" style="display:none;padding:0 26px 10px">

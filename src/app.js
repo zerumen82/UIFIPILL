@@ -41,6 +41,15 @@ function log(msg, level = 'info') {
 }
 window.log = log;
 
+// Captura global de errores: cualquier excepción no manejada queda en la consola
+// de la UI en vez de romper en silencio el clic de tabs/botones.
+window.addEventListener('error', (ev) => {
+  try { log(`JS error: ${ev.message} @ ${ev.filename?.split('/').pop()}:${ev.lineno}`, 'error'); } catch { /* noop */ }
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  try { log(`Promise rechazada: ${ev.reason}`, 'error'); } catch { /* noop */ }
+});
+
 window.clearConsole = function clearConsole() {
   logLines = [];
   $('cv').textContent = '';
