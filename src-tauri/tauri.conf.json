@@ -41,6 +41,10 @@
     "resources": [
       "../tools/reaver.exe",
       "../tools/wash.exe",
+      "../tools/libpcap.dll",
+      "../tools/libwinpthread-1.dll",
+      "../tools/libcrypto-3-x64.dll",
+      "../tools/libssl-3-x64.dll",
       "../tools/aircrack-ng-win/*"
     ],
     "windows": {
