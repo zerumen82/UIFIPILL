@@ -182,6 +182,62 @@ tools_detect, wifi_adapter, monitor_mode, pcap_convert, wpa3.
 - Verificación: `cargo test --lib` 23 passed / 0 failed (5 ignored), `cargo build
   --release` 0 warnings, `npm run lint` OK, `npx vite build` OK.
 
+## Correcciones UI/honestidad — ronda 2026-09-17 (3 reportes de uso real)
+- Icono Escanear roto: `doScan`/`scanAndAutoAttack` restauraban el botón con
+  `textContent = '&#x1F50D; …'` (la entidad NO se parsea en textContent y se veía
+  el literal). Ahora `innerHTML`. Solo se rompía tras el primer escaneo.
+- Cuelgue al cambiar de tab: `run_bin` emite un evento `attack-progress` POR
+  LÍNEA de stdout; el frontend hacía `log()` + `liveAppend()` + `scrollTop`
+  (layout síncrono) por evento → con salidas verbose el hilo UI se saturaba.
+  Ahora scroll agrupado por frame (`queueScroll`, solo si el tab está visible)
+  y panel live con buffer + volcado por frame.
+- Ataque «falso»: `wps_pin_bruteforce`/`wps_pbc_attack`/`wps_pixiedust`/
+  `wps_bruteforce_reaver` devolvían `success: ok || r.success` (exit 0 sin PIN =
+  ✅ falso) e `injection_test` `r.success || ok`. Ahora `success` = PIN
+  recuperado / «injection is working» en salida. El auto-attack cuenta pasos
+  con resultado real y cierra con «SIN RESULTADO» si todo se omitió (antes
+  siempre «COMPLETADO»). `doCapture` ya no bloquea 30s con `pmkid_capture`
+  si falta hcxdumptool.exe (sin port Win): deriva a captura Npcap nativa o
+  avisa sin bloquear.
+- Verificación: `cargo test --lib` 23 passed / 0 failed (5 ignored),
+  `cargo build` 0 warnings, `npm run lint` OK, `npx vite build` OK (dist/ actual).
+
+## Correcciones rendimiento/layout — ronda 2026-09-18 (reporte de uso real)
+Síntoma del usuario: «una vez se lanza el ataque, si vas a Consola ya no vuelves»
+(UI congelada) + «la pantalla está mal optimizada, zonas que no se ven».
+- Causa raíz 1 (backend): `run_bin`/`run_bin_bg` emitían **un evento
+  `attack-progress` por línea/chunk** de stdout (miles/s en reaver/hashcat/wash/
+  hcxdumptool) → el handler JS corría en el hilo principal y los clics del
+  sidebar dejaban de responder. Ahora `emit_chunked` (trozos de 4 KB, techo de
+  32 eventos/salida, resumen de lo omitido) + coalescencia en `run_bin_bg`
+  (`flush_buffers` cada 4 KB o 120 ms). Resultado: ~8 eventos/s en vez de miles.
+- Causa raíz 2 (frontend): `log()` pintaba en el DOM **en cada evento**, incluso
+  con el tab Consola oculto, y actualizaba `#mini-cv` siempre. Ahora: historial
+  `_logHist`/`_logPending` + pintado agrupado por frame (`requestAnimationFrame`,
+  máx. 200 entradas/frame), **cero DOM si el tab está oculto** y redibujado
+  completo (`_renderConsoleTail`) al abrir Consola. Los eventos
+  `attack-progress` se encolan y se vuelcan 1 vez/frame (techo 300/frame).
+- `showTab` idempotente + delegación de clic en `.sidebar` (respaldo del
+  `onclick` inline, a prueba de escapes de Vite): al cambiar de tab refresca
+  consola / salida rápida / panel verbose según destino.
+- Layout: `.phead` con `flex-wrap` + `.phead-actions` (antes los últimos botones
+  del header se salían de la ventana = «zonas que no se ven»), botones
+  secundarios `.scan-btn.sm`, sidebar y `.nav-group` con scroll propio, `.app`
+  con `100dvh` y `overflow:hidden`, `.console-wrap`/`.tbl-wrap` con `min-height`,
+  panel verbose `#live-cv` con clase `.live-view` y altura `clamp(110px,24vh,190px)`,
+  **mini-consola plegable** (`toggleMiniConsole`, `#mini-wrap`) y **guía del
+  ataque plegable** (`<details class="guide">`, cerrada por defecto) para
+  recuperar altura útil, y `@media (max-height:700px)` con paddings compactos.
+- Extra: `window.clearLive()` real (el botón «Limpiar» solo vaciaba el DOM y el
+  buffer pendiente se volvía a volcar) y `toggleLive()` vuelca lo acumulado.
+- Verificación: `cargo build --release` 0 warnings (2m17s), `cargo test --lib`
+  23 passed / 0 failed (5 ignored), `npm run lint` OK, `npx vite build` OK
+  (dist/index.html 92.25 kB + 48.07 kB JS), inline scripts de `index.html`
+  compilados con `node -c`, 0 ids duplicados y 0 handlers huérfanos.
+- Nota entorno: el runner de comandos corta a 30 s y espera a todo el árbol de
+  procesos → los builds largos se lanzan con `schtasks /create + /run` y se
+  sondean con `Get-Content ...log` (borrar la tarea al terminar).
+
 ## External tools required (lab machine)
 - Npcap (NPcap.dll driver)
 - hcxdumptool + hcxpcapngtool (hcxtools)

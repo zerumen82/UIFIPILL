@@ -93,6 +93,57 @@ fn parse_netsh(raw: &str) -> Vec<WifiNetwork> {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ── Emisión de salida a la UI SIN inundar el IPC ──────────────────────────────
+// Un evento por línea de stdout (o peor, por chunk del pipe) en ataques verbose
+// (reaver/hashcat/wash/hcxdumptool) son miles de mensajes/segundo hacia el
+// WebView: el handler de JS se ejecuta en el hilo principal y deja de responder
+// a clics (p. ej. cambiar de pestaña tras lanzar un ataque). Se agrupa en trozos
+// de ~4 KB con un techo de eventos por salida; lo que sobre se resume en una
+// línea (el resultado completo sigue en el CmdResponse / archivo).
+const EMIT_CHUNK_BYTES: usize = 4096;
+const EMIT_MAX_EVENTS: usize = 32;
+
+fn emit_chunked(app: &AppHandle, id: &str, kind: &str, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    let mut events = 0usize;
+    while start < text.len() && events < EMIT_MAX_EVENTS {
+        let mut end = (start + EMIT_CHUNK_BYTES).min(text.len());
+        while end < text.len() && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end <= start {
+            break;
+        }
+        let _ = app.emit("attack-progress", serde_json::json!({
+            "id": id, "type": kind, "data": &text[start..end]
+        }));
+        start = end;
+        events += 1;
+    }
+    if start < text.len() {
+        let _ = app.emit("attack-progress", serde_json::json!({
+            "id": id, "type": kind,
+            "data": format!("\n… ({} bytes omitidos en la vista en vivo; la salida completa sigue disponible)\n", text.len() - start)
+        }));
+    }
+}
+
+/// Vuelca a la UI lo pendiente de stdout/stderr (usado por el streaming en
+/// background; el temporizador de coalescencia lo gestiona quien lo llama).
+fn flush_buffers(app: &AppHandle, id: &str, out: &mut String, err: &mut String) {
+    if !out.is_empty() {
+        let buffered = std::mem::take(out);
+        emit_chunked(app, id, "stdout", &buffered);
+    }
+    if !err.is_empty() {
+        let buffered = std::mem::take(err);
+        emit_chunked(app, id, "stderr", &buffered);
+    }
+}
+
 async fn run_bin(app: &AppHandle, exe: &str, args: &[String]) -> CmdResponse {
     if let Err(hint) = require_bin(exe) {
         return CmdResponse {
@@ -106,20 +157,12 @@ async fn run_bin(app: &AppHandle, exe: &str, args: &[String]) -> CmdResponse {
         Ok(data) => {
             let stdout = String::from_utf8_lossy(&data.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&data.stderr).into_owned();
-            // Streaming en vivo también para comandos síncronos: emite el evento
-            // con id="sync" línea a línea (el frontend filtra por currentAttackId
-            // nulo o el propio "sync" para mostrarlo en el panel live).
+            // Vista en vivo también para comandos síncronos (id="sync"): la salida
+            // llega completa al terminar el proceso, así que se envía troceada
+            // (no línea a línea: eso son miles de eventos IPC inútiles).
             let sync_id = "sync";
-            for line in stdout.lines() {
-                let _ = app.emit("attack-progress", serde_json::json!({
-                    "id": sync_id, "type": "stdout", "data": format!("{line}\n")
-                }));
-            }
-            for line in stderr.lines() {
-                let _ = app.emit("attack-progress", serde_json::json!({
-                    "id": sync_id, "type": "stderr", "data": format!("{line}\n")
-                }));
-            }
+            emit_chunked(app, sync_id, "stdout", &stdout);
+            emit_chunked(app, sync_id, "stderr", &stderr);
             CmdResponse {
                 success:   data.status.success(),
                 output:    stdout,
@@ -467,8 +510,10 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
     if let Some(w) = pin_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
+    // Éxito honesto = PIN recuperado. Un exit 0 sin PIN (timeout, AP sin WPS,
+    // rate-limit) NO es éxito: antes `ok || r.success` marcaba ✅ en falso.
     CmdResponse {
-        success: ok || r.success,
+        success: ok,
         output: wrap(&format!("WPS Bruteforce (reaver fallback) · {} · {interface}", bssid), &summary, ok),
         stderr: if has_bully() { r.stderr } else { format!("bully.exe no encontrado (opcional). Usado reaver.exe.\n{}", r.stderr) },
         exit_code: r.exit_code,
@@ -686,7 +731,8 @@ pub async fn wps_pbc_attack(app: AppHandle, bssid: String, iface: Option<String>
         _ => body.clone(),
     };
     if pin.is_none() { summary = body.clone(); }
-    CmdResponse { success: ok || r.success, output: wrap(&format!("WPS PBC · {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
+    // Éxito honesto = PIN recuperado (ver nota en wps_pin_bruteforce).
+    CmdResponse { success: ok, output: wrap(&format!("WPS PBC · {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -734,7 +780,9 @@ pub async fn injection_test(app: AppHandle, iface: Option<String>) -> CmdRespons
     let body = format!("Binario: {}\nInterface: {}\n\n{}", prog.display(), iface_in, r.output);
     let body = with_iface_warn(body, &iface_warn);
     let ok = r.output.contains("injection is working") || r.output.contains("Injection is working");
-    CmdResponse { success: r.success || ok, output: wrap(&format!("Injection Test · {}", iface_in), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
+    // Éxito honesto = el propio aireplay confirma inyección. Un exit 0 sin esa
+    // línea (p. ej. "Adapter not supported" en Windows+Npcap) NO es éxito.
+    CmdResponse { success: ok, output: wrap(&format!("Injection Test · {}", iface_in), &body, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -780,7 +828,8 @@ pub async fn wps_pixiedust(app: AppHandle, bssid: String, iface: Option<String>,
     if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
-    CmdResponse { success: ok || r.success, output: wrap(&format!("WPS Pixie Dust · {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
+    // Éxito honesto = PIN recuperado (ver nota en wps_pin_bruteforce).
+    CmdResponse { success: ok, output: wrap(&format!("WPS Pixie Dust · {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 // COMANDO 21b — WASH SCAN (wash.exe: APs con WPS + locked)
@@ -866,7 +915,8 @@ pub async fn wps_bruteforce_reaver(app: AppHandle, bssid: String, iface: Option<
     if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
-    CmdResponse { success: ok || r.success, output: wrap(&format!("WPS Bruteforce reaver {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
+    // Éxito honesto = PIN recuperado (ver nota en wps_pin_bruteforce).
+    CmdResponse { success: ok, output: wrap(&format!("WPS Bruteforce reaver {}", bssid), &summary, ok), stderr: r.stderr, exit_code: r.exit_code }
 }
 
 
@@ -933,6 +983,18 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
     }
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
+    // Traza REAL para la UI: la línea de comando exacta que se lanza. Antes, en
+    // los ataques en background el panel verbose arrancaba vacío y no había forma
+    // de saber si el proceso estaba vivo o qué parámetros había recibido.
+    let cmdline = format!("$ {} {}\n", exe, args.join(" "));
+    emit_chunked(app, attack_id, "stdout", &cmdline);
+    let _ = app.emit("attack-started", serde_json::json!({
+        "id": attack_id,
+        "exe": exe,
+        "args": args,
+        "cmdline": cmdline.trim_end(),
+        "bg": true
+    }));
     let (mut rx, child) = match shell.command(exe).args(&arg_refs).spawn() {
         Ok(result) => result,
         Err(e) => return CmdResponse {
@@ -947,28 +1009,47 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut exit_code = None;
+    // Coalescencia del streaming: los chunks del pipe se acumulan y se emiten
+    // como máximo ~8 veces/s (o cada 4 KB). Un evento por chunk saturaba el
+    // hilo principal del WebView y bloqueaba los clics (cambio de pestaña).
+    const FLUSH_BYTES: usize = 4096;
+    const FLUSH_MS: u128 = 120;
+    let mut pend_out = String::new();
+    let mut pend_err = String::new();
+    let mut last_flush = std::time::Instant::now();
+    macro_rules! flush_pending {
+        () => {{
+            flush_buffers(app, attack_id, &mut pend_out, &mut pend_err);
+            last_flush = std::time::Instant::now();
+        }};
+    }
     while let Some(event) = rx.recv().await {
         match event {
             CommandEvent::Stdout(data) => {
                 let txt = String::from_utf8_lossy(&data);
                 stdout.push_str(&txt);
-                // Emit progress event
-                let _ = app.emit("attack-progress", serde_json::json!({
-                    "id": attack_id,
-                    "type": "stdout",
-                    "data": txt.to_string()
-                }));
+                pend_out.push_str(&txt);
+                if pend_out.len() + pend_err.len() >= FLUSH_BYTES
+                    || last_flush.elapsed().as_millis() >= FLUSH_MS
+                {
+                    flush_pending!();
+                }
             }
             CommandEvent::Stderr(data) => {
                 let txt = String::from_utf8_lossy(&data);
                 stderr.push_str(&txt);
-                let _ = app.emit("attack-progress", serde_json::json!({
-                    "id": attack_id,
-                    "type": "stderr",
-                    "data": txt.to_string()
-                }));
+                pend_err.push_str(&txt);
+                if pend_out.len() + pend_err.len() >= FLUSH_BYTES
+                    || last_flush.elapsed().as_millis() >= FLUSH_MS
+                {
+                    flush_pending!();
+                }
             }
-            CommandEvent::Terminated(status) => { exit_code = status.code; break; }
+            CommandEvent::Terminated(status) => {
+                flush_buffers(app, attack_id, &mut pend_out, &mut pend_err);
+                exit_code = status.code;
+                break;
+            }
             CommandEvent::Error(err) => {
                 stderr.push_str(&format!("Error: {}", err));
                 let _ = app.emit("attack-error", serde_json::json!({
@@ -980,6 +1061,8 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
             _ => {}
         }
     }
+    // Resto pendiente (procesos que terminan con salida < FLUSH_BYTES).
+    flush_buffers(app, attack_id, &mut pend_out, &mut pend_err);
     {
         let mut map = state.running_attacks.lock().unwrap();
         map.remove(attack_id);

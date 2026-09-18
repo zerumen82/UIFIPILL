@@ -18,39 +18,114 @@ function el(tag, cls, html) {
   return e;
 }
 
-// ── Log ──────────────────────────────────────────────────────────────────
-// RENDIMIENTO: textContent += recopia TODO el texto en cada línea — con cientos
-// de líneas de ataques congela el hilo de UI (clicks lentos/muertos). Solución:
-// appendChild de un nodo por línea + cap estricto de nodos en el DOM.
-const LOG_MAX_LINES = 500;
+// RENDIMIENTO (3 niveles de defensa; bug real: «lanzo ataque → voy a Consola →
+// ya no puedo volver»):
+//  1) Nada de `textContent +=` (recopia TODO el texto en cada línea): un nodo
+//     por entrada + cap estricto de nodos en el DOM.
+//  2) El pintado se agrupa por frame (requestAnimationFrame): una ráfaga de 500
+//     líneas cuesta UN lote de nodos y UN scroll, no 500 de cada uno.
+//  3) Si el tab Consola está OCULTO no se toca el DOM: solo se guarda el
+//     historial y se reconstruye al abrir el tab. Antes cada evento de un ataque
+//     en marcha pintaba en un panel invisible y el hilo de UI se saturaba, así
+//     que los clics del sidebar dejaban de responder (no se podía volver).
+const LOG_MAX_LINES = 500;   // historial y nodos máximos en #cv
+const LOG_PAINT_MAX = 200;   // entradas incrementales máximas por frame
+const LOG_COLORS = { error: '#f07178', warn: '#e6b455', ok: '#7dcf8e' };
+
+let _logHist = [];           // [{ line, level }] — historial (fuente del redibujado)
+let _logPending = [];        // entradas pendientes de pintar en #cv
+let _logFlushQueued = false;
+let _cvDirty = false;        // hay historial sin pintar en #cv
+
+const _scrollQueued = new Set();
+function queueScroll(elm) {
+  if (!elm || _scrollQueued.has(elm)) return;
+  _scrollQueued.add(elm);
+  const flush = () => {
+    _scrollQueued.delete(elm);
+    try { elm.scrollTop = elm.scrollHeight; } catch { /* noop */ }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+  else setTimeout(flush, 100);
+}
+
+// Reconstruye #cv completo desde el historial (una sola pasada de DOM).
+function _renderConsoleTail() {
+  const cv = $('cv');
+  _logPending.length = 0;
+  _cvDirty = false;
+  if (!cv) return;
+  const frag = document.createDocumentFragment();
+  for (const e of _logHist) {
+    const div = document.createElement('div');
+    div.textContent = e.line;
+    if (LOG_COLORS[e.level]) div.style.color = LOG_COLORS[e.level];
+    frag.appendChild(div);
+  }
+  cv.textContent = '';
+  cv.appendChild(frag);
+  queueScroll(cv);
+}
+
+function _paintConsole() {
+  const cv = $('cv');
+  if (!cv) { _logPending.length = 0; return; }
+  if (!$('tab-console')?.classList.contains('active')) {
+    // Consola oculta: cero trabajo de layout; se redibuja al abrir el tab.
+    if (_logPending.length) { _logPending.length = 0; _cvDirty = true; }
+    return;
+  }
+  if (_logPending.length > LOG_PAINT_MAX) {
+    // Ráfaga muy grande: redibujado completo (más barato que 1000 appendChild).
+    _logPending.length = 0;
+    _cvDirty = true;
+  }
+  if (_cvDirty) { _renderConsoleTail(); return; }
+  if (_logPending.length) {
+    const frag = document.createDocumentFragment();
+    for (const e of _logPending.splice(0)) {
+      const div = document.createElement('div');
+      div.textContent = e.line;
+      if (LOG_COLORS[e.level]) div.style.color = LOG_COLORS[e.level];
+      frag.appendChild(div);
+    }
+    cv.appendChild(frag);
+    while (cv.childNodes.length > LOG_MAX_LINES) cv.removeChild(cv.firstChild);
+    queueScroll(cv);
+  }
+}
+
+function _flushLog() {
+  _logFlushQueued = false;
+  _paintConsole();
+  const mini = $('mini-cv');
+  if (mini && logLines.length && $('tab-scan')?.classList.contains('active')) {
+    mini.textContent = logLines.slice(-3).join('\n');
+    queueScroll(mini);
+  }
+}
+function _queueLogFlush() {
+  if (_logFlushQueued) return;
+  _logFlushQueued = true;
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_flushLog);
+  else setTimeout(_flushLog, 100);
+}
+
 function log(msg, level = 'info') {
   const now = new Date().toLocaleTimeString('es-ES', { hour12: false });
   const line = `[${now}] [${level.toUpperCase()}] ${msg}`;
   logLines.push(line);
   if (logLines.length > LOG_MAX_LINES) logLines.splice(0, logLines.length - LOG_MAX_LINES);
-
-  const cv = $('cv');
-  if (cv) {
-    const span = document.createElement('div');
-    span.textContent = line;
-    if (level === 'error') span.style.color = '#f07178';
-    else if (level === 'warn') span.style.color = '#e6b455';
-    else if (level === 'ok') span.style.color = '#7dcf8e';
-    cv.appendChild(span);
-    // Cap de nodos DOM: conserva los últimos LOG_MAX_LINES
-    while (cv.childNodes.length > LOG_MAX_LINES) cv.removeChild(cv.firstChild);
-    cv.scrollTop = cv.scrollHeight;
-  }
-
-  const mini = $('mini-cv');
-  if (mini) {
-    mini.textContent = logLines.slice(-3).join('\n');
-    mini.scrollTop = mini.scrollHeight;
-  }
-
+  _logHist.push({ line, level });
+  if (_logHist.length > LOG_MAX_LINES) _logHist.splice(0, _logHist.length - LOG_MAX_LINES);
+  _logPending.push({ line, level });
+  if (_logPending.length > LOG_MAX_LINES) _logPending.splice(0, _logPending.length - LOG_MAX_LINES);
+  _queueLogFlush();
   console.log(line);
 }
 window.log = log;
+window.__flushLog = _flushLog;
+window.__renderConsoleTail = _renderConsoleTail;
 
 // Captura global de errores: cualquier excepción no manejada queda en la consola
 // de la UI en vez de romper en silencio el clic de tabs/botones.
@@ -63,9 +138,28 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 window.clearConsole = function clearConsole() {
   logLines = [];
-  $('cv').textContent = '';
+  _logHist = [];
+  _logPending = [];
+  _cvDirty = false;
+  const cv = $('cv');
+  if (cv) cv.textContent = '';
   const mini = $('mini-cv');
   if (mini) mini.textContent = '';
+};
+
+// Mini consola del tab Escanear: plegable para recuperar altura útil de la tabla
+// (en ventanas bajas la tabla se quedaba en 2-3 filas visibles).
+window.toggleMiniConsole = function () {
+  const wrap = $('mini-wrap');
+  const btn = $('mini-toggle');
+  if (!wrap) return;
+  const collapsed = wrap.classList.toggle('collapsed');
+  if (btn) btn.innerHTML = collapsed ? '&#9654;' : '&#9660;';
+  if (btn) btn.title = collapsed ? 'Mostrar salida rápida' : 'Ocultar salida rápida';
+  if (!collapsed) {
+    const mini = $('mini-cv');
+    if (mini) queueScroll(mini);
+  }
 };
 
 // ── Row selection ────────────────────────────────────────────────────────────
@@ -194,23 +288,40 @@ function renderProfile(p) {
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
-// Respaldo del tab Consola: listener directo (a prueba de escapes de Vite en
-// onclick inline — Vite convierte "=>" en "=&gt;" y el atributo deja de compilar).
-document.getElementById('nav-console')?.addEventListener('click', () => {
-  try { window.showTab('console'); } catch (e) { console.error('tab console:', e); }
+// Delegación en el sidebar: un único listener para todos los nav-btn, a prueba
+// de escapes de Vite en `onclick` inline y de que un botón pierda su atributo.
+// showTab es idempotente, así que el onclick inline de respaldo no molesta.
+document.querySelector('.sidebar')?.addEventListener('click', (ev) => {
+  const btn = ev.target instanceof Element ? ev.target.closest('.nav-btn') : null;
+  if (!btn || !btn.id) return;
+  try { window.showTab(btn.id.replace(/^nav-/, '')); }
+  catch (e) { console.error('tab click:', e); }
 });
 
 window.showTab = function (id) {
   try {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    const tab  = $(`tab-${id}`);
-    const nav  = $(`nav-${id}`);
-    if (tab) tab.classList.add('active');
-    else log(`showTab: no se encontró #tab-${id}`, 'error');
-    if (nav) nav.classList.add('active');
-    else log(`showTab: no se encontró #nav-${id}`, 'error');
+    const tab = $(`tab-${id}`);
+    const nav = $(`nav-${id}`);
+    if (!tab || !nav) { log(`showTab: pestaña desconocida '${id}'`, 'error'); return; }
+    if (activeTab === id && tab.classList.contains('active')) return; // ya estamos aquí
+    document.querySelectorAll('.tab.active').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.nav-btn.active').forEach(b => b.classList.remove('active'));
+    tab.classList.add('active');
+    nav.classList.add('active');
     activeTab = id;
+    // Un único refresco por cambio de tab (no por evento de ataque):
+    //  · Consola → redibuja el historial acumulado mientras estaba oculta.
+    //  · Escanear → refresca la salida rápida y su scroll.
+    //  · Ataque  → vuelca la salida viva acumulada mientras no se veía.
+    if (id === 'console') {
+      _renderConsoleTail();
+    } else if (id === 'scan') {
+      const mini = $('mini-cv');
+      if (mini) { mini.textContent = logLines.slice(-3).join('\n'); queueScroll(mini); }
+    } else if (id === 'attack') {
+      _flushLive();
+    }
+    _flushLog();
   } catch (e) {
     log(`showTab error: ${e}`, 'error');
   }
@@ -309,7 +420,8 @@ window.doScan = async function () {
     renderRows([]);
   } finally {
     btn.disabled = false;
-    btn.textContent = '&#x1F50D; Escanear ahora';
+    // innerHTML (no textContent): la entidad &#x1F50D; debe parsearse como 🔍.
+    btn.innerHTML = '&#x1F50D; Escanear ahora';
   }
 };
 
@@ -430,7 +542,7 @@ window.scanAndAutoAttack = async function () {
     log('Scan & Auto-Attack error: ' + err, 'error');
   } finally {
     const btn = document.getElementById('scanBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '&#x1F50D; Escanear ahora'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '&#x1F50D; Escanear ahora'; }
   }
 };
 
@@ -686,7 +798,7 @@ async function invokeAttack(cmd, args) {
 
     if (result?.error) {
       log(`[ERROR ${cmd}] ${result.error}`, 'error');
-      return;
+      return false;
     }
     if (out) {
       const lines = out.split('\n');
@@ -699,11 +811,14 @@ async function invokeAttack(cmd, args) {
     }
     if (result?.success) {
       log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
+      return true;
     } else {
       log(`⚠️  ${cmd} finalizó (code=${result?.exit_code ?? '?'}) en ${ms} ms`, 'warn');
+      return false;
     }
   } catch (err) {
     log(`[FATAL ${cmd}] ${err}`, 'error');
+    return false;
   }
 }
 
@@ -977,34 +1092,38 @@ window.startAutoAttack = async function () {
         const p = await window.__invoke('profile_target', { bssid });
         log(`[perfil] ${p.ssid}: ${p.title}`, 'info');
         log(p.detail, 'info');
-      } catch (e) { log(`[perfil] ${e}`, 'warn'); }
+        return true;
+      } catch (e) { log(`[perfil] ${e}`, 'warn'); return false; }
     }});
 
     steps.push({ n: '2/7 - Modo monitor', run: async () => {
       try {
         const rep = await window.__invoke('detect_adapters');
         const ad = (rep.adapters || []).find(a => a.monitor_capable && a.guid);
-        if (!ad) { log('Sin adaptador con modo monitor: la captura necesita uno (modal «Activar modo monitor»).', 'warn'); return; }
+        if (!ad) { log('Sin adaptador con modo monitor: la captura necesita uno (modal «Activar modo monitor»).', 'warn'); return false; }
         const r = await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: autoCh9 });
         log(`[monitor] ${ad.chipset}: ${r.message}`, r.success ? 'ok' : 'warn');
         if (r.success || (ad.monitor_active)) natGuid = ad.guid;
-      } catch (e) { log(`[monitor] ${e}`, 'warn'); }
+        return !!natGuid;
+      } catch (e) { log(`[monitor] ${e}`, 'warn'); return false; }
     }});
 
     steps.push({ n: '3/7 - Captura Npcap nativa (60s)', run: async () => {
-      if (!natGuid) { log('Captura omitida: sin GUID NPF. Activa el modo monitor y reintenta.', 'warn'); return; }
+      if (!natGuid) { log('Captura omitida: sin GUID NPF. Activa el modo monitor y reintenta.', 'warn'); return false; }
       try {
         const r = await window.__invoke('native_capture', { ifaceGuid: natGuid, durationSecs: 60 });
         log(r.message, r.success ? 'ok' : 'error');
         if (r.success && r.output_file) {
           natPcap = r.output_file;
           const conv = $('convert-native-pcap'); if (conv) conv.value = r.output_file;
+          return true;
         }
-      } catch (e) { log(`[captura] ${e}`, 'error'); }
+        return false;
+      } catch (e) { log(`[captura] ${e}`, 'error'); return false; }
     }});
 
     steps.push({ n: '4/7 - Convertir a .22000', run: async () => {
-      if (!natPcap) { log('Conversión omitida: no hay captura previa.', 'warn'); return; }
+      if (!natPcap) { log('Conversión omitida: no hay captura previa.', 'warn'); return false; }
       try {
         const c = await window.__invoke('pcap_to_22000', { pcapPath: natPcap });
         (c.messages || []).forEach(m => log('[convert] ' + m, 'info'));
@@ -1012,26 +1131,29 @@ window.startAutoAttack = async function () {
           natHash = c.output_file;
           const cx = $('crack-hash'); if (cx) cx.value = c.output_file;
           const ih = $('insp-hash'); if (ih) ih.value = c.output_file;
+          return true;
         } else {
           log('Sin PMKID/EAPOL en la captura: hace falta tráfico de clientes contra el AP en su canal.', 'warn');
+          return false;
         }
-      } catch (e) { log(`[convert] ${e}`, 'error'); }
+      } catch (e) { log(`[convert] ${e}`, 'error'); return false; }
     }});
 
     steps.push({ n: '5/7 - Inspeccionar hash', run: async () => {
-      if (!natHash) { log('Inspección omitida: sin .22000.', 'warn'); return; }
+      if (!natHash) { log('Inspección omitida: sin .22000.', 'warn'); return false; }
       try {
         const s = await window.__invoke('inspect_hash', { hashPath: natHash });
         log(`[inspect] total=${s.total} PMKID=${s.pmkid} challenge=${s.challenge} authorized=${s.authorized} ESSID=${(s.essids||[]).join(',')||'?'}`, 'info');
-      } catch (e) { log(`[inspect] ${e}`, 'warn'); }
+        return true;
+      } catch (e) { log(`[inspect] ${e}`, 'warn'); return false; }
     }});
 
     steps.push({ n: '6/7 - Crack (diccionario)', run: async () => {
-      if (!natHash) { log('Crack omitido: sin .22000.', 'warn'); return; }
+      if (!natHash) { log('Crack omitido: sin .22000.', 'warn'); return false; }
       try {
         const a = await window.__invoke('list_crack_assets');
         const wl = (a.wordlists || []).find(w => w.toLowerCase().includes('rockyou')) || (a.wordlists || [])[0];
-        if (!wl) { log('Sin wordlists detectadas: instala rockyou.txt en tools/.', 'warn'); return; }
+        if (!wl) { log('Sin wordlists detectadas: instala rockyou.txt en tools/.', 'warn'); return false; }
         log('Wordlist: ' + wl, 'info');
         const r = await window.__invoke('pmkid_crack', { hashFile: natHash, wordlist: wl });
         log(r.output || r.stderr, r.success ? 'ok' : 'warn');
@@ -1047,23 +1169,25 @@ window.startAutoAttack = async function () {
               log(c.success ? '✅ CONECTADO a ' + essid9 : '⚠️ No conectó: ' + (c.stderr || c.output), c.success ? 'ok' : 'warn');
             } catch (e) { log('[connect] ' + e, 'warn'); }
           }
+          return !!r.success;
         }
-      } catch (e) { log(`[crack] ${e}`, 'error'); }
+      } catch (e) { log(`[crack] ${e}`, 'error'); return false; }
     }});
 
     steps.push({ n: '7/7 - Keygen (claves por defecto)', run: async () => {
       const ssid = essid9;
-      if (!ssid) { log('Keygen omitido: SSID desconocido (red oculta o sin scan).', 'warn'); return; }
+      if (!ssid) { log('Keygen omitido: SSID desconocido (red oculta o sin scan).', 'warn'); return false; }
       try {
         const det = await window.__invoke('keygen_detect', { ssid });
-        if (!det.success) { log('[keygen] ' + (det.output || det.stderr || 'sin algoritmo conocido para este SSID'), 'warn'); return; }
+        if (!det.success) { log('[keygen] ' + (det.output || det.stderr || 'sin algoritmo conocido para este SSID'), 'warn'); return false; }
         const r = /thomson/i.test(det.output || '')
           ? await window.__invoke('thomson_run', { ssid, bssid, maxKeys: 5 })
           : await window.__invoke('keygen_run', { ssid, bssid });
         const pre = $('keygen-out'); if (pre) pre.textContent = r.output || r.stderr;
         log(r.output || r.stderr, r.success ? 'ok' : 'warn');
         if (r.success) log('Candidatos keygen listos: pruébalos con wifi_connect o verifica contra el hash.', 'info');
-      } catch (e) { log(`[keygen] ${e}`, 'error'); }
+        return !!r.success;
+      } catch (e) { log(`[keygen] ${e}`, 'error'); return false; }
     }});
 
     // Pasos RF solo si la inyección funciona (no es el caso en RT3070+Npcap).
@@ -1084,6 +1208,10 @@ window.startAutoAttack = async function () {
 
   window._autoStop = false;
   showProgress(true);
+  // Cierre honesto: se cuenta qué pasos consiguieron algo real. Si todo se
+  // omitió (sin adaptador, sin captura, sin hash…), el banner final lo dice
+  // en vez de un «COMPLETADO» falso.
+  let autoOk = 0, autoMiss = 0;
   for (const step of steps) {
     if (window._autoStop) { log('Auto-ataque cancelado por el usuario.', 'warn'); break; }
     const btn = document.getElementById('autoAttackBtn');
@@ -1091,8 +1219,10 @@ window.startAutoAttack = async function () {
     updateProgress(10 + Math.round(80 * steps.indexOf(step) / steps.length), step.n);
     log('[' + step.n + ']...', 'warn');
     currentAttackId = step.bgId || null;
-    if (step.run) { try { await step.run(); } catch (e) { log(`[${step.n}] error: ${e}`, 'error'); } }
-    else await invokeAttack(step.cmd, step.args);
+    let stepOk = false;
+    if (step.run) { try { stepOk = (await step.run()) === true; } catch (e) { log(`[${step.n}] error: ${e}`, 'error'); } }
+    else stepOk = (await invokeAttack(step.cmd, step.args)) === true;
+    if (stepOk) autoOk++; else autoMiss++;
   }
   currentAttackId = null;
   showProgress(false);
@@ -1108,9 +1238,13 @@ window.startAutoAttack = async function () {
     log('Limpieza pos-ataque falló: ' + e, 'warn');
   }
 
-  log('==============================', 'ok');
-  log(' AUTO-ATTACK COMPLETADO', 'ok');
-  log('==============================', 'ok');
+  log('==============================', autoOk > 0 ? 'ok' : 'warn');
+  if (autoOk > 0) {
+    log(` AUTO-ATTACK COMPLETADO: ${autoOk} paso(s) con resultado, ${autoMiss} omitido(s)/fallido(s)`, 'ok');
+  } else {
+    log(` AUTO-ATTACK SIN RESULTADO: ${autoMiss} paso(s) omitidos o fallidos (revisa los avisos de arriba)`, 'warn');
+  }
+  log('==============================', autoOk > 0 ? 'ok' : 'warn');
   const btn2 = document.getElementById('autoAttackBtn');
   if (btn2) btn2.textContent = 'Auto-Ataque';
 };
@@ -1406,12 +1540,21 @@ window.doFakeauth = async function () {
 const progressContainer = document.getElementById('progress-container');
 const progressBar = document.getElementById('progress-bar');
 
+// Visibilidad del panel verbose (declarado antes de showProgress, que la lee).
+let liveVisible = true;
+
 function showProgress(show = true) {
   if (progressContainer) progressContainer.style.display = show ? 'block' : 'none';
   if (show) {
-    // Reset del panel verbose al iniciar un ataque (respeta visibilidad elegida).
+    // Reset del panel verbose al iniciar un ataque, respetando si el usuario lo
+    // plegó. Antes nadie mostraba #live-cv (tenía display:none inline), así que
+    // la «salida en vivo» era una zona invisible de la UI.
+    _liveBuf = '';
     const cv = $('live-cv');
-    if (cv) cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
+    if (cv) {
+      cv.style.display = liveVisible ? 'block' : 'none';
+      cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
+    }
   }
 }
 
@@ -1423,44 +1566,117 @@ function updateProgress(percent, text) {
 }
 
 // ── Salida verbose en tiempo real (panel live bajo la barra de progreso) ──
-let liveVisible = true;
 window.toggleLive = function () {
   liveVisible = !liveVisible;
   const cv = $('live-cv');
   const btn = $('live-toggle');
   if (cv) cv.style.display = liveVisible ? 'block' : 'none';
   if (btn) btn.innerHTML = liveVisible ? '&#x1F4FA; Ocultar verbose' : '&#x1F4FA; Verbose oculto (clic para ver)';
+  if (liveVisible) _flushLive(); // vuelca lo acumulado mientras estaba plegado
 };
 
-function liveAppend(txt, level) {
+// Limpia el panel de salida viva (antes el botón solo vaciaba el DOM y el buffer
+// pendiente se volcaba en el siguiente evento, así que «Limpiar» parecía no hacer nada).
+window.clearLive = function () {
+  _liveBuf = '';
   const cv = $('live-cv');
-  if (!cv || !txt) return;
-  // Colorea por nivel: stderr/negativo en rojo suave, stdout normal.
-  const color = level === 'stderr' ? '#f07178' : '#b8b8d0';
+  if (cv) cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
+};
+
+// El panel live recibe un evento por línea de stdout/stderr: se acumula el
+// texto y se vuelca en un solo frame (un append + un scroll por ráfaga).
+let _liveBuf = '';
+let _liveColor = '#b8b8d0';
+let _liveFlushQueued = false;
+function _flushLive() {
+  _liveFlushQueued = false;
+  const cv = $('live-cv');
+  if (!cv || !_liveBuf) return;
+  // Panel no visible (otro tab, o verbose plegado): cero trabajo de layout. El
+  // texto se acumula acotado y se vuelca al volver al tab (showTab lo fuerza).
+  const panelVisible = cv.style.display !== 'none'
+    && $('tab-attack')?.classList.contains('active');
+  if (!panelVisible) {
+    if (_liveBuf.length > 32768) _liveBuf = _liveBuf.slice(-32768);
+    return;
+  }
   const span = document.createElement('span');
-  span.style.color = color;
-  span.textContent = txt.endsWith('\n') ? txt : txt + '\n';
+  span.style.color = _liveColor;
+  span.textContent = _liveBuf;
+  _liveBuf = '';
   cv.appendChild(span);
   // Cap de contenido: conserva los últimos ~400 nodos para no crecer sin fin.
   while (cv.childNodes.length > 400) cv.removeChild(cv.firstChild);
-  cv.scrollTop = cv.scrollHeight;
+  queueScroll(cv);
+}
+function liveAppend(txt, level) {
+  if (!txt) return;
+  // Colorea por nivel: stderr/negativo en rojo suave, stdout normal.
+  // Si cambia el nivel a mitad de ráfaga, vuelca lo acumulado primero.
+  const color = level === 'stderr' ? '#f07178' : '#b8b8d0';
+  if (_liveBuf && _liveColor !== color) _flushLive();
+  _liveColor = color;
+  _liveBuf += txt.endsWith('\n') ? txt : txt + '\n';
+  // Evita un nodo DOM gigante: vuelca cada ~32 KB.
+  if (_liveBuf.length > 32768) { _flushLive(); return; }
+  if (_liveFlushQueued) return;
+  _liveFlushQueued = true;
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_flushLive);
+  else setTimeout(_flushLive, 120);
 }
 
 // Listen for attack progress events (streaming en tiempo real).
 // Acepta dos orígenes: ataques en background (id = currentAttackId) y comandos
 // síncronos (run_bin emite con id="sync" — se muestra si no hay bg en curso,
 // para no mezclar salidas de un ataque bg y un síncrono simultáneos).
+//
+// RENDIMIENTO: los eventos llegan a ráfagas; procesarlos uno a uno (log + live +
+// includes) saturaba el hilo de UI justo cuando el ataque está en marcha —síntoma
+// real: «voy a Consola y ya no vuelvo»—. Ahora se encolan y se vuelcan UNA vez
+// por frame, con techo de eventos por frame y de cola.
+const EVT_MAX_PER_FRAME = 300;
+const _evtQueue = [];
+let _evtFlushQueued = false;
+
+function _flushEvents() {
+  _evtFlushQueued = false;
+  if (!_evtQueue.length) return;
+  const batch = _evtQueue.splice(0, EVT_MAX_PER_FRAME);
+  const skipped = _evtQueue.length;   // resto de la ráfaga: se resume en 1 línea
+  if (skipped) _evtQueue.length = 0;
+  let last = '';
+  for (const p of batch) {
+    log(p.data, p.type === 'stderr' ? 'warn' : 'output');
+    liveAppend(p.data, p.type);
+    last = p.data;
+  }
+  const low = last.toLowerCase();
+  if (low.includes('received')) updateProgress(25, 'Recibiendo... 25%');
+  if (low.includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
+  if (low.includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');
+  if (skipped) log(`… ${skipped} eventos de salida omitidos en la consola (ataque muy verbose; la vista en vivo sigue activa)`, 'warn');
+}
+
 listen('attack-progress', (event) => {
   const { id, type, data } = event.payload;
+  if (type !== 'stdout' && type !== 'stderr') return;
   const isSync = id === 'sync' && !currentAttackId;
-  if (id === currentAttackId || isSync) {
-    if (isSync) showProgress(true); // los síncronos no pasan por showProgress antes
-    if (type === 'stdout') log(data, 'output');
-    if (type === 'stderr') log(data, 'warn');
-    if (type === 'stdout' || type === 'stderr') liveAppend(data, type);
-    if (data.includes('received')) updateProgress(25, 'Recibiendo... 25%');
-    if (data.toLowerCase().includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
-    if (data.toLowerCase().includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');
+  if (id !== currentAttackId && !isSync) return;
+  if (isSync) {
+    // Solo la primera vez: showProgress(true) reinicia el panel de salida viva.
+    const pc = $('progress-container');
+    if (pc && pc.style.display === 'none') showProgress(true);
+  }
+  _evtQueue.push({ type, data });
+  // Techo de cola: si el ataque inunda, se conserva lo último (lo anterior ya
+  // está en el historial de la consola) — nunca crecer sin límite.
+  if (_evtQueue.length > EVT_MAX_PER_FRAME * 4) {
+    _evtQueue.splice(0, _evtQueue.length - EVT_MAX_PER_FRAME * 4);
+  }
+  if (!_evtFlushQueued) {
+    _evtFlushQueued = true;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(_flushEvents);
+    else setTimeout(_flushEvents, 60);
   }
 });
 

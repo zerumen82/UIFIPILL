@@ -39,7 +39,7 @@
     }
 
     /* ── Layout ───────────────────────────────────────────────────── */
-    .app { display: flex; height: 100vh; width: 100vw; }
+    .app { display: flex; height: 100vh; height: 100dvh; width: 100vw; overflow: hidden; }
 
     /* ── Sidebar ──────────────────────────────────────────────────── */
     .sidebar {
@@ -48,7 +48,13 @@
       border-right: 1px solid var(--border);
       display: flex; flex-direction: column;
       padding: 18px 0;
+      /* La navegación nunca debe quedar recortada en ventanas bajas
+         (minHeight de la ventana: 560 px): scroll propio + footer fijo. */
+      overflow-y: auto;
+      overflow-x: hidden;
     }
+    .sidebar::-webkit-scrollbar { width: 6px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
     .logo-wrap {
       display: flex; align-items: center; gap: 10px;
@@ -64,7 +70,7 @@
     }
     .brand { font-weight: 700; font-size: 15px; letter-spacing: .4px; }
 
-    .nav-group { flex: 1; padding: 4px 10px; }
+    .nav-group { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 10px; }
     .nav-label {
       font-size: 10px; font-weight: 700; letter-spacing: .8px;
       color: var(--muted); text-transform: uppercase;
@@ -95,14 +101,22 @@
     }
 
     /* ── Tabs ──────────────────────────────────────────────────────── */
-    .tab { display: none; flex-direction: column; height: 100%; min-height: 0; }
+    .tab { display: none; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
     .tab.active { display: flex; }
 
     /* ── Panel header ──────────────────────────────────────────────── */
     .phead {
       display: flex; align-items: flex-start; justify-content: space-between;
-      padding: 20px 26px 10px;
+      flex-wrap: wrap; gap: 10px;
+      padding: 18px 26px 10px;
       border-bottom: 1px solid var(--border);
+    }
+    /* Grupo de acciones del header: envuelve en varias filas en vez de salirse
+       de la ventana (antes los últimos botones quedaban fuera de pantalla). */
+    .phead-actions {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; justify-content: flex-end;
+      flex: 1 1 320px; min-width: 0;
     }
     .phead h1 { font-size: 18px; font-weight: 700; }
     .phead .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -119,10 +133,13 @@
     .scan-btn:hover { opacity: .88; }
     .scan-btn:active { transform: scale(.96); }
     .scan-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    /* Variante compacta para las acciones secundarias del header (recupera
+       altura útil para la tabla). */
+    .scan-btn.sm { padding: 6px 12px; font-size: 11.5px; }
 
     /* ── Horizontal bar (status, counts) ──────────────────────────── */
     .hbar {
-      display: flex; align-items: center; gap: 10px;
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       padding: 10px 26px;
     }
     .status-pill {
@@ -139,7 +156,7 @@
     }
 
     /* ── Table ─────────────────────────────────────────────────────── */
-    .tbl-wrap { flex: 1; overflow-y: auto; padding: 0 12px 16px; }
+    .tbl-wrap { flex: 1; min-height: 120px; overflow-y: auto; padding: 0 12px 16px; }
     .tbl-wrap::-webkit-scrollbar { width: 5px; }
     .tbl-wrap::-webkit-scrollbar-track { background: transparent; }
     .tbl-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -184,7 +201,7 @@
 
     /* ── Console ───────────────────────────────────────────────────── */
     .console-wrap {
-      flex: 1; overflow-y: auto;
+      flex: 1; min-height: 0; overflow-y: auto;
       margin: 0 26px 20px;
       border: 1px solid var(--border);
       border-radius: var(--r);
@@ -213,7 +230,7 @@
       background: var(--surface2) !important;
     }
     .scan-attack-bar {
-      display: flex; align-items: center; gap: 14px;
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
       padding: 12px 16px; margin-top: 10px;
       background: var(--surface);
       border: 1px solid var(--accent);
@@ -225,7 +242,7 @@
     }
     .scan-attack-bar .sab-info strong { color: var(--accent); }
     .scan-attack-bar .sab-info small { color: var(--muted); display: block; }
-    .scan-attack-bar .sab-btns { display: flex; gap: 8px; flex-shrink: 0; }
+    .scan-attack-bar .sab-btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
     .scan-attack-bar .atk-btn { padding: 7px 14px; font-size: 11.5px; white-space: nowrap; }
 
     /* ── Animated scan spinner ─────────────────────────────────────── */
@@ -244,8 +261,13 @@
       font-family: inherit; font-size: 12px; font-weight: 600;
       cursor: pointer; white-space: nowrap;
       transition: background var(--transition), opacity var(--transition);
-      width: 100%; justify-content: center;
+      justify-content: center;
     }
+    /* OJO: sin `width:100%` — estos botones viven en filas flex con
+       flex-wrap (tarjetas de ataque, barra rápida del scan). Con width:100%
+       cada botón ocupaba una fila entera y la barra rápida se desbordaba
+       horizontalmente (zonas fuera de pantalla). */
+    .atk-btn-row .atk-btn { width: 100%; }
     .atk-btn:hover  { opacity: .88; }
     .atk-btn:active { transform: scale(.97); }
     .atk-btn:disabled { opacity: .40; cursor: not-allowed; }
@@ -259,6 +281,8 @@
       gap: 14px;
       margin-bottom: 18px;
     }
+    /* Ninguna tarjeta debe desbordar su columna (inputs/botones anchos). */
+    .attack-grid > * { min-width: 0; }
 
     /* ── Tools status ─────────────────────────────────────────────────── */
     .tool-row {
@@ -316,7 +340,7 @@
     }
 
     .atk-btn-row {
-      display: flex; gap: 8px; margin-top: 12px;
+      display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
     }
     .atk-btn-row .atk-btn { flex: 1; }
 
@@ -332,6 +356,7 @@
     /* ── Target selection bar ───────────────────────────────────────── */
     .target-bar {
       display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap;
       margin-bottom: 18px;
     }
     .target-bar label {
@@ -377,6 +402,76 @@
       padding: 12px 18px; display: flex; flex-direction: column; gap: 8px;
     }
     #tools-status-body .muted { font-size: 11.5px; color: var(--muted); }
+
+    /* ── Panel de salida viva del ataque (altura relativa: en ventanas bajas
+          deja sitio a las tarjetas de ataque) ─────────────────────────── */
+    .live-view {
+      display: block; margin-top: 8px;
+      height: clamp(110px, 24vh, 190px);
+      overflow-y: auto; background: #0e0e14;
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; font-size: 11px; line-height: 1.5;
+      color: #b8b8d0; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* ─ Mini consola del tab Escanear (plegable) ──────────────────────── */
+    .mini-console {
+      flex: 0 0 auto;
+      margin: 0 12px 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .mini-head { display: flex; align-items: center; gap: 8px; }
+    .mini-title {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .mini-hint { font-size: 10px; color: var(--gray); }
+    .mini-toggle {
+      margin-left: auto; background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 0 8px; font-size: 11px; line-height: 18px;
+      cursor: pointer; font-family: inherit;
+    }
+    .mini-console.collapsed .mini-body { display: none; }
+    #mini-cv {
+      height: 60px; overflow-y: auto; background: #0e0e14;
+      border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+      font-size: 10.5px; line-height: 1.5; color: #8080a0;
+      white-space: pre-wrap; word-break: break-all; margin: 6px 0 0;
+    }
+
+    /* ── Guía del tab Ataque (plegable: por defecto cerrada) ──────────── */
+    .guide {
+      margin: 10px 26px 0; padding: 10px 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; font-size: 12px; line-height: 1.7; color: var(--muted);
+    }
+    .guide > summary {
+      cursor: pointer; color: var(--text); font-weight: 700;
+      list-style: none; outline: none;
+    }
+    .guide > summary::-webkit-details-marker { display: none; }
+    .guide > summary::before { content: '\25B8\00a0'; color: var(--accent); }
+    .guide[open] > summary::before { content: '\25BE\00a0'; }
+    .guide[open] > summary { margin-bottom: 6px; }
+
+    /* ─ Ventanas bajas: la ventana admite hasta 900×560 ────────────── */
+    @media (max-height: 700px) {
+      .phead { padding: 12px 18px 8px; }
+      .phead h1 { font-size: 16px; }
+      .phead .sub { font-size: 11px; }
+      .hbar { padding: 6px 18px; }
+      .scan-attack-bar { padding: 8px 12px; margin-top: 6px; }
+      .mini-console { margin: 0 12px 6px; }
+      .mini-hint { display: none; }
+      #mini-cv { height: 44px; }
+      .attack-body { padding: 12px 18px 16px !important; }
+      .guide { margin: 8px 18px 0; }
+      .atk-section { margin-bottom: 16px; }
+      .atk-card { padding: 12px; }
+      .console-wrap { margin: 0 18px 12px; }
+    }
   </style>
 </head>
 <body>
@@ -415,28 +510,28 @@
               <h1>Redes Wi-Fi Cercanas</h1>
               <p class="sub">Escaneadas vía netsh · Windows 10 / 11</p>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <div class="phead-actions">
               <button class="scan-btn" id="scanBtn" onclick="doScan()">
                 &#x1F50D; Escanear ahora
               </button>
               <input id="monChan" type="number" min="1" max="165" placeholder="CH" title="Canal a fijar al activar (verificado por lectura; algunos drivers lo ignoran sin admin)"
-                     style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:9px 10px;font-size:12px;font-family:inherit;width:64px;outline:none">
-              <button class="scan-btn" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
-                &#x1F4E2; Activar modo monitor
+                     style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:60px;outline:none">
+              <button class="scan-btn sm" id="monitorBtn" onclick="doMonitor()" style="background:var(--orange)">
+                &#x1F4E2; Modo monitor
               </button>
-              <button class="scan-btn" id="restoreBtn" onclick="doRestoreManaged()" style="background:#3a3a52" title="Devuelve el adaptador a modo managed">
+              <button class="scan-btn sm" id="restoreBtn" onclick="doRestoreManaged()" style="background:#3a3a52" title="Devuelve el adaptador a modo managed">
                 &#x1F504; Restaurar managed
               </button>
-              <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green);min-width:160px">
+              <button class="scan-btn" id="captureBtn" onclick="doCapture()" style="background:var(--green);min-width:150px">
                 &#x1F4F6; Capturar PMKID
               </button>
-              <button class="scan-btn" id="ifaceStatusBtn" onclick="doIfaceStatus()" style="background:#3a3a52">
+              <button class="scan-btn sm" id="ifaceStatusBtn" onclick="doIfaceStatus()" style="background:#3a3a52">
                 &#x1F4F1; Info adaptador
               </button>
-              <button class="scan-btn" id="procBtn" onclick="doListProcs()" style="background:#3a3a52">
+              <button class="scan-btn sm" id="procBtn" onclick="doListProcs()" style="background:#3a3a52">
                 &#x1F4CB; Procesos
               </button>
-              <button class="scan-btn" id="cleanupBtn" onclick="doCleanup()" style="background:#3a3a52" title="Elimina temporales de captura; conserva resultados crackeados">
+              <button class="scan-btn sm" id="cleanupBtn" onclick="doCleanup()" style="background:#3a3a52" title="Elimina temporales de captura; conserva resultados crackeados">
                 &#x1F9F9; Limpiar temporales
               </button>
             </div>
@@ -488,14 +583,16 @@
             </div>
           </div>
 
-          <!-- mini console (visible always on scan tab) -->
-          <div style="margin:0 12px 12px;border-top:1px solid var(--border);padding-top:8px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-              <span style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)">Salida rápida</span>
-              <span style="font-size:10px;color:var(--gray)">(consola completa en pestaña Consola)</span>
+          <!-- mini console (plegable para no robar altura a la tabla) -->
+          <div class="mini-console" id="mini-wrap">
+            <div class="mini-head">
+              <span class="mini-title">Salida rápida</span>
+              <span class="mini-hint">(consola completa en la pestaña Consola)</span>
+              <button type="button" class="mini-toggle" id="mini-toggle" onclick="toggleMiniConsole()" title="Mostrar/ocultar salida rápida">&#9660;</button>
             </div>
-            <pre id="mini-cv" class="console-view"
-                 style="height:60px;overflow-y:auto;background:#0e0e14;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10.5px;line-height:1.5;color:#8080a0;white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+            <div class="mini-body">
+              <pre id="mini-cv" class="console-view"></pre>
+            </div>
           </div>
         </section>
 
@@ -508,24 +605,28 @@
             </div>
 </header>
 
-           <!-- Guía rápida: cómo se realiza un ataque -->
-           <div style="margin:10px 26px 0;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:12px;line-height:1.7;color:var(--muted)">
-             <b style="color:var(--text)">&#9209; Cómo se lanza un ataque:</b>
+           <!-- Guía rápida: cómo se realiza un ataque (plegable: cerrada por
+                defecto para no robar altura a las tarjetas de ataque) -->
+           <details class="guide">
+             <summary>Guía rápida: cómo se lanza un ataque</summary>
              <b style="color:var(--accent)">1.</b> Escanea y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal).&nbsp;
              <b style="color:var(--accent)">2.</b> Pulsa <b>&#9889; Auto-Ataque</b> para la secuencia completa (perfil → monitor → captura → crack → keygen → conexión), o abre una tarjeta concreta y pulsa su botón.&nbsp;
              <b style="color:var(--accent)">3.</b> El <b>progreso y la salida en vivo</b> aparecen bajo la barra de progreso aquí arriba; el detalle completo queda en la pestaña &#9881; Consola.
-           </div>
+           </details>
 
            <!-- Progress Bar para ataques en background -->
            <div id="progress-container" style="display:none;padding:0 26px 10px">
              <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
                <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
              </div>
-             <!-- Salida verbose en tiempo real (streaming attack-progress) -->
-             <pre id="live-cv" style="display:none;margin-top:8px;height:180px;overflow-y:auto;background:#0e0e14;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;line-height:1.5;color:#b8b8d0;white-space:pre-wrap;word-break:break-word;margin-top:8px">─ Salida en tiempo real (stdout/stderr del ataque) ─</pre>
+             <!-- Salida verbose en tiempo real (streaming attack-progress).
+                  OJO: sin `display:none` inline — showProgress() gobierna su
+                  visibilidad según el estado de verbose (antes quedaba oculto
+                  para siempre: solo se veía al pulsar «Ocultar verbose»). -->
+             <pre id="live-cv" class="live-view">─ Salida en tiempo real (stdout/stderr del ataque) ─</pre>
              <div style="display:flex;gap:8px;margin-top:6px">
                <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
-               <button onclick="document.getElementById('live-cv').textContent='─ Salida en tiempo real (stdout/stderr del ataque) ─'" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
+               <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
              </div>
            </div>
 
@@ -1427,14 +1528,16 @@
               <h1>Consola Verbose</h1>
               <p class="sub">Salida de escaneo, errores y depuración</p>
             </div>
-            <button class="scan-btn" style="background:#3a3a52" onclick="clearConsole()">
-              &#10005; Limpiar
-            </button>
-            <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
-                   style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:9px 10px;font-size:12px;font-family:inherit;width:90px;outline:none">
-            <button class="scan-btn" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">
-              &#x25A0; Matar PID
-            </button>
+            <div class="phead-actions">
+              <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">
+                &#10005; Limpiar
+              </button>
+              <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
+                     style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:88px;outline:none">
+              <button class="scan-btn sm" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">
+                &#x25A0; Matar PID
+              </button>
+            </div>
           </header>
           <div class="console-wrap">
             <pre id="cv" class="console-view"></pre>
@@ -1600,6 +1703,32 @@
         const iface = log3('pmkid-iface');
         const chRaw = log3('pmkid-chan');
         const ch = chRaw ? parseInt(chRaw) : (window.selectedChannel ? window.selectedChannel() : undefined);
+        // hcxdumptool.exe NO tiene port Windows: si falta, el pmkid_capture
+        // síncrono solo bloquearía 30s para fallar. Se deriva a la captura
+        // Npcap nativa (funciona con modo monitor) sin bloquear en vano.
+        let hasHcx = false;
+        try {
+          const chk = await window.__invoke('check_tool', { name: 'hcxdumptool.exe' });
+          hasHcx = !!(chk && chk.success);
+        } catch (e) { hasHcx = false; }
+        if (!hasHcx) {
+          if (!iface) {
+            log('hcxdumptool.exe no existe en Windows y no hay GUID NPF en «Interfaz»: activa el modo monitor y usa el botón «Npcap nativo» de la tarjeta PMKID.', 'error');
+            return;
+          }
+          log(`hcxdumptool.exe ausente: captura Npcap nativa de ${bssid} (60s, modo monitor requerido)…`, 'warn');
+          try {
+            const r = await window.__invoke('native_capture', { ifaceGuid: iface, durationSecs: 60 });
+            log(r.message || JSON.stringify(r), r.success ? 'ok' : 'error');
+            if (r.success && r.output_file) {
+              const conv = document.getElementById('convert-native-pcap');
+              if (conv) conv.value = r.output_file;
+            }
+          } catch (err) {
+            log(`[capture] FATAL: ${err}`, 'error');
+          }
+          return;
+        }
         log(`Capturando PMKID de ${bssid}${ch ? ' CH' + ch : ''}…`, 'info');
         try {
           const result = await window.__invoke('pmkid_capture', {
