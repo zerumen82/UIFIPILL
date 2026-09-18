@@ -318,6 +318,21 @@ window.showTab = function (id) {
     } else if (id === 'scan') {
       const mini = $('mini-cv');
       if (mini) { mini.textContent = logLines.slice(-3).join('\n'); queueScroll(mini); }
+      // FAIL-SAFE del lock: si un ataque murió sin emitir attack-completed
+      // (crash del proceso, kill externo…), el lock quedaría puesto para siempre
+      // y el Escanear deshabilitado. Al volver al tab Escanear, si el backend no
+      // tiene procesos vivos, libera el lock automáticamente.
+      if (attackIsBusy()) {
+        window.__invoke('list_attack_processes').then(r => {
+          const out = (r?.output || '') + ' ' + (r?.stderr || '');
+          const vivos = /PID|\d{3,}/.test(out) && !/no hay|none|0 procesos|no running/i.test(out);
+          if (!vivos && !window._autoStop) {
+            log('Lock de ataque liberado automáticamente (no quedan procesos vivos).', 'info');
+            setAttackRunning(false);
+            currentAttackId = null;
+          }
+        }).catch(() => {});
+      }
     } else if (id === 'attack') {
       _flushLive();
     }
