@@ -98,10 +98,12 @@ fn parse_netsh(raw: &str) -> Vec<WifiNetwork> {
 // (reaver/hashcat/wash/hcxdumptool) son miles de mensajes/segundo hacia el
 // WebView: el handler de JS se ejecuta en el hilo principal y deja de responder
 // a clics (p. ej. cambiar de pestaña tras lanzar un ataque). Se agrupa en trozos
-// de ~4 KB con un techo de eventos por salida; lo que sobre se resume en una
+// de ~8 KB con un techo de eventos por salida; lo que sobre se resume en una
 // línea (el resultado completo sigue en el CmdResponse / archivo).
-const EMIT_CHUNK_BYTES: usize = 4096;
-const EMIT_MAX_EVENTS: usize = 32;
+// 2026-09-18: subido de 4 KB/32 a 8 KB/64 (frontend ya consume por frame con
+// techo propio, así que el IPC aguanta el doble sin bloquear).
+const EMIT_CHUNK_BYTES: usize = 8192;
+const EMIT_MAX_EVENTS: usize = 64;
 
 fn emit_chunked(app: &AppHandle, id: &str, kind: &str, text: &str) {
     if text.is_empty() {
@@ -151,9 +153,12 @@ async fn run_bin(app: &AppHandle, exe: &str, args: &[String]) -> CmdResponse {
             stderr: hint, exit_code: None,
         };
     }
+    // Ruta absoluta si el binario vive en las carpetas de instalación
+    // (una ruta desnua no arranca: el hijo no busca en <exe>/_up_/tools).
+    let exe_abs = resolve_bin_abs(exe);
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-    match shell.command(exe).args(&arg_refs).output().await {
+    match shell.command(&exe_abs).args(&arg_refs).output().await {
         Ok(data) => {
             let stdout = String::from_utf8_lossy(&data.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&data.stderr).into_owned();
@@ -185,6 +190,13 @@ fn require_bin(exe: &str) -> Result<(), String> {
     }
     // Nombre base para which (tolera rutas con directorios inexistentes).
     let base = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    // 1) Carpetas de instalación (incluye <exe>/_up_/tools/ del NSIS)
+    for dir in crate::tools_detect::install_dirs_pub() {
+        if dir.join(base).exists() {
+            return Ok(());
+        }
+    }
+    // 2) PATH del sistema
     if which::which(base).is_ok() || which::which(exe).is_ok() {
         return Ok(());
     }
@@ -193,6 +205,23 @@ fn require_bin(exe: &str) -> Result<(), String> {
         exe,
         crate::tools_detect::install_hint_for(exe)
     ))
+}
+
+/// Resuelve el binario a ruta ABSOLUTA si está en las carpetas de instalación
+/// (el hijo hereda el CWD de la app y una ruta desnua "reaver.exe" no arranca
+/// si el exe no está ni en CWD ni en PATH).
+fn resolve_bin_abs(exe: &str) -> String {
+    if std::path::Path::new(exe).exists() {
+        return exe.to_string();
+    }
+    let base = exe.rsplit(['/', '\\']).next().unwrap_or(exe);
+    for dir in crate::tools_detect::install_dirs_pub() {
+        let candidate = dir.join(base);
+        if candidate.exists() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    exe.to_string()
 }
 
 /// Conversión post-captura: hcxpcapngtool si existe; si no, el parser Rust nativo
@@ -981,6 +1010,8 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
             stderr: hint, exit_code: None,
         };
     }
+    // Igual que run_bin: ruta absoluta para que el proceso arranque de verdad.
+    let exe_abs = resolve_bin_abs(exe);
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
     // Traza REAL para la UI: la línea de comando exacta que se lanza. Antes, en
@@ -995,7 +1026,7 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
         "cmdline": cmdline.trim_end(),
         "bg": true
     }));
-    let (mut rx, child) = match shell.command(exe).args(&arg_refs).spawn() {
+    let (mut rx, child) = match shell.command(&exe_abs).args(&arg_refs).spawn() {
         Ok(result) => result,
         Err(e) => return CmdResponse {
             success: false, output: String::new(),
@@ -1012,7 +1043,7 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
     // Coalescencia del streaming: los chunks del pipe se acumulan y se emiten
     // como máximo ~8 veces/s (o cada 4 KB). Un evento por chunk saturaba el
     // hilo principal del WebView y bloqueaba los clics (cambio de pestaña).
-    const FLUSH_BYTES: usize = 4096;
+    const FLUSH_BYTES: usize = 8192;
     const FLUSH_MS: u128 = 120;
     let mut pend_out = String::new();
     let mut pend_err = String::new();

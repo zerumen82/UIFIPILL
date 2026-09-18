@@ -546,6 +546,33 @@ window.scanAndAutoAttack = async function () {
   }
 };
 
+// ── Lock de UI durante un ataque ──────────────────────────────────────────
+// Mientras hay un ataque en curso (bg o síncrono) todos los botones .atk-btn
+// del tab Ataque se deshabilitan salvo el de parada; así no hay duda de si
+// «está atacando» y no se pueden lanzar dos procesos RF a la vez.
+let _attackBusy = false;
+const ATTACK_BTN_SEL = '#tab-attack .atk-btn';
+
+function setAttackRunning(on, label) {
+  _attackBusy = !!on;
+  const tab = document.getElementById('tab-attack');
+  if (tab) tab.classList.toggle('attack-running', _attackBusy);
+  document.querySelectorAll(ATTACK_BTN_SEL).forEach(b => { b.disabled = _attackBusy; });
+  // El botón de parada queda SIEMPRE operativo mientras hay ataque.
+  document.querySelectorAll('#tab-attack .atk-stop').forEach(b => { b.disabled = false; });
+  const status = document.getElementById('attack-status-bar');
+  if (status) {
+    status.style.display = _attackBusy ? 'flex' : 'none';
+    if (_attackBusy) {
+      const lbl = document.getElementById('attack-status-label');
+      if (lbl) lbl.textContent = label || 'Ataque en curso…';
+    }
+  }
+  const scanBtn = document.getElementById('scanBtn');
+  if (scanBtn) scanBtn.disabled = _attackBusy;
+}
+function attackIsBusy() { return _attackBusy; }
+
 // ── Attack invocations ──────────────────────────────────────────────────────
 window.capturePmkid = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
@@ -789,7 +816,9 @@ window.doCmd = function (cmdName, handler) {
 };
 
 async function invokeAttack(cmd, args) {
+  if (attackIsBusy()) { log(`⚠️ Ya hay un ataque en curso; deténlo antes de lanzar ${cmd}.`, 'warn'); return false; }
   log(`>>> Rust invoke → ${cmd}  args=${JSON.stringify(args)}`, 'info');
+  setAttackRunning(true, cmd + ' en curso…');
   const t0 = performance.now();
   try {
     const result = await window.__invoke(cmd, args);
@@ -800,15 +829,10 @@ async function invokeAttack(cmd, args) {
       log(`[ERROR ${cmd}] ${result.error}`, 'error');
       return false;
     }
-    if (out) {
-      const lines = out.split('\n');
-      const head  = lines.slice(0, 80).join('\n');
-      if (lines.length > 80) {
-        log(`[${cmd}] — ${lines.length} líneas de salida. Primeras 80:\n${head}\n...`, 'output');
-      } else {
-        log(`[${cmd}]:\n${out}`, 'output');
-      }
-    }
+    // VERBOSE COMPLETO: la salida íntegra va al log (el historial y el pintado
+    // ya son agrupados por frame, así que no satura). Sin recortes de 80 líneas.
+    if (out) log(`[${cmd}]:\n${out}`, 'output');
+    if (result?.stderr) log(`[${cmd}] stderr:\n${result.stderr}`, 'warn');
     if (result?.success) {
       log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
       return true;
@@ -819,6 +843,8 @@ async function invokeAttack(cmd, args) {
   } catch (err) {
     log(`[FATAL ${cmd}] ${err}`, 'error');
     return false;
+  } finally {
+    setAttackRunning(false);
   }
 }
 
@@ -1006,6 +1032,7 @@ window.doInteractive = async function () {
 
 // Auto-attack maestro 8 pasos
 window.startAutoAttack = async function () {
+  if (attackIsBusy()) { log('⚠️ Ya hay un ataque en curso; deténlo antes de lanzar otro.', 'warn'); return; }
   const bssid = getSelectedBssid();
   if (!bssid) {
     log('Auto-ataque: sin BSSID. Escanea primero o usa Scan + Auto Ataque.', 'warn');
@@ -1208,6 +1235,7 @@ window.startAutoAttack = async function () {
 
   window._autoStop = false;
   showProgress(true);
+  setAttackRunning(true, 'Auto-ataque en curso…');
   // Cierre honesto: se cuenta qué pasos consiguieron algo real. Si todo se
   // omitió (sin adaptador, sin captura, sin hash…), el banner final lo dice
   // en vez de un «COMPLETADO» falso.
@@ -1226,6 +1254,7 @@ window.startAutoAttack = async function () {
   }
   currentAttackId = null;
   showProgress(false);
+  setAttackRunning(false);
   window._autoStop = false;
 
   try {
@@ -1680,10 +1709,21 @@ listen('attack-progress', (event) => {
   }
 });
 
+listen('attack-started', (event) => {
+  const { id, cmdline } = event.payload;
+  // Los ataques bg emiten attack-started: activa el lock (por si el flujo no
+  // pasó por invokeAttack) y muestra la línea de comando exacta.
+  if (id && currentAttackId && id !== currentAttackId) return;
+  currentAttackId = id || currentAttackId;
+  setAttackRunning(true, cmdline || 'Ataque en curso…');
+  if (cmdline) log(`$ ${cmdline}`, 'info');
+});
+
 listen('attack-completed', (event) => {
   const { id } = event.payload;
   if (id === currentAttackId) {
     showProgress(false);
+    setAttackRunning(false);
     currentAttackId = null;
   }
 });
@@ -1692,6 +1732,7 @@ listen('attack-error', (event) => {
   const { id, error } = event.payload;
   if (id === currentAttackId) {
     showProgress(false);
+    setAttackRunning(false);
     log(`Error ataque: ${error}`, 'error');
     currentAttackId = null;
   }
@@ -1755,6 +1796,15 @@ window.wslShow = async function (tag, p) {
     if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
     log(`[${tag} ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
   } catch (err) { log(`[${tag}] FATAL: ${err}`, 'error'); }
+};
+window.doWslHealth = async function () {
+  log('>>> Salud del puente Kali (distro + wlan0 + monitor + RX 6s)…', 'info');
+  try {
+    const r = await window.__invoke('wsl_health', { iface: 'wlan0' });
+    // El informe viene línea a línea en stdout: cada paso con su veredicto.
+    if (r.stdout) r.stdout.split('\n').filter(Boolean).forEach(l => log(l, l.includes('OK') || l.includes('VIVA') ? 'ok' : 'warn'));
+    log(`[${r.success ? 'OK' : 'FALLO'}] ${r.message}`, r.success ? 'ok' : 'warn');
+  } catch (err) { log(`[wsl_health] FATAL: ${err}`, 'error'); }
 };
 window.doWslPmkid = async function () {
   const t = window.wslTarget();

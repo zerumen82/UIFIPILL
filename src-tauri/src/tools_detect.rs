@@ -22,6 +22,11 @@ pub(crate) fn resolve_tool(name: &str) -> (bool, String, String) {
         }
     }
 
+    // 1b) Ruta relativa al CWD (dev: project root tiene tools/)
+    if std::path::Path::new(name).exists() {
+        return (true, name.to_string(), "ruta relativa".into());
+    }
+
     // 2) Rutas de instalación de UIFIPILL
     for dir in install_dirs() {
         let candidate = dir.join(name);
@@ -46,6 +51,8 @@ pub(crate) fn resolve_tool(name: &str) -> (bool, String, String) {
 
     (false, String::new(), String::new())
 }
+
+pub(crate) fn install_dirs_pub() -> Vec<std::path::PathBuf> { install_dirs() }
 
 fn install_dirs() -> Vec<std::path::PathBuf> {
     let workspace = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -78,6 +85,13 @@ fn install_dirs() -> Vec<std::path::PathBuf> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(p) = exe.parent() { dirs.push(p.to_path_buf()); }
+        // NSIS/Tauri v2 aplana rutas "../x" en una carpeta literal "_up_":
+        // <inst>/_up_/tools/reaver.exe (verificado en %LOCALAPPDATA%\UIFIPILL).
+        if let Some(p) = exe.parent() {
+            dirs.push(p.join("_up_").join("tools"));
+            dirs.push(p.join("_up_").join("tools").join("aircrack-ng-win"));
+            dirs.push(p.join("resources").join("_up_").join("tools"));
+        }
     }
     dirs
 }

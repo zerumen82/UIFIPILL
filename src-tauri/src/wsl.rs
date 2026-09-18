@@ -302,6 +302,83 @@ fn staging_path(prefix: &str, ext: &str) -> (String, String) {
     (win_s.clone(), win_to_wsl(&win_s))
 }
 
+/// Diagnóstico completo del puente RF en Kali, en un tirón (solo lectura +
+/// probe RX de 6 s con tcpdump sobre /dev/shm — NO transmite):
+/// 1) distro arranca  2) iface existe  3) modo monitor  4) canal  5) RX VIVA.
+/// La RX es el bloqueador medido del transporte usbipd (0 pkts donde Windows
+/// captura cientos): sin este check la UI no distingue «sin attach» de
+/// «attach pero radio muerta».
+#[command]
+pub async fn wsl_health(app: AppHandle, iface: Option<String>) -> WslExecResult {
+    let iface = iface.unwrap_or_else(|| "wlan0".into());
+    if !valid_iface(&iface) {
+        return WslExecResult::err(format!("Interfaz inválida: '{}'.", iface));
+    }
+    let mut report = String::new();
+    let mut ok_all = true;
+
+    // 1) Distro + whoami
+    let d = wsl_exec(app.clone(), "/usr/bin/whoami".into(), None, None, Some(20)).await;
+    let who = d.stdout.trim().to_string();
+    let distro_ok = d.success && (who == "root" || who == "kali");
+    report.push_str(&format!("1. Distro kali-linux: {}\n", if distro_ok { format!("OK ({})", who) } else { "NO ARRANCA".to_string() }));
+    ok_all &= distro_ok;
+    if !distro_ok {
+        return WslExecResult { success: false, message: format!("SALUD KALI: FALLO\n{}\n{}", report, d.stderr), stdout: report, stderr: d.stderr, exit_code: d.exit_code };
+    }
+
+    // 2) Interfaz presente
+    let i = wsl_exec(app.clone(), "/usr/sbin/ip".into(), Some(vec!["link".into(), "show".into(), iface.clone()]), None, Some(20)).await;
+    let iface_ok = i.success;
+    report.push_str(&format!("2. {} existe: {}\n", iface, if iface_ok { "OK".to_string() } else { "AUSENTE — attach el USB (usbipd attach --wsl --busid)".to_string() }));
+    ok_all &= iface_ok;
+    if !iface_ok {
+        return WslExecResult { success: false, message: format!("SALUD KALI: FALLO\n{}\n{}", report, i.stderr), stdout: report, stderr: i.stderr, exit_code: i.exit_code };
+    }
+
+    // 3) Tipo de interfaz (monitor?)
+    let t = wsl_exec(app.clone(), "/usr/sbin/iw".into(), Some(vec!["dev".into(), iface.clone(), "info".into()]), None, Some(20)).await;
+    let is_monitor = t.stdout.contains("type monitor");
+    report.push_str(&format!("3. Modo: {}\n", if is_monitor { "monitor OK".to_string() } else { "managed (los ataques RF requieren monitor: usa 'Monitor de Kali' o sudo iw wlan0 set monitor control)".to_string() }));
+
+    // 4) Canal actual
+    let ch = t.stdout.lines().find(|l| l.trim().starts_with("channel")).map(|l| l.trim().to_string()).unwrap_or_else(|| "canal ?".into());
+    report.push_str(&format!("4. Canal: {}\n", ch));
+
+    // 5) Probe RX: tcpdump 6 s; VIVA si captura >0 paquetes.
+    let rx = wsl_exec(
+        app.clone(),
+        "sudo".into(),
+        Some(vec![
+            "-n".into(), "/usr/bin/timeout".into(), "-s".into(), "INT".into(), "6".into(),
+            "/usr/bin/tcpdump".into(), "-i".into(), iface.clone(), "-c".into(), "5".into(), "--immediate-mode".into(), "-n".into(),
+        ]),
+        None,
+        Some(30),
+    )
+    .await;
+    // tcpdump -c 5 exit 0 al llegar a 5 pkts; "0 packets captured" si muerta.
+    let rx_viva = rx.success || rx.stdout.contains("packets captured") && !rx.stdout.contains("0 packets captured");
+    report.push_str(&format!(
+        "5. Recepción (RX): {}\n",
+        if rx_viva { "VIVA — llegan paquetes: puedes atacar".to_owned() } else { "MUERTA — usbipd no entrega paquetes (bloqueador conocido; captura en Windows o VirtualHere con licencia)".to_string() }
+    ));
+    ok_all &= rx_viva;
+
+    // Nota tcpdump ausente: sudo falla si tcpdump no está — lo reflejamos.
+    if rx.stderr.contains("No such file") && !rx_viva {
+        report.push_str("   (nota: tcpdump no está en esa ruta; apt install tcpdump)");
+    }
+
+    WslExecResult {
+        success: ok_all,
+        message: format!("SALUD KALI ({}): {}", iface, if ok_all { "TODO OK — RF operativa" } else { "CON FALLOS (ver pasos arriba)" }),
+        stdout: report,
+        stderr: rx.stderr,
+        exit_code: if ok_all { Some(0) } else { Some(1) },
+    }
+}
+
 /// PMKID: `hcxdumptool -i {iface} -w {staging.pcapng} [-c {ch}a] --rds=1`
 /// durante `dur` s. El .pcapng se convierte después con `pcap_to_22000`.
 #[command]

@@ -112,6 +112,7 @@ pub fn run() {
             wsl::wsl_from_win,
             wsl::wsl_to_win,
             wsl::wsl_is_available,
+            wsl::wsl_health,
             wsl::wsl_pmkid_capture,
             wsl::wsl_airodump,
             wsl::wsl_wash,

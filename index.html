@@ -136,6 +136,10 @@
     /* Variante compacta para las acciones secundarias del header (recupera
        altura útil para la tabla). */
     .scan-btn.sm { padding: 6px 12px; font-size: 11.5px; }
+    /* Botón Detener de la barra de estado: nunca se deshabilita mientras hay
+       ataque (setAttackRunning lo re-habilita explícitamente). */
+    #tab-attack .atk-stop:disabled { opacity: 1; cursor: pointer; }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
 
     /* ── Horizontal bar (status, counts) ──────────────────────────── */
     .hbar {
@@ -608,11 +612,24 @@
            <!-- Guía rápida: cómo se realiza un ataque (plegable: cerrada por
                 defecto para no robar altura a las tarjetas de ataque) -->
            <details class="guide">
-             <summary>Guía rápida: cómo se lanza un ataque</summary>
-             <b style="color:var(--accent)">1.</b> Escanea y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal).&nbsp;
-             <b style="color:var(--accent)">2.</b> Pulsa <b>&#9889; Auto-Ataque</b> para la secuencia completa (perfil → monitor → captura → crack → keygen → conexión), o abre una tarjeta concreta y pulsa su botón.&nbsp;
-             <b style="color:var(--accent)">3.</b> El <b>progreso y la salida en vivo</b> aparecen bajo la barra de progreso aquí arriba; el detalle completo queda en la pestaña &#9881; Consola.
+             <summary>Guía rápida: flujo del ataque (10 bloques, en orden)</summary>
+             <b style="color:var(--accent)">0.</b> Escanea en el tab &#128269; y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal) — el objetivo elegido aparece arriba de todo aquí.&nbsp;
+             <b style="color:var(--accent)">1.</b> <b>&#9889; Ataque automático</b>: secuencias 7 pasos (o auto-attack 9).&nbsp;
+             <b style="color:var(--accent)">2&#8594;6.</b> O lanza bloques concretos en orden: <b>PMKID &#8594; Handshake &#8594; Crack &#8594; WPA3/WPS</b>.&nbsp;
+             <b style="color:var(--accent)">7&#8594;9.</b> Inyección/DoS/Evil Twin (requieren adaptador con TX).&nbsp;
+             <b style="color:var(--accent)">10.</b> <b>Acceso</b>: con la clave encontrada, conéctate.&nbsp;
+             <b style="color:var(--accent)">Mientras ataca:</b> los botones se bloquean y aparece la barra roja con &#9632; Detener; la salida en vivo se ve bajo la barra.
            </details>
+
+           <!-- Barra de estado del ataque: visible SOLO mientras hay un ataque
+                en curso. Todos los botones se deshabilitan (setAttackRunning)
+                salvo este Detener. -->
+           <div id="attack-status-bar" style="display:none;align-items:center;gap:12px;margin:10px 26px 0;padding:10px 16px;background:rgba(255,68,68,.08);border:1px solid var(--orange);border-radius:var(--r)">
+             <span class="pulse-dot" style="width:10px;height:10px;border-radius:50%;background:var(--orange);display:inline-block;animation:pulse 1.2s infinite"></span>
+             <strong id="attack-status-label" style="color:var(--orange);font-size:12.5px">Ataque en curso…</strong>
+             <span style="font-size:11px;color:var(--muted)">salida en vivo abajo + detalle completo en &#9881; Consola</span>
+             <button class="atk-btn atk-stop" onclick="cancelCurrentAttack()" style="margin-left:auto;background:var(--red);padding:6px 16px">&#x25A0; Detener ataque</button>
+           </div>
 
            <!-- Progress Bar para ataques en background -->
            <div id="progress-container" style="display:none;padding:0 26px 10px">
@@ -631,60 +648,6 @@
            </div>
 
           <div class="attack-body" style="flex:1;min-height:0;overflow-y:auto;padding:18px 26px 20px;position:relative">
-            <!-- ══════════════════ ACCESO (objetivo: conectarse) ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">&#x1F517; Acceso <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
-              <div class="attack-grid">
-
-                <!-- Conectar con clave -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--accent">&#x1F517; Conectar con clave</h3>
-                  <p class="atk-desc">Cierra el círculo: con la clave (crack, portal, keygen o conocida) conecta este equipo vía perfil netsh</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>SSID:</label>
-                      <input id="conn-ssid" type="text" placeholder="MiRedWiFi">
-                    </div>
-                    <div class="field-row">
-                      <label>Clave:</label>
-                      <input id="conn-pass" type="password" placeholder="clave WPA2">
-                    </div>
-                  </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForConnect()">Usar objetivo</button>
-                    <button class="atk-btn" onclick="wifiConnect()">Conectar</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="wifiDisconnect()">Desconectar</button>
-                  </div>
-                </div>
-
-                <!-- Keygen claves por defecto -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--yellow">&#x1F511; Keygen por defecto</h3>
-                  <p class="atk-desc">Claves de fábrica derivadas de SSID/BSSID: Comtrend (Jazztel_/WLAN_, directo) y Thomson/familia (búsqueda SHA1 ~21.8M, tarda segundos). Sin RF, sin captura.</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>SSID:</label>
-                      <input id="keygen-ssid" type="text" placeholder="Jazztel_A1B2">
-                    </div>
-                    <div class="field-row">
-                      <label>BSSID:</label>
-                      <input id="keygen-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>Máx (Thomson):</label>
-                      <input id="keygen-max" type="number" min="1" max="50" value="5" title="Candidatos máximos en la búsqueda Thomson">
-                    </div>
-                  </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForKeygen()">Usar objetivo</button>
-                    <button class="atk-btn" onclick="keygenDetect()">Detectar</button>
-                    <button class="atk-btn" onclick="keygenRun()">Generar</button>
-                  </div>
-                  <pre id="keygen-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:140px;overflow-y:auto"></pre>
-                </div>
-              </div>
-            </div>
-
             <!-- Target select -->
             <div class="target-bar">
               <label>Objetivo BSSID:</label>
@@ -705,9 +668,11 @@
               <div id="verdict-meta" style="color:var(--gray);font-size:11px;margin-top:4px"></div>
             </div>
 
+
+
             <!-- ══════════════════ AUTO ATTACK ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x26A1; Modo Automático</h2>
+              <h2 class="section-title">1 &#183; &#x26A1; Ataque automático (todo en uno)</h2>
               <div class="attack-grid">
                 <div class="atk-card">
                   <h3 class="atk-title atk-title--accent">&#x26A1; Ataque completo 7 pasos</h3>
@@ -736,7 +701,7 @@
 
             <!-- ══════════════════ PMKID PIPELINE ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F50D; PMKID Pipeline</h2>
+              <h2 class="section-title">2 &#183; &#x1F50D; PMKID Pipeline</h2>
               <div class="attack-grid">
 
                 <!-- PMKID Capture -->
@@ -760,7 +725,7 @@
                   <div class="atk-btn-row">
                     <button class="atk-btn" onclick="doCmd('pmkid_capture',capturePmkid)">&#x25B6; Iniciar captura</button>
                     <button class="atk-btn" style="background:var(--green)" onclick="doCmd('native_capture',captureNative)" title="Captura 802.11 con Npcap (wpcap.dll, sin hcxdumptool). Requiere modo monitor activo.">&#x25BC; Npcap nativo</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
@@ -815,7 +780,7 @@
 
             <!-- ══════════════════ HANDSHAKE WPA2 ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F510; Handshake WPA2</h2>
+              <h2 class="section-title">3 &#183; &#x1F510; Handshake WPA2</h2>
               <div class="attack-grid">
 
                 <!-- Capturar Handshake -->
@@ -842,7 +807,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn atk-btn--red" onclick="doCmd('capture_handshake', captureHandshake)">&#x25B6; Capturar handshake</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
@@ -881,7 +846,7 @@
 
             <!-- ══════════════════ ESTRATEGIA DE CRACK ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+              <h2 class="section-title">4 &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
               <div class="attack-grid">
 
                 <!-- Inspector .22000 -->
@@ -970,7 +935,7 @@
 
             <!-- ══════════════════ WPA3 ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+              <h2 class="section-title">5 &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
               <div class="attack-grid">
 
                 <!-- Auditoría WPA3 -->
@@ -1038,7 +1003,7 @@
 
             <!-- ══════════════════ WPS ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F511; WPS</h2>
+              <h2 class="section-title">6 &#183; &#x1F511; WPS</h2>
               <div class="attack-grid">
 
                 <!-- Wash scan -->
@@ -1078,7 +1043,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pin_bruteforce', wpsBrute)">&#x25B6; Iniciar WPS PIN</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar WPS">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar WPS">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
@@ -1102,7 +1067,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pbc_attack', doWpsPbc)">WPS PBC</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
@@ -1126,7 +1091,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pixiedust', doWpsPixieDust)">&#x26A1; Pixie Dust</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
                   </div>
                 </div>
               </div>
@@ -1134,7 +1099,7 @@
 
             <!-- ══════════════════ INYECCIÓN AIREPLAY-NG ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x26A1; Inyección aireplay-ng</h2>
+              <h2 class="section-title">7 &#183; &#x26A1; Inyección aireplay-ng</h2>
               <div class="attack-grid">
 
                 <!-- Injection Test -->
@@ -1265,7 +1230,7 @@
                   </div>
                   <div class="atk-btn-row">
                     <button class="atk-btn atk-btn--blue" onclick="doCmd('scan_airodump', doAirodumpScan)">&#x1F4BF; Escanear airodump</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar escaneo">&#x25A0; Cancelar</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar escaneo">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
@@ -1324,7 +1289,7 @@
 
             <!-- ══════════════════ DOS / FLOOD ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F525; DoS / Flood</h2>
+              <h2 class="section-title">8 &#183; &#x1F525; DoS / Flood</h2>
               <div class="attack-grid">
 
                 <!-- Beacon Flood (airbase-ng) -->
@@ -1356,7 +1321,7 @@
 
             <!-- ══════════════════ EVIL TWIN ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">&#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+              <h2 class="section-title">9 &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
               <div class="attack-grid">
 
                 <!-- Kit Evil Twin -->
@@ -1458,6 +1423,7 @@
                     </div>
                   </div>
                   <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="atk-btn" onclick="doWslHealth()" title="Distro + wlan0 + monitor + canal + probe RX (6s)">&#x1FA7A; Salud RF</button>
                     <button class="atk-btn" onclick="doWslAttach()">&#x1F517; Attach a Kali</button>
                     <button class="atk-btn" onclick="doWslDetach()">&#x1F519; Detach a Win</button>
                     <button class="atk-btn" onclick="doWslExec()">&#x25B6; Ejecutar en Kali</button>
@@ -1468,7 +1434,7 @@
                     <button class="atk-btn" onclick="doWslWash()">Wash 20s</button>
                     <button class="atk-btn" onclick="doWslDeauth()">Deauth x10</button>
                     <button class="atk-btn" onclick="doWslReaver()">Reaver 60s</button>
-                    <button class="atk-btn" style="background:#3a3a52" onclick="doWslKill()">&#x25A0; Kill RF</button>
+                    <button class="atk-btn atk-stop" style="background:#3a3a52" onclick="doWslKill()">&#x25A0; Kill RF</button>
                   </div>
                   <p class="atk-desc" style="margin-top:6px">Deauth/Reaver SOLO contra tu AP. Requieren RF funcional en Kali (ver ROADMAP Fase 6).</p>
                 </div>
@@ -1494,10 +1460,64 @@
                     <button class="atk-btn" onclick="doVhHub()">&#x1F517; +Hub</button>
                     <button class="atk-btn" onclick="doVhList()">&#x2630; List</button>
                     <button class="atk-btn" onclick="doVhUse()">&#x1F4E1; USE WLAN</button>
-                    <button class="atk-btn" style="background:#3a3a52" onclick="doVhStop()">&#x25A0; STOP</button>
+                    <button class="atk-btn atk-stop" style="background:#3a3a52" onclick="doVhStop()">&#x25A0; STOP</button>
                     <button class="atk-btn" onclick="doVhRf()">&#x1F4F6; RF-check 15s</button>
                   </div>
                   <p class="atk-desc" style="margin-top:6px">Orden: Servidor → Provision → Demonio → +Hub → List → USE → RF-check. STOP devuelve el USB a Windows.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- ══════════════════ ACCESO (objetivo: conectarse) ══════════════════ -->
+            <div class="atk-section">
+              <h2 class="section-title">10 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+              <div class="attack-grid">
+
+                <!-- Conectar con clave -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--accent">&#x1F517; Conectar con clave</h3>
+                  <p class="atk-desc">Cierra el círculo: con la clave (crack, portal, keygen o conocida) conecta este equipo vía perfil netsh</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>SSID:</label>
+                      <input id="conn-ssid" type="text" placeholder="MiRedWiFi">
+                    </div>
+                    <div class="field-row">
+                      <label>Clave:</label>
+                      <input id="conn-pass" type="password" placeholder="clave WPA2">
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForConnect()">Usar objetivo</button>
+                    <button class="atk-btn" onclick="wifiConnect()">Conectar</button>
+                    <button class="atk-btn" style="background:var(--gray)" onclick="wifiDisconnect()">Desconectar</button>
+                  </div>
+                </div>
+
+                <!-- Keygen claves por defecto -->
+                <div class="atk-card">
+                  <h3 class="atk-title atk-title--yellow">&#x1F511; Keygen por defecto</h3>
+                  <p class="atk-desc">Claves de fábrica derivadas de SSID/BSSID: Comtrend (Jazztel_/WLAN_, directo) y Thomson/familia (búsqueda SHA1 ~21.8M, tarda segundos). Sin RF, sin captura.</p>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>SSID:</label>
+                      <input id="keygen-ssid" type="text" placeholder="Jazztel_A1B2">
+                    </div>
+                    <div class="field-row">
+                      <label>BSSID:</label>
+                      <input id="keygen-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                    <div class="field-row">
+                      <label>Máx (Thomson):</label>
+                      <input id="keygen-max" type="number" min="1" max="50" value="5" title="Candidatos máximos en la búsqueda Thomson">
+                    </div>
+                  </div>
+                  <div class="atk-btn-row">
+                    <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForKeygen()">Usar objetivo</button>
+                    <button class="atk-btn" onclick="keygenDetect()">Detectar</button>
+                    <button class="atk-btn" onclick="keygenRun()">Generar</button>
+                  </div>
+                  <pre id="keygen-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:140px;overflow-y:auto"></pre>
                 </div>
               </div>
             </div>

@@ -4,6 +4,27 @@ Objetivo: motor dual. UI Tauri en Windows + ejecución RF en Kali-WSL2 (mismo RT
 vía usbipd). Lo offline sigue nativo Windows. Cada fase tiene criterio de "hecho"
 verificable; no se avanza sin marcarlo. Estado actual arriba del todo.
 
+## ESTADO ACTUAL (2026-09-18 — re-medición completa del puente)
+- **Re-verificado hoy end-to-end** (con la app cerrada, por CLI): kali-linux Running,
+  usbipd attach 1-10 OK, `wlan0` (00:c0:ca:59:a7:d8) monitor OK, `iw wlan0 set channel 11`
+  OK, hcxdumptool 7.0.0 y airodump-ng ejecutan… **RX sigue MUERTA: 0 pkts en 20 s en CH11**
+  (mismo resultado que 2026-09-14). El bloqueador usbipd-RX persiste con kernel stock y
+  sin cambios de entorno; nada apunta a código — es transporte.
+- **wsl_health (nuevo comando + botón «🩺 Salud RF»)**: diagnostica en un tirón distro →
+  wlan0 → monitor → canal → probe RX 6 s con tcpdump (solo lectura, sin TX). Devuelve
+  veredicto por paso; distingue «sin attach» de «attach con radio muerta». Con este check,
+  cualquier «no funciona el WSL» queda caracterizado en un clic.
+- **sudo -n verificado**: la whitelist `/etc/sudoers.d/uifipill-lab` funciona tal cual
+  (probado: `sudo -n timeout -s INT 3 airodump-ng` exit 0). Las recetas no necesitan cambios.
+- **Fix crítico aparte (commands.rs/tools_detect.rs)**: el instalador NSIS pone tools en
+  `<exe>\_up_\tools\` y `require_bin`/`install_dirs` no lo miraban → en el instalado
+  «no ataca / no verbose» porque NINGÚN binario se resolvía (reaver, wash, aircrack).
+  Ahora: `_up_/tools` en install_dirs + `resolve_bin_abs` en run_bin/run_bin_bg (ruta
+  absoluta; una ruta desnua no arranca aunque exista). Verificado instalando y arrancando.
+- **UI (misma ronda)**: lock de ataque (barra roja + botones bloqueados + ■ Detener
+  siempre activo), verbose completo (sin recorte de 80 líneas; chunks 8 KB/64 eventos),
+  tab Ataque reordenado 1→10 con objetivo arriba y Acceso al final.
+
 ## ESTADO ACTUAL (2026-09-15)
 - Fases 0-5 completas. Fase 6 PARCIAL + Fase 6b NUEVA (UI VirtualHere automatizada,
   ver abajo). Post-reboot: Kali OK con kernel `bzImage-84test` (6.6.84.1+, rt2800usb
