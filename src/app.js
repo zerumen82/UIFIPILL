@@ -1812,14 +1812,64 @@ window.wslShow = async function (tag, p) {
     log(`[${tag} ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
   } catch (err) { log(`[${tag}] FATAL: ${err}`, 'error'); }
 };
+// ── WSL streams en vivo (verbose real de Kali en el panel) ─────────────
+// Igual que invokeAttack pero con los comandos wsl_*_stream que emiten
+// attack-progress desde dentro de Kali: la salida de hcxdumptool/airodump/
+// aireplay se ve EN VIVO en el panel del tab Ataque.
+async function invokeWslStream(cmd, args) {
+  if (attackIsBusy()) { log(`⚠️ Ya hay un ataque en curso; deténlo antes.`, 'warn'); return false; }
+  log(`>>> Kali (streaming): ${cmd} ${JSON.stringify(args)}`, 'info');
+  setAttackRunning(true, 'Kali: ' + cmd.replace('wsl_', '').replace('_stream', '') + ' en curso…');
+  showProgress(true);
+  currentAttackId = cmd.replace(/_/g, '') + '_stream';
+  const t0 = performance.now();
+  try {
+    const r = await window.__invoke(cmd, args);
+    const ms = Math.round(performance.now() - t0);
+    // El verbose ya llegó en vivo vía attack-progress; aquí solo el cierre.
+    if (r?.stderr) log(`[Kali stderr] ${r.stderr}`, 'warn');
+    log(r?.success ? `✅ Kali terminó OK (${ms} ms)` : `⚠️ Kali finalizó (exit=${r?.exit_code ?? '?'}) en ${ms} ms`, r?.success ? 'ok' : 'warn');
+    return !!r?.success;
+  } catch (err) {
+    log(`[FATAL ${cmd}] ${err}`, 'error');
+    return false;
+  } finally {
+    currentAttackId = null;
+    showProgress(false);
+    setAttackRunning(false);
+  }
+}
+
+window.wslStreamPmkid = function () {
+  const ch = selectedChannel();
+  return invokeWslStream('wsl_pmkid_stream', { iface: 'wlan0', channel: ch, durationSecs: 60 });
+};
+window.wslStreamAirodump = function () {
+  const ch = selectedChannel();
+  return invokeWslStream('wsl_airodump_stream', { iface: 'wlan0', channel: ch, durationSecs: 30 });
+};
+window.wslStreamDeauth = function () {
+  const bssid = getSelectedBssid(); if (!bssid) return;
+  return invokeWslStream('wsl_deauth_stream', { iface: 'wlan0', bssid, count: 10, channel: selectedChannel() });
+};
+
 window.doWslHealth = async function () {
+  const line = document.getElementById('wsl-health-line');
+  if (line) line.textContent = 'Estado Kali: verificando (6-15s, incluye probe RX)…';
   log('>>> Salud del puente Kali (distro + wlan0 + monitor + RX 6s)…', 'info');
   try {
     const r = await window.__invoke('wsl_health', { iface: 'wlan0' });
     // El informe viene línea a línea en stdout: cada paso con su veredicto.
     if (r.stdout) r.stdout.split('\n').filter(Boolean).forEach(l => log(l, l.includes('OK') || l.includes('VIVA') ? 'ok' : 'warn'));
     log(`[${r.success ? 'OK' : 'FALLO'}] ${r.message}`, r.success ? 'ok' : 'warn');
-  } catch (err) { log(`[wsl_health] FATAL: ${err}`, 'error'); }
+    if (line) {
+      line.textContent = 'Estado Kali: ' + (r.success ? '✅ RF OPERATIVA — puedes atacar' : '❌ con fallos (ver consola)');
+      line.style.color = r.success ? 'var(--green)' : 'var(--red)';
+    }
+  } catch (err) {
+    log(`[wsl_health] FATAL: ${err}`, 'error');
+    if (line) { line.textContent = 'Estado Kali: error inesperado (' + err + ')'; line.style.color = 'var(--red)'; }
+  }
 };
 window.doWslPmkid = async function () {
   const t = window.wslTarget();

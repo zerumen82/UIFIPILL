@@ -16,6 +16,13 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri_plugin_shell::process::CommandChild;
 
+/// Emite stdout+stderr troceados como eventos attack-progress (wrapper para
+/// wsl::wsl_stream_run; reutiliza emit_chunked de commands).
+pub(crate) fn emit_stream(app: &tauri::AppHandle, id: &str, out: &str, err: &str) {
+    commands::emit_chunked(app, id, "stdout", out);
+    commands::emit_chunked(app, id, "stderr", err);
+}
+
 pub struct AppState {
     pub running_attacks: Mutex<HashMap<String, CommandChild>>,
 }
@@ -113,6 +120,9 @@ pub fn run() {
             wsl::wsl_to_win,
             wsl::wsl_is_available,
             wsl::wsl_health,
+            wsl::wsl_pmkid_stream,
+            wsl::wsl_airodump_stream,
+            wsl::wsl_deauth_stream,
             wsl::wsl_pmkid_capture,
             wsl::wsl_airodump,
             wsl::wsl_wash,

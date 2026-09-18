@@ -105,7 +105,7 @@ fn parse_netsh(raw: &str) -> Vec<WifiNetwork> {
 const EMIT_CHUNK_BYTES: usize = 8192;
 const EMIT_MAX_EVENTS: usize = 64;
 
-fn emit_chunked(app: &AppHandle, id: &str, kind: &str, text: &str) {
+pub(crate) fn emit_chunked(app: &AppHandle, id: &str, kind: &str, text: &str) {
     if text.is_empty() {
         return;
     }

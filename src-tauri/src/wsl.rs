@@ -6,7 +6,8 @@
 // Respuestas en snake_case (este módulo es nuevo; el frontend las lee tal cual).
 use serde::Serialize;
 use std::time::Duration;
-use tauri::{command, AppHandle};
+use tauri::{command, AppHandle, Emitter};
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// Distro verificada en lab (Fase 3): Kali Rolling 2026.2 + herramientas RF.
@@ -377,6 +378,195 @@ pub async fn wsl_health(app: AppHandle, iface: Option<String>) -> WslExecResult 
         stderr: rx.stderr,
         exit_code: if ok_all { Some(0) } else { Some(1) },
     }
+}
+
+/// Lanza una receta RF en Kali CON STREAMING en vivo hacia la UI:
+/// emite `attack-progress` (id, stdout/stderr) por chunk igual que run_bin_bg,
+/// `attack-started` al arrancar y `attack-completed` al terminar. El frontend
+/// ya sabe pintar esos eventos — el verbose de Kali se ve en el panel en vivo.
+/// Cancelable con cancel_attack porque el child se registra en running_attacks.
+async fn wsl_stream_run(
+    app: &AppHandle,
+    state: &tauri::State<'_, crate::AppState>,
+    attack_id: &str,
+    tool_args: Vec<String>,
+    dur: u64,
+) -> WslExecResult {
+    let dur = dur.clamp(10, 600);
+    // Misma receta que sudo_timeout: sudo -n timeout -s INT {dur} {tool…}
+    let mut full: Vec<String> = vec![
+        "-n".into(), "/usr/bin/timeout".into(), "-s".into(), "INT".into(), dur.to_string(),
+    ];
+    full.extend(tool_args);
+    let mut wsl_args: Vec<String> = vec!["-d".into(), DEFAULT_DISTRO.into(), "--".into(), "sudo".into()];
+    wsl_args.extend(full);
+
+    let cmdline = format!("wsl -d {} -- sudo{} {}", DEFAULT_DISTRO,
+        wsl_args[3..].iter().map(|a| format!(" {}", a)).collect::<String>(),
+        // (legible: los args ya llevan espacio delante)
+        "");
+    let _ = app.emit("attack-progress", serde_json::json!({
+        "id": attack_id, "type": "stdout",
+        "data": format!("$ (Kali) {}\n", cmdline)
+    }));
+    let _ = app.emit("attack-started", serde_json::json!({
+        "id": attack_id, "bg": true, "cmdline": format!("(Kali) {}", cmdline)
+    }));
+
+    let shell = app.shell();
+    let arg_refs: Vec<&str> = wsl_args.iter().map(|s| s.as_ref()).collect();
+    let (mut rx, child) = match shell.command("wsl").args(&arg_refs).spawn() {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = format!("No se pudo lanzar wsl: {}", e);
+            let _ = app.emit("attack-error", serde_json::json!({ "id": attack_id, "error": msg }));
+            return WslExecResult::err(msg);
+        }
+    };
+    {
+        let mut map = state.running_attacks.lock().unwrap();
+        map.insert(attack_id.to_string(), child);
+    }
+
+    let mut stdout_all = String::new();
+    let mut pend_out = String::new();
+    let mut pend_err = String::new();
+    let mut last_flush = std::time::Instant::now();
+    let mut exit_code: Option<i32> = None;
+    const FLUSH_BYTES: usize = 4096;
+    const FLUSH_MS: u128 = 150;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(data) => {
+                let txt = String::from_utf8_lossy(&data);
+                stdout_all.push_str(&txt);
+                pend_out.push_str(&txt);
+                if pend_out.len() + pend_err.len() >= FLUSH_BYTES
+                    || last_flush.elapsed().as_millis() >= FLUSH_MS
+                {
+                    let out = std::mem::take(&mut pend_out);
+                    let err = std::mem::take(&mut pend_err);
+                    crate::emit_stream(app, attack_id, &out, &err);
+                    last_flush = std::time::Instant::now();
+                }
+            }
+            CommandEvent::Stderr(data) => {
+                let txt = String::from_utf8_lossy(&data);
+                pend_err.push_str(&txt);
+                if pend_out.len() + pend_err.len() >= FLUSH_BYTES
+                    || last_flush.elapsed().as_millis() >= FLUSH_MS
+                {
+                    let out = std::mem::take(&mut pend_out);
+                    let err = std::mem::take(&mut pend_err);
+                    crate::emit_stream(app, attack_id, &out, &err);
+                    last_flush = std::time::Instant::now();
+                }
+            }
+            CommandEvent::Terminated(status) => {
+                exit_code = status.code;
+                break;
+            }
+            CommandEvent::Error(err) => {
+                pend_err.push_str(&format!("Error: {}", err));
+                break;
+            }
+            _ => {}
+        }
+    }
+    // Resto pendiente
+    {
+        let out = std::mem::take(&mut pend_out);
+        let err = std::mem::take(&mut pend_err);
+        crate::emit_stream(app, attack_id, &out, &err);
+    }
+    {
+        let mut map = state.running_attacks.lock().unwrap();
+        map.remove(attack_id);
+    }
+    let ok = exit_code == Some(0);
+    let _ = app.emit("attack-completed", serde_json::json!({
+        "id": attack_id, "success": ok, "exit_code": exit_code
+    }));
+    WslExecResult {
+        success: ok,
+        stdout: stdout_all,
+        stderr: String::new(),
+        exit_code,
+        message: format!("Kali: exit {:?} tras {}s", exit_code, dur),
+    }
+}
+
+/// Receta PMKID con streaming: hcxdumptool en Kali, verbose en vivo en la UI.
+#[command]
+pub async fn wsl_pmkid_stream(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    iface: String,
+    channel: Option<u8>,
+    duration_secs: Option<u64>,
+) -> Result<WslExecResult, String> {
+    if !valid_iface(&iface) {
+        return Ok(WslExecResult::err(format!("Interfaz inválida: '{}'.", iface)));
+    }
+    let dur = duration_secs.unwrap_or(60).clamp(10, 600);
+    let mut tool = vec![
+        "/usr/bin/hcxdumptool".into(), "-i".into(), iface.clone(),
+        "--enable_status=1".into(), "--status_interval=2".into(),
+    ];
+    if let Some(ch) = channel {
+        if !valid_channel_24(ch) { return Ok(WslExecResult::err(format!("Canal inválido: {}", ch))); }
+        tool.push("-c".into()); tool.push(ch.to_string());
+    }
+    Ok(wsl_stream_run(&app, &state, "wsl_pmkid_stream", tool, dur).await)
+}
+
+/// Receta airodump con streaming (verbose en vivo).
+#[command]
+pub async fn wsl_airodump_stream(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    iface: String,
+    channel: Option<u8>,
+    duration_secs: Option<u64>,
+) -> Result<WslExecResult, String> {
+    if !valid_iface(&iface) {
+        return Ok(WslExecResult::err(format!("Interfaz inválida: '{}'.", iface)));
+    }
+    let dur = duration_secs.unwrap_or(30).clamp(10, 600);
+    let mut tool = vec!["/usr/sbin/airodump-ng".into(), iface.clone()];
+    if let Some(ch) = channel {
+        if !valid_channel_24(ch) { return Ok(WslExecResult::err(format!("Canal inválido: {}", ch))); }
+        tool.push("-c".into()); tool.push(ch.to_string());
+    }
+    Ok(wsl_stream_run(&app, &state, "wsl_airodump_stream", tool, dur).await)
+}
+
+/// Receta deauth aireplay-ng con streaming (SOLO contra AP propio).
+#[command]
+pub async fn wsl_deauth_stream(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    iface: String,
+    bssid: String,
+    count: Option<u32>,
+    channel: Option<u8>,
+) -> Result<WslExecResult, String> {
+    if !valid_iface(&iface) { return Ok(WslExecResult::err(format!("Interfaz inválida: '{}'.", iface))); }
+    if !valid_bssid(&bssid) { return Ok(WslExecResult::err(format!("BSSID inválido: '{}'.", bssid))); }
+    let n = count.unwrap_or(10).clamp(1, 100);
+    let tool = vec![
+        "/usr/sbin/aireplay-ng".into(), "--deauth".into(), n.to_string(),
+        "-a".into(), bssid.clone(), iface.clone(),
+    ];
+    if let Some(ch) = channel {
+        if !valid_channel_24(ch) { return Ok(WslExecResult::err(format!("Canal inválido: {}", ch))); }
+        // Fijar canal antes: iw es la vía soportada (airodump no está delante).
+        let _ = wsl_exec(app.clone(), "sudo".into(), Some(vec![
+            "-n".into(), "/usr/sbin/iw".into(), "dev".into(), iface.clone(), "set".into(), "channel".into(), ch.to_string(),
+        ]), None, Some(20)).await;
+    }
+    Ok(wsl_stream_run(&app, &state, "wsl_deauth_stream", tool, 30).await)
 }
 
 /// PMKID: `hcxdumptool -i {iface} -w {staging.pcapng} [-c {ch}a] --rds=1`

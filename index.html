@@ -288,6 +288,42 @@
     /* Ninguna tarjeta debe desbordar su columna (inputs/botones anchos). */
     .attack-grid > * { min-width: 0; }
 
+    /* ── Wizard del flujo principal: tarjetas de paso grandes y claras ── */
+    .wizard { display: flex; flex-direction: column; gap: 14px; }
+    .wiz-step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r);
+      padding: 16px 18px;
+    }
+    .wiz-head { display: flex; align-items: flex-start; gap: 14px; }
+    .wiz-n {
+      flex: 0 0 auto;
+      width: 38px; height: 38px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 17px;
+    }
+    .wiz-title { font-size: 15px; font-weight: 700; }
+    .wiz-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 3px; }
+    .wiz-status {
+      font-size: 12px; color: var(--muted); background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 12px; margin: 10px 0 4px;
+      font-family: ui-monospace, monospace;
+    }
+    .wiz-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .wiz-btns .atk-btn { flex: 0 1 auto; padding: 9px 16px; font-size: 12.5px; }
+    .wiz-more { margin-top: 10px; }
+    .wiz-more > summary {
+      cursor: pointer; font-size: 11.5px; color: var(--muted);
+      list-style: none; user-select: none;
+    }
+    .wiz-more > summary::-webkit-details-marker { display: none; }
+    .wiz-more > summary::before { content: '\25B8\00a0avanzado: '; color: var(--gray); font-style: italic; }
+    .wiz-more[open] > summary::before { content: '\25BE\00a0avanzado: '; }
+
     /* ── Tools status ─────────────────────────────────────────────────── */
     .tool-row {
       display: flex; align-items: center; gap: 10px;
@@ -670,177 +706,214 @@
 
 
 
-            <!-- ══════════════════ AUTO ATTACK ══════════════════ -->
+            <!-- ══════════════════ WIZARD: FLUJO PRINCIPAL ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">1 &#183; &#x26A1; Ataque automático (todo en uno)</h2>
-              <div class="attack-grid">
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--accent">&#x26A1; Ataque completo 7 pasos</h3>
-                  <p class="atk-desc">Secuencia completa: Deauth ligero &#8594; PMKID capture &#8594; Deauth fuerte &#8594; Handshake capture &#8594; Convertir PMKID &#8594; Crack PMKID &#8594; Crack Handshake</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID:</label>
-                      <input id="auto-bssid" type="text" placeholder="Usa el selector de objetivo arriba" readonly style="color:var(--muted)">
-                    </div>
-                    <div class="field-row">
-                      <label>Wordlist:</label>
-                      <input id="auto-wordlist" type="text" placeholder="rockyou.txt (vacío = por defecto)">
-                    </div>
-                    <div class="field-row">
-                      <label>Interfaz:</label>
-                      <input id="auto-iface" type="text" placeholder="NPF_{GUID} o nombre">
+              <h2 class="section-title">1 &#183; Flujo principal (el camino corto)</h2>
+              <div class="wizard">
+
+                <!-- PASO A: Kali -->
+                <div class="wiz-step">
+                  <div class="wiz-head">
+                    <span class="wiz-n">A</span>
+                    <div>
+                      <h3 class="wiz-title">Atacar con Kali (WSL) &#8212; verbose en vivo</h3>
+                      <p class="wiz-desc">El RT3070 se pasa a Kali por usbipd y los ataques corren all&iacute; (canal e inyecci&oacute;n s&iacute; funcionan en Linux). La salida se ve aqu&iacute; en vivo.</p>
                     </div>
                   </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn" id="autoAttackBtn" onclick="doCmd('auto_attack', startAutoAttack)" style="background:var(--accent)">&#x26A1; Iniciar Auto Ataque</button>
-                    <button class="atk-btn" onclick="doCmd('scan_auto', scanAndAutoAttack)" style="background:var(--green)">&#x1F4E2; Scan + Auto Ataque</button>
+                  <div id="wsl-health-line" class="wiz-status">Estado Kali: sin verificar &#8212; pulsa «Salud RF»</div>
+                  <div class="wiz-btns">
+                    <button class="atk-btn" onclick="doWslHealth()">&#x1FA7A; Salud RF</button>
+                    <button class="atk-btn atk-btn--blue" onclick="wslStreamAirodump()">&#x1F4E1; Ver redes en Kali (30s)</button>
+                    <button class="atk-btn" onclick="wslStreamPmkid()">&#x1F50D; PMKID en Kali (60s)</button>
+                    <button class="atk-btn atk-stop" style="background:var(--red)" onclick="cancelCurrentAttack()">&#x25A0; Detener</button>
                   </div>
+                  <details class="wiz-more">
+                    <summary>Avanzado: attach USB, comandos manuales, deauth</summary>
+                    <div class="wiz-btns" style="margin-top:8px">
+                      <button class="atk-btn" onclick="doWslAttach()">&#x1F517; Attach USB</button>
+                      <button class="atk-btn" onclick="doWslDetach()">&#x1F519; Detach USB</button>
+                      <button class="atk-btn" onclick="doWslExec()">&#x25B6; Comando libre</button>
+                      <button class="atk-btn" onclick="wslStreamDeauth()">&#x26A1; Deauth x10 (SOLO tu AP)</button>
+                    </div>
+                    <div class="atk-fields" style="margin-top:10px">
+                      <div class="field-row">
+                        <label>busid USB:</label>
+                        <input id="wsl-busid" type="text" value="1-10" title="Busid usbipd del RT3070 (ver con usbipd list)">
+                      </div>
+                      <div class="field-row">
+                        <label>Comando Kali:</label>
+                        <input id="wsl-cmd" type="text" value="echo ok">
+                      </div>
+                      <div class="field-row">
+                        <label>BSSID (solo AP propio):</label>
+                        <input id="wsl-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                      </div>
+                      <div class="field-row">
+                        <label>Canal 1-14:</label>
+                        <input id="wsl-chan" type="number" min="1" max="14" value="11">
+                      </div>
+                    </div>
+                    <p class="wiz-desc" style="margin-top:6px">Alternativa sin usbipd: VirtualHere (requiere licencia de pago para USE). Botones: Servidor &#8594; Provision &#8594; Demonio &#8594; +Hub &#8594; List &#8594; USE &#8594; RF-check.</p>
+                    <div class="wiz-btns">
+                      <button class="atk-btn" onclick="doVhCheck()">&#x1F50D; VH Servidor</button>
+                      <button class="atk-btn" onclick="doVhProvision()">&#x1F4E5; Provision</button>
+                      <button class="atk-btn" onclick="doVhList()">&#x2630; List</button>
+                      <button class="atk-btn" onclick="doVhUse()">&#x1F4E1; USE WLAN</button>
+                      <button class="atk-btn" onclick="doVhRf()">&#x1F4F6; RF-check</button>
+                    </div>
+                    <div id="wsl-status" class="wiz-status" style="margin-top:6px">Estado VH: &#8212;</div>
+                  </details>
                 </div>
-              </div>
-            </div>
 
-            <!-- ══════════════════ PMKID PIPELINE ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">2 &#183; &#x1F50D; PMKID Pipeline</h2>
-              <div class="attack-grid">
-
-                <!-- PMKID Capture -->
-                <div class="atk-card">
-                  <h3 class="atk-title">Capturar PMKID</h3>
-                  <p class="atk-desc">Extrae el hash PMKID del handshake WPA2 en un solo paquete</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Canal:</label>
-                      <input id="pmkid-chan" type="number" min="1" max="165" placeholder="auto">
-                    </div>
-                    <div class="field-row">
-                      <label>Duraci&oacute;n:</label>
-                      <input id="pmkid-dur" type="number" min="10" max="3600" value="120"><span class="unit">s</span>
-                    </div>
-                    <div class="field-row">
-                      <label>Interfaz:</label>
-                      <input id="pmkid-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                <!-- PASO B: capturar en Windows -->
+                <div class="wiz-step">
+                  <div class="wiz-head">
+                    <span class="wiz-n">B</span>
+                    <div>
+                      <h3 class="wiz-title">Capturar en Windows (si Kali no est&aacute; disponible)</h3>
+                      <p class="wiz-desc">Npcap captura pasiva 802.11 (requiere modo monitor activo en el modal del tab Escanear). Sin inyecci&oacute;n: solo escucha.</p>
                     </div>
                   </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn" onclick="doCmd('pmkid_capture',capturePmkid)">&#x25B6; Iniciar captura</button>
-                    <button class="atk-btn" style="background:var(--green)" onclick="doCmd('native_capture',captureNative)" title="Captura 802.11 con Npcap (wpcap.dll, sin hcxdumptool). Requiere modo monitor activo.">&#x25BC; Npcap nativo</button>
-                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--blue" onclick="doCmd('native_capture',captureNative)">&#x25BC; Capturar 60s (Npcap)</button>
+                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Detener</button>
                   </div>
+                  <details class="wiz-more">
+                    <summary>Avanzado: duraci&oacute;n e interfaz concretas, captura con hcxdumptool (si existiera en Windows)</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Duraci&oacute;n:</label>
+                        <input id="pmkid-dur" type="number" min="10" max="3600" value="60"><span class="unit">s</span>
+                      </div>
+                      <div class="field-row">
+                        <label>Interfaz:</label>
+                        <input id="pmkid-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      </div>
+                      <div class="field-row">
+                        <label>Canal:</label>
+                        <input id="pmkid-chan" type="number" min="1" max="165" placeholder="auto del scan">
+                      </div>
+                      <div class="field-row">
+                        <label>Interfaz HS:</label>
+                        <input id="handshake-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      </div>
+                      <div class="field-row">
+                        <label>Duraci&oacute;n HS:</label>
+                        <input id="handshake-dur" type="number" min="10" max="3600" value="60"><span class="unit">s</span>
+                      </div>
+                    </div>
+                    <div class="wiz-btns" style="margin-top:8px">
+                      <button class="atk-btn" onclick="doCmd('pmkid_capture',capturePmkid)">&#x25B6; pmkid_capture (hcxdumptool)</button>
+                      <button class="atk-btn" onclick="doCmd('capture_handshake', captureHandshake)">&#x25B6; capture_handshake</button>
+                      <input id="handshake-essid" type="hidden">
+                      <input id="handshake-chan" type="hidden">
+                    </div>
+                  </details>
                 </div>
 
-                <!-- Convertir PMKID -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">&#x2699; Convertir PMKID</h3>
-                  <p class="atk-desc">Convierte .pcapng → formato .22000 (hashcat)</p>
+                <!-- PASO C: convertir -->
+                <div class="wiz-step">
+                  <div class="wiz-head">
+                    <span class="wiz-n">C</span>
+                    <div>
+                      <h3 class="wiz-title">Convertir la captura a hash (.22000)</h3>
+                      <p class="wiz-desc">Del .pcapng capturado al formato de hashcat. El parser es Rust nativo: siempre disponible.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>.pcapng:</label>
-                      <input id="convert-pcap" type="text" placeholder="capture_AA-BB-CC.pcapng">
+                      <input id="convert-native-pcap" type="text" placeholder="captura del paso B (auto si usaste la app)">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--blue" onclick="doCmd('pmkid_convert', convertPmkid)">Convertir</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--blue" onclick="doCmd('pcap_to_22000', convertPmkidNative)">&#x2699; Convertir</button>
+                  </div>
+                  <details class="wiz-more">
+                    <summary>Avanzado: hcxpcapngtool (si existiera), ruta alternativa</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>.pcapng alt:</label>
+                        <input id="convert-pcap" type="text" placeholder="capture_AA-BB-CC.pcapng">
+                      </div>
+                      <div class="field-row">
+                        <label>Output dir:</label>
+                        <input id="convert-native-outdir" type="text" placeholder=". (mismo directorio)">
+                      </div>
+                    </div>
+                    <div class="wiz-btns" style="margin-top:8px">
+                      <button class="atk-btn" onclick="doCmd('pmkid_convert', convertPmkid)">&#x2699; pmkid_convert (hcxpcapngtool)</button>
+                    </div>
+                  </details>
                 </div>
 
-                <!-- Convertir PMKID (nativo Rust) -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--green" style="color:var(--green)">&#x2699; Convertir .pcapng (Rust nativo)</h3>
-                  <p class="atk-desc">Convierte .pcapng &rarr; .22000 usando el parser nativo Rust (sin hcxpcapngtool)</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>.pcapng:</label>
-                      <input id="convert-native-pcap" type="text" placeholder="capture_AA-BB-CC.pcapng">
-                    </div>
-                    <div class="field-row">
-                      <label>Output dir:</label>
-                      <input id="convert-native-outdir" type="text" placeholder=". (mismo directorio)">
+                <!-- PASO D: crack -->
+                <div class="wiz-step">
+                  <div class="wiz-head">
+                    <span class="wiz-n">D</span>
+                    <div>
+                      <h3 class="wiz-title">Crack con hashcat</h3>
+                      <p class="wiz-desc">Diccionario rockyou contra el .22000 del paso C. Esto S&Iacute; es 100% funcional en Windows.</p>
                     </div>
                   </div>
-                  <button class="atk-btn" style="background:var(--green)" onclick="doCmd('pcap_to_22000', convertPmkidNative)">Convertir (nativo)</button>
-                </div>
-
-                <!-- Crack PMKID -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">&#x1F512; Crack PMKID</h3>
-                  <p class="atk-desc">Fuerza bruta con hashcat (modo 22000)</p>
                   <div class="atk-fields">
                     <div class="field-row">
-                      <label>Hash .hc22000:</label>
-                      <input id="crack-hash" type="text" placeholder="capture_xxx.22000">
+                      <label>Hash .22000:</label>
+                      <input id="crack-hash" type="text" placeholder="capture_xxx.22000 (auto del paso C)">
                     </div>
                     <div class="field-row">
                       <label>Wordlist:</label>
                       <input id="crack-wordlist" type="text" placeholder="rockyou.txt">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--red" onclick="doCmd('pmkid_crack', crackPmkid)">Crack con hashcat</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- ══════════════════ HANDSHAKE WPA2 ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">3 &#183; &#x1F510; Handshake WPA2</h2>
-              <div class="attack-grid">
-
-                <!-- Capturar Handshake -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">Capturar EAPOL 4-way</h3>
-                  <p class="atk-desc">Captura handshake WPA2 con airodump-ng + convertidor Rust nativo</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>SSID (opc):</label>
-                      <input id="handshake-essid" type="text" placeholder="MiRedWiFi">
-                    </div>
-                    <div class="field-row">
-                      <label>Canal:</label>
-                      <input id="handshake-chan" type="number" min="1" max="165" placeholder="auto">
-                    </div>
-                    <div class="field-row">
-                      <label>Duraci&oacute;n:</label>
-                      <input id="handshake-dur" type="number" min="10" max="3600" value="60"><span class="unit">s</span>
-                    </div>
-                    <div class="field-row">
-                      <label>Interfaz:</label>
-                      <input id="handshake-iface" type="text" placeholder="NPF_{GUID} o nombre">
-                    </div>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--red" onclick="doCmd('pmkid_crack', crackPmkid)">&#x1F512; Crack PMKID</button>
+                    <button class="atk-btn atk-btn--red" onclick="doCmd('crack_handshake', crackHandshake)">&#x1F512; Crack Handshake</button>
                   </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn atk-btn--red" onclick="doCmd('capture_handshake', captureHandshake)">&#x25B6; Capturar handshake</button>
-                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar captura en curso">&#x25A0; Cancelar</button>
-                  </div>
+                  <details class="wiz-more">
+                    <summary>Avanzado: modo hashcat, sesi&oacute;n, hash de handshake aparte</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Hash HS:</label>
+                        <input id="crack-handshake-hash" type="text" placeholder="handshake_AA-BB-CC.hccapx">
+                      </div>
+                      <div class="field-row">
+                        <label>Wordlist HS:</label>
+                        <input id="crack-handshake-wordlist" type="text" placeholder="rockyou.txt">
+                      </div>
+                      <div class="field-row">
+                        <label>Modo (-a):</label>
+                        <select id="crack-handshake-mode">
+                          <option value="0">0 — straight</option>
+                          <option value="1">1 — combinator</option>
+                          <option value="3">3 — brute-force</option>
+                          <option value="6">6 — dict + rule</option>
+                          <option value="8">8 — PRINCE</option>
+                        </select>
+                      </div>
+                      <div class="field-row">
+                        <label>Sesi&oacute;n:</label>
+                        <input id="crack-handshake-session" type="text" placeholder="uifipill (opcional)">
+                      </div>
+                    </div>
+                    <div class="wiz-btns" style="margin-top:8px">
+                      <button class="atk-btn" onclick="doCmd('auto_attack', startAutoAttack)" style="background:var(--accent)">&#x26A1; O TODO EN UNO: Auto-Ataque 7 pasos</button>
+                      <button class="atk-btn" onclick="doCmd('scan_auto', scanAndAutoAttack)" style="background:var(--green)">&#x1F4E2; Scan + Auto</button>
+                    </div>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Wordlist auto:</label>
+                        <input id="auto-wordlist" type="text" placeholder="rockyou.txt (vacío = por defecto)">
+                      </div>
+                      <div class="field-row">
+                        <label>Interfaz auto:</label>
+                        <input id="auto-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      </div>
+                      <input id="auto-bssid" type="hidden">
+                    </div>
+                  </details>
                 </div>
 
-                <!-- Crack Handshake -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">Crack Handshake WPA2</h3>
-                  <p class="atk-desc">Fuerza bruta hashcat modo 22000 sobre .hccapx o .22000</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Hash:</label>
-                      <input id="crack-handshake-hash" type="text" placeholder="handshake_AA-BB-CC.hccapx">
-                    </div>
-                    <div class="field-row">
-                      <label>Wordlist:</label>
-                      <input id="crack-handshake-wordlist" type="text" placeholder="rockyou.txt">
-                    </div>
-                    <div class="field-row">
-                      <label>Modo (a):</label>
-                      <select id="crack-handshake-mode">
-                        <option value="0">0 — straight</option>
-                        <option value="1">1 — combinator</option>
-                        <option value="3">3 — brute-force</option>
-                        <option value="6">6 — dict + rule</option>
-                        <option value="8">8 — PRINCE</option>
-                      </select>
-                    </div>
-                    <div class="field-row">
-                      <label>Session:</label>
-                      <input id="crack-handshake-session" type="text" placeholder="uifipill (opcional)">
-                    </div>
-                  </div>
-                  <button class="atk-btn atk-btn--red" onclick="doCmd('crack_handshake', crackHandshake)">Crack con hashcat</button>
-                </div>
               </div>
             </div>
 
