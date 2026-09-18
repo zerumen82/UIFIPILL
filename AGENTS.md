@@ -238,6 +238,77 @@ Síntoma del usuario: «una vez se lanza el ataque, si vas a Consola ya no vuelv
   procesos → los builds largos se lanzan con `schtasks /create + /run` y se
   sondean con `Get-Content ...log` (borrar la tarea al terminar).
 
+## Estado actual — rev. 2026-09-18 (fin de sesión, dónde está la app)
+Instalado en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe` (md5 `4d02e333b2f3a2545ffa0e0fb59908ce`,
+instalador `src-tauri/target/release/bundle/nsis/UIFIPILL_1.0.0_x64-setup.exe` con las
+DLLs del bundle incluidas). Master con 12 commits sin push.
+
+### Cableado nuevo desde la última revisión de AGENTS.md
+- **Fix crítico instalador**: Tauri NSIS aplana rutas `../tools/*` en `<exe>\_up_\tools\`,
+  y `require_bin`/`install_dirs` NO lo miraban → en el instalado ningún binario se
+  resolvía (reaver/wash/aircrack «no encontrados») y por eso «los ataques no van».
+  Ahora: `_up_/tools` + `_up_/tools/aircrack-ng-win` en `install_dirs()`;
+  `require_bin` consulta esas carpetas; `run_bin`/`run_bin_bg` resuelven RUTA
+  ABSOLUTA (`resolve_bin_abs`) antes de lanzar (una ruta desnuda no arranca aunque
+  exista). **Segundo fix del mismo típo**: el bundle no empaquetaba las DLLs que
+  reaver/wash enlazan (`libpcap.dll`, `libwinpthread-1.dll` → 0xC0000135 silencioso,
+  el proceso moría al instante sin output). Añadidas las 4 a `resources` en
+  `tauri.conf.json`. Verificado: `reaver -h` exit 0 desde `<inst>\_up_\tools`.
+- **Lock de UI durante ataque**: barra roja `#attack-status-bar` (punto pulsante +
+  label + ■ Detener SIEMPRE activo, clase `.atk-stop`); todos los `.atk-btn` se
+  deshabilitan (setAttackRunning). Eventos backend `attack-started/completed/error`
+  sincronizan el lock. **Fail-safe**: al entrar al tab Escanear, si
+  `list_attack_processes` no ve procesos vivos, el lock se libera solo (antes un
+  ataque que moría sin `attack-completed` dejaba el Escanear bloqueado para siempre).
+- **Tab Ataque reordenado**: objetivo BSSID + veredicto del perfilador arriba,
+  secciones numeradas 1→10 en orden de flujo (Auto → PMKID → Handshake → Crack →
+  WPA3 → WPS → Inyección → DoS → Evil Twin → Acceso al final).
+- **Verbose**: sin recorte de 80 líneas en invokeAttack (stdout íntegro + stderr
+  separado); backend `EMIT_CHUNK_BYTES` 8 KB / `EMIT_MAX_EVENTS` 64.
+- **Rediseño WIZARD (último cambio, commit 2ae8ab4)**: las secciones 1–3 (Auto/
+  PMKID/Handshake, 8 tarjetas con campos repetidos) se sustituyen por 4 pasos
+  A→D (`.wiz-step`, círculo de letra, botón principal, línea de estado
+  `#wsl-health-line`, avanzados en `<details class="wiz-more">`): A=atacar con
+  Kali (arriba del todo), B=capturar Windows Npcap, C=convertir .22000,
+  D=crack hashcat. Los inputs mantienen sus IDs (pmkid-dur, crack-hash,
+  auto-wordlist, wsl-busid, etc.) para no romper app.js.
+- **Streaming WSL en vivo (`wsl_stream_run`)**: recetas en Kali lanzadas con
+  `wsl -d kali-linux -- sudo -n timeout -s INT …` emitiendo
+  attack-progress/started/completed chunked (igual que run_bin_bg) y child
+  registrado en running_attacks (cancelable). Comandos nuevos:
+  `wsl_pmkid_stream`, `wsl_airodump_stream`, `wsl_deauth_stream` (todos
+  Result<WslExecResult,String> por la restricción de State en commands Tauri).
+  Handlers JS `wslStreamPmkid/Airodump/Deauth` + `invokeWslStream`.
+- **wsl_health** (comando + botón «Salud RF»): distro → wlan0 → monitor → canal
+  → probe RX 6 s con tcpdump; distingue «sin attach» de «attach con RX muerta»
+  y actualiza `#wsl-health-line` con color.
+
+### Límites HARDWARE medidos (no cambian por más código)
+- RT3070 en Windows: sin TX/injección (err 31, Npcap #85), sin cambio de canal
+  (3 vías OID agotadas incluida vendor 0xFF0100C8). Npcap = solo captura pasiva.
+- RT3070 vía usbipd→WSL2/Kali: driver perfecto pero **RX MUERTA** (0 pkts en
+  CH11 en 20 s, re-medido 3 veces: 2026-09-14, 09-15 y 09-18). El problema es el
+  transporte, no el driver ni el código.
+- Driver Windows del RT3070: `netr28ux.sys` MediaTek 2015, cerrado y firmado —
+  parchearlo exigiría desactivar Secure Boot/testsigning + certificado EV +
+  reversing de 2.2 MB. Descartado explícitamente como opción.
+- **Vías reales para RF activa decididas en sesión**: (1) Kali live USB con el
+  RT3070 nativo (rt2800usb funciona perfecto; 0 €, ~20 min, PENDIENTE de hacer:
+  falta pendrive ≥8 GB y decidir ISO), (2) antena RTL8812AU/AWUS036ACH (~30 €,
+  driver Windows SÍ inyecta vía Npcap y la app ya está lista para ello vía
+  check_injection_capability).
+- **Funcionando HOY en Windows con este hardware**: scan, captura pasiva Npcap
+  (392 pkts reales), pcap_to_22000, crack hashcat+rockyou, keygen
+  Comtrend/Thomson, wifi_connect. Pipeline completo pasivo end-to-end.
+
+### Deuda abierta conocida
+- El resto de secciones del tab Ataque (WPA3/WPS/Inyección/DoS/Evil Twin,
+  ahora numeradas 4–10) mantienen el layout antiguo `.attack-grid` — funcionan
+  pero no siguen el estilo wizard. Unificarlas sería el siguiente paso de UI.
+- VirtualHere USE sigue bloqueado por licencia (trial = API Timeout).
+- ROADMAP_WSL2.md §ESTADO ACTUAL (2026-09-18) tiene la medición completa del
+  puente; decisión de camino RF (Kali USB vs antena nueva) sin cerrar.
+
 ## External tools required (lab machine)
 - Npcap (NPcap.dll driver)
 - hcxdumptool + hcxpcapngtool (hcxtools)
