@@ -1,0 +1,40 @@
+== 1/6 Estado actual ==
+   netr28ux.sys actual: ade38351a626dc0a6bcde1d09b214c94a65ba89fc9b0a69045019ecbf27bef59
+   testsigning:
+== 2/6 Verificar hash del fichero parcheado ==
+   patched: d2c7cf43e49a055ef156125080028e9c7662dfef86f06f5d1c5ad3f94e9cb590
+== 3/6 Desactivar dispositivo PnP (descarga el driver) ==
+Utilidad PnP de Microsoft
+
+Se está deshabilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se deshabilitó correctamente.
+
+   disabled: True (tras 1 s)
+== 4/6 Copiar driver parcheado ==
+   copia OK
+== 5/6 Re-activar dispositivo ==
+Utilidad PnP de Microsoft
+
+Se está habilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se habilitó correctamente.
+
+Utilidad PnP de Microsoft
+
+Id. de instancia:                USB\VID_148F&PID_3070\1.0
+Descripción del dispositivo:         802.11n USB Wireless LAN Card
+Nombre de clase:                 Net
+GUID de clase:                 {4d36e972-e325-11ce-bfc1-08002be10318}
+Nombre del fabricante:          Ralink Technology, Corp.
+Estado:                     Problema
+Código del problema:               52 (0x34) [CM_PROB_UNSIGNED_DRIVER]
+Estado del problema:             0xC0000428
+Nombre del controlador:                oem180.inf
+
+
+== 6/6 Verificacion ==
+   netr28ux.sys ahora: d2c7cf43e49a055ef156125080028e9c7662dfef86f06f5d1c5ad3f94e9cb590
+   OK: FICHERO PARCHEADO EN SITIO.
+   servicio netr28ux RUNNING: False
+
+Siguiente paso: probar cambio de canal en modo monitor (UI: Escanear -> monitor).
+EXITCODE 0 

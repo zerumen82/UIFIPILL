@@ -213,10 +213,27 @@ el OID al modo ExtSTA.
   TrustedPublisher+Root, testsigning ON, y reemplazo del .sys AGENDADO en
   `PendingFileRenameOperations` (el driver estaba RUNNING; se sustituye
   en el arranque antes de cargarlo) — verificar tras reiniciar
-- [ ] Verificación post-reinicio: `activate_monitor` → `set_monitor_channel`
-  → si la radio se mueve, HITO; probar también `lab_monitor_cycle`
+- [x] Fix redeploy: el primer reemplazo falló (rutas escritas como `??`
+  en vez de `\??\` NT); `redeploy_pending.ps1` re-agendó con staging
+  (log en `redeploy_log.txt`) — tras reinicio, hash en disco =
+  `d2c7cf43…` (PARCHREADO) y servicio netr28ux RUNNING.
+- [x] **VERIFICACIÓN POST-REINICIO — HITO (2026-09-21): la radio SÍ
+  cambia de canal en monitor.** `lab_monitor_cycle` ok (monitor activa,
+  restore ok). Prueba de canal REAL por captura + beacons (DS Parameter
+  Set): pidiendo CH1 solo aparecen APs del canal 1 (Livebox7-A58C,
+  MiFibra-A4DA, NOVAHOME…); pidiendo CH6 solo APs del canal 6 (La Fory
+  3H, MOVISTAR_2B4A_EXT, Vodafone-7D84). El SET del OID 0x0D010335 se
+  acepta sin error (antes 0xC0232002): el NOP del gate bit17 funciona.
+- [x] Residual documentado: el GET del OID canal devuelve valor
+  CACHEADO (siempre el canal previo) — no fiable para readback.
+  `set_monitor_channel` ahora reintenta y da éxito si el SET fue
+  aceptado (nota de readback no fiable en el mensaje). El OID frecuencia
+  (0x0D010336) sigue rechazado (0xE0010017): irrelevante.
 - [ ] Si el canal funciona, medir TX (check_injection_capability) — puede
   seguir bloqueada por Npcap #85 (capa independiente del driver)
+- [ ] Decidir: mantener modo de prueba (testsigning) mientras dure el
+  driver parcheado; rollback con `restore_driver.ps1` +
+  `bcdedit /set testsigning off` cuando ya no se necesite
 
 ## 6. Diario
 
@@ -234,3 +251,10 @@ el OID al modo ExtSTA.
   checksum recalculado. Cert `UIFIPILL Lab Test` creado con makecert y
   binario firmado con signtool (SHA-256). Scripts deploy/restore listos.
   Pendiente: despliegue con admin + reinicio + medición.
+- 2026-09-21: **HITO — canal funciona.** Driver parcheado cargando
+  (testsigning ON, hash verificado). SET del OID canal aceptado y la
+  radio se mueve de verdad (probado por beacons capturados en CH1 vs
+  CH6, DS Param). GET cacheado documentado; fix en
+  `set_monitor_channel` (éxito por SET aceptado + reintentos). Tests:
+  23 passed / 0 failed (5 ignored), build release 0 warnings. Primera
+  vez en el proyecto que el RT3070 cambia de canal en Windows.

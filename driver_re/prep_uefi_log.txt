@@ -1,0 +1,60 @@
+== 1/3 BitLocker ==
+Cifrado de unidad BitLocker: versi¢n de la herramienta de configuraci¢n 10.0.26100
+Copyright (C) 2013 Microsoft Corporation. Todos los derechos reservados.
+
+Volumen C: []
+[Volumen del sistema operativo]
+
+    Tama¤o:                 445,67 GB
+    Versi¢n de BitLocker:   Ninguno
+    Estado de conversi¢n:   Descifrado completo
+    Porcentaje cifrado:     0,0%
+    M‚todo de cifrado:      Ninguno
+    Estado de protecci¢n:   Protecci¢n desactivada
+    Estado de bloqueo:      Desbloqueado
+    Campo de identificaci¢n:Ninguno
+    Protectores de clave:   ninguno
+
+
+   BitLocker no activo en C: - nada que suspender.
+== 2/3 testsigning ==
+Error al establecer los datos del elemento.
+El valor est  protegido por la directiva de arranque seguro y no se puede modificar ni eliminar.
+   estado (bcdedit /enum):
+
+Cargador de arranque de Windows
+-----------------------------
+Identificador           {current}
+device                  partition=C:
+path                    \WINDOWS\system32\winload.efi
+description             Windows 11
+locale                  es-ES
+inherit                 {bootloadersettings}
+recoverysequence        {3af0f563-02c2-11f0-bf02-5e8fa27160a3}
+displaymessageoverride  Recovery
+recoveryenabled         Yes
+isolatedcontext         Yes
+allowedinmemorysettings 0x15000075
+osdevice                partition=C:
+systemroot              \WINDOWS
+resumeobject            {f8af6273-02b2-11f0-bf00-00c0ca59f8b5}
+nx                      OptIn
+bootmenupolicy          Standard
+hypervisorlaunchtype    Auto
+== 3/3 Estado del adaptador (informativo) ==
+Utilidad PnP de Microsoft
+
+Id. de instancia:                USB\VID_148F&PID_3070\1.0
+Descripción del dispositivo:         802.11n USB Wireless LAN Card
+Nombre de clase:                 Net
+GUID de clase:                 {4d36e972-e325-11ce-bfc1-08002be10318}
+Nombre del fabricante:          Ralink Technology, Corp.
+Estado:                     Problema
+Código del problema:               52 (0x34) [CM_PROB_UNSIGNED_DRIVER]
+Estado del problema:             0xC0000428
+Nombre del controlador:                oem180.inf
+
+
+PREP HECHA. Ahora: REINICIA A LA UEFI y desactiva Secure Boot.
+Al volver a Windows, ejecuta (o pide a Buffy) driver_re\verify_patch.ps1.
+EXITCODE 0 

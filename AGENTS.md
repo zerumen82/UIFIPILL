@@ -238,6 +238,24 @@ Síntoma del usuario: «una vez se lanza el ataque, si vas a Consola ya no vuelv
   procesos → los builds largos se lanzan con `schtasks /create + /run` y se
   sondean con `Get-Content ...log` (borrar la tarea al terminar).
 
+## Parche driver RT3070 — VERIFICADO FUNCIONA (2026-09-21)
+- Driver parcheado CARGANDO en Windows (testsigning ON, hash `d2c7cf43...` en
+  `C:\Windows\System32\drivers\netr28ux.sys`; el redeploy con rutas NT `\\??\`
+  resolvió el fallo del primer deploy).
+- **La radio SÍ cambia de canal en monitor** (primera vez en el proyecto): probado
+  con capturas reales — pidiendo CH1 solo aparecen beacons de APs del canal 1
+  (Livebox7, MiFibra…); pidiendo CH6, solo APs del canal 6 (La Fory 3H,
+  MOVISTAR_2B4A_EXT…), vía DS Parameter Set de los beacons. El gate del bit17
+  parcheado hace que el SET del OID 0x0D010335 se ACEPTA (antes devolvía
+  0xC0232002).
+- Residual: el GET del OID devuelve un valor CACHEADO (siempre 11) — no es fiable.
+  `set_monitor_channel` ahora reintenta el readback y da éxito si el SET fue
+  aceptado, con nota de readback no fiable. `set_monitor_freq` sigue rechazando el
+  OID frecuencia (0xE0010017): irrelevante, la vía canal funciona.
+- TX/inyección: sigue bloqueada por Npcap #85 (capa independiente del driver).
+- Verificación: `cargo test --lib` 23 passed / 0 failed (5 ignored),
+  `cargo build --release` 0 warnings.
+
 ## Parche driver RT3070 (netr28ux.sys) — rev. 2026-09-20 (DRIVER_RE.md)
 - RE completa del driver MediaTek 5.01.25.0 (objdump, `driver_re/`): el OID
   canal (0x0D010335) está implementado y llama a SwitchChannel (0x14006a7f4,

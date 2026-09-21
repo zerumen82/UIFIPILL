@@ -1,0 +1,33 @@
+== 1/4 Secure Boot y testsigning ==
+   UEFISecureBootEnabled: 0 (0 = desactivado, buscamos esto)
+La operaci¢n se complet¢ correctamente.
+== 2/4 Hash del driver en disco ==
+   netr28ux.sys: d2c7cf43e49a055ef156125080028e9c7662dfef86f06f5d1c5ad3f94e9cb590
+== 3/4 Ciclo PnP para recargar el driver ==
+Utilidad PnP de Microsoft
+
+Se está deshabilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se deshabilitó correctamente.
+
+Utilidad PnP de Microsoft
+
+Se está habilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se habilitó correctamente.
+
+== 4/4 Veredicto ==
+Utilidad PnP de Microsoft
+
+Id. de instancia:                USB\VID_148F&PID_3070\1.0
+Descripción del dispositivo:         802.11n USB Wireless LAN Card
+Nombre de clase:                 Net
+GUID de clase:                 {4d36e972-e325-11ce-bfc1-08002be10318}
+Nombre del fabricante:          Ralink Technology, Corp.
+Estado:                     Problema
+Código del problema:               52 (0x34) [CM_PROB_UNSIGNED_DRIVER]
+Estado del problema:             0xC0000428
+Nombre del controlador:                oem180.inf
+
+
+   servicio netr28ux RUNNING: False
+   SIGUE EN PROBLEMA. Copiar el log y revisar CodeIntegrity.
+EXITCODE 0 

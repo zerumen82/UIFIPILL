@@ -1,0 +1,16 @@
+﻿== 1/3 Estado actual ==
+   netr28ux.sys actual: ade38351a626dc0a6bcde1d09b214c94a65ba89fc9b0a69045019ecbf27bef59
+   testsigning:
+== 2/3 Staging del driver parcheado ==
+   staged -> C:\WINDOWS\System32\drivers\netr28ux_patched_stage.sys
+== 3/3 PendingFileRenameOperations (rutas NT \??\) ==
+   registrado (verificado):
+     [\??\C:\WINDOWS\System32\drivers\netr28ux_patched_stage.sys]
+     [\??\C:\WINDOWS\System32\drivers\netr28ux.sys]
+     []
+     [C:\WINDOWS\System32\drivers\netr28ux_patched_stage.sys]
+
+HECHO. REINICIA el equipo.
+Tras reiniciar: certutil -hashfile C:\Windows\System32\drivers\netr28ux.sys SHA256
+debe dar d2c7cf43e49a055ef156125080028e9c7662dfef86f06f5d1c5ad3f94e9cb590
+EXITCODE 0 
