@@ -386,6 +386,11 @@
 
     /* ── Attack section (grouped cards) ─────────────────────────────── */
     .atk-section { margin-bottom: 24px; }
+    /* Línea de veredicto de hardware (informativa; sin bloqueos: todos los
+       botones siguen lanzables). */
+    .hw-cap-line { margin:-4px 0 16px; padding:10px 16px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); font-size:12px; line-height:1.55 }
+    .hw-cap-line.ok { border-color:var(--green) }
+    .hw-cap-line.no { border-color:var(--orange) }
     .section-title {
       font-size: 13px; font-weight: 700; color: var(--accent);
       padding: 6px 10px 10px;
@@ -648,12 +653,11 @@
            <!-- Guía rápida: cómo se realiza un ataque (plegable: cerrada por
                 defecto para no robar altura a las tarjetas de ataque) -->
            <details class="guide">
-             <summary>Guía rápida: flujo del ataque (10 bloques, en orden)</summary>
+             <summary>Guía rápida: flujo del ataque</summary>
              <b style="color:var(--accent)">0.</b> Escanea en el tab &#128269; y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal) — el objetivo elegido aparece arriba de todo aquí.&nbsp;
-             <b style="color:var(--accent)">1.</b> <b>&#9889; Ataque automático</b>: secuencias 7 pasos (o auto-attack 9).&nbsp;
-             <b style="color:var(--accent)">2&#8594;6.</b> O lanza bloques concretos en orden: <b>PMKID &#8594; Handshake &#8594; Crack &#8594; WPA3/WPS</b>.&nbsp;
-             <b style="color:var(--accent)">7&#8594;9.</b> Inyección/DoS/Evil Twin (requieren adaptador con TX).&nbsp;
-             <b style="color:var(--accent)">10.</b> <b>Acceso</b>: con la clave encontrada, conéctate.&nbsp;
+             <b style="color:var(--accent)">1.</b> <b>&#9889; Ataque automático</b>: pipeline de 7 pasos con la antena actual (RT3070).&nbsp;
+             <b style="color:var(--accent)">2&#8594;7.</b> O lanza bloques concretos: <b>Crack &#8594; WPS &#8594; WPA3 &#8594; Evil Twin &#8594; Acceso</b>.&nbsp;
+             <b style="color:var(--accent)">Kali USB</b>: para RF activa (inyección+canal) con la RT3070, arráncala en Kali live USB — el botón «Kit Kali» del paso A genera los comandos listos para tu objetivo.&nbsp;
              <b style="color:var(--accent)">Mientras ataca:</b> los botones se bloquean y aparece la barra roja con &#9632; Detener; la salida en vivo se ve bajo la barra.
            </details>
 
@@ -706,6 +710,9 @@
 
 
 
+            <!-- Veredicto de hardware (informativo, sin gating) -->
+            <div id="hw-cap-line" class="hw-cap-line">Hardware: verificando adaptador e inyecci&oacute;n&#8230;</div>
+
             <!-- ══════════════════ WIZARD: FLUJO PRINCIPAL ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">1 &#183; Flujo principal (el camino corto)</h2>
@@ -717,16 +724,18 @@
                     <span class="wiz-n">A</span>
                     <div>
                       <h3 class="wiz-title">Atacar con Kali (WSL) &#8212; verbose en vivo</h3>
-                      <p class="wiz-desc">El RT3070 se pasa a Kali por usbipd y los ataques corren all&iacute; (canal e inyecci&oacute;n s&iacute; funcionan en Linux). La salida se ve aqu&iacute; en vivo.</p>
+                      <p class="wiz-desc">El RT3070 se pasa a Kali por usbipd y los ataques corren all&iacute; (canal e inyecci&oacute;n s&iacute; funcionan en Linux). OJO medido: por usbipd la RX llega MUERTA a Kali en este equipo (0 pkts, re-medido 3 veces) — si «Salud RF» dice RX muerta, usa el paso B (captura Windows).</p>
                     </div>
                   </div>
-                  <div id="wsl-health-line" class="wiz-status">Estado Kali: sin verificar &#8212; pulsa «Salud RF»</div>
+                  <div id="wsl-health-line" class="wiz-status">Estado Kali: sin verificar — pulsa «Salud RF»</div>
                   <div class="wiz-btns">
                     <button class="atk-btn" onclick="doWslHealth()">&#x1FA7A; Salud RF</button>
                     <button class="atk-btn atk-btn--blue" onclick="wslStreamAirodump()">&#x1F4E1; Ver redes en Kali (30s)</button>
                     <button class="atk-btn" onclick="wslStreamPmkid()">&#x1F50D; PMKID en Kali (60s)</button>
+                    <button class="atk-btn atk-btn--green" onclick="genKaliKit()">&#x1F5A5;&#xFE0F; Kit Kali para este objetivo</button>
                     <button class="atk-btn atk-stop" style="background:var(--red)" onclick="cancelCurrentAttack()">&#x25A0; Detener</button>
                   </div>
+                  <pre id="kali-kit-out" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:11px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto"></pre>
                   <details class="wiz-more">
                     <summary>Avanzado: attach USB, comandos manuales, deauth</summary>
                     <div class="wiz-btns" style="margin-top:8px">
@@ -919,7 +928,7 @@
 
             <!-- ══════════════════ ESTRATEGIA DE CRACK ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">4 &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+              <h2 class="section-title">2 &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
               <div class="attack-grid">
 
                 <!-- Inspector .22000 -->
@@ -1008,7 +1017,7 @@
 
             <!-- ══════════════════ WPA3 ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">5 &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+              <h2 class="section-title">3 &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
               <div class="attack-grid">
 
                 <!-- Auditoría WPA3 -->
@@ -1076,7 +1085,7 @@
 
             <!-- ══════════════════ WPS ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">6 &#183; &#x1F511; WPS</h2>
+              <h2 class="section-title">4 &#183; &#x1F511; WPS <span style="font-size:10px;font-weight:600;color:var(--gray);border:1px solid var(--gray);border-radius:99px;padding:2px 10px;vertical-align:middle">wash OK &#183; ataques activos requieren TX</span></h2>
               <div class="attack-grid">
 
                 <!-- Wash scan -->
@@ -1172,7 +1181,7 @@
 
             <!-- ══════════════════ INYECCIÓN AIREPLAY-NG ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">7 &#183; &#x26A1; Inyección aireplay-ng</h2>
+              <h2 class="section-title">5 &#183; &#x26A1; Inyección aireplay-ng</h2>
               <div class="attack-grid">
 
                 <!-- Injection Test -->
@@ -1362,7 +1371,7 @@
 
             <!-- ══════════════════ DOS / FLOOD ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">8 &#183; &#x1F525; DoS / Flood</h2>
+              <h2 class="section-title">6 &#183; &#x1F525; DoS / Flood</h2>
               <div class="attack-grid">
 
                 <!-- Beacon Flood (airbase-ng) -->
@@ -1394,7 +1403,7 @@
 
             <!-- ══════════════════ EVIL TWIN ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">9 &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+              <h2 class="section-title">7 &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
               <div class="attack-grid">
 
                 <!-- Kit Evil Twin -->
@@ -1472,46 +1481,9 @@
                   <button class="atk-btn atk-btn--red" onclick="doCmd('rogue_ap', doRogueAp)">&#x1F608; Lanzar Evil Twin</button>
                 </div>
 
-                <!-- Puente WSL2/Kali (motor RF dual, ROADMAP_WSL2 Fase 5) -->
-                <div class="atk-card">
-                  <h3 class="atk-title">WSL2 / Kali — puente RF</h3>
-                  <p class="atk-desc">Ejecuta en Kali lo que Windows no puede (canal, inyección, hcxdumptool). Requiere Kali + usbipd.</p>
-                  <div id="wsl-status" class="atk-desc" style="margin:4px 0 6px">Estado: sin verificar</div>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>busid USB:</label>
-                      <input id="wsl-busid" type="text" placeholder="1-10" value="1-10" title="Busid usbipd del RT3070 (ver con usbipd list, aquí 1-10 = 148f:3070)">
-                    </div>
-                    <div class="field-row">
-                      <label>Comando Kali:</label>
-                      <input id="wsl-cmd" type="text" placeholder="iw dev wlan0 info" value="echo ok">
-                    </div>
-                    <div class="field-row">
-                      <label>BSSID (solo AP propio):</label>
-                      <input id="wsl-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>Canal 1-14:</label>
-                      <input id="wsl-chan" type="number" min="1" max="14" value="11">
-                    </div>
-                  </div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button class="atk-btn" onclick="doWslHealth()" title="Distro + wlan0 + monitor + canal + probe RX (6s)">&#x1FA7A; Salud RF</button>
-                    <button class="atk-btn" onclick="doWslAttach()">&#x1F517; Attach a Kali</button>
-                    <button class="atk-btn" onclick="doWslDetach()">&#x1F519; Detach a Win</button>
-                    <button class="atk-btn" onclick="doWslExec()">&#x25B6; Ejecutar en Kali</button>
-                  </div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-                    <button class="atk-btn" onclick="doWslPmkid()">PMKID 60s</button>
-                    <button class="atk-btn" onclick="doWslAirodump()">Airodump 20s</button>
-                    <button class="atk-btn" onclick="doWslWash()">Wash 20s</button>
-                    <button class="atk-btn" onclick="doWslDeauth()">Deauth x10</button>
-                    <button class="atk-btn" onclick="doWslReaver()">Reaver 60s</button>
-                    <button class="atk-btn atk-stop" style="background:#3a3a52" onclick="doWslKill()">&#x25A0; Kill RF</button>
-                  </div>
-                  <p class="atk-desc" style="margin-top:6px">Deauth/Reaver SOLO contra tu AP. Requieren RF funcional en Kali (ver ROADMAP Fase 6).</p>
-                </div>
-
+                <!-- (Puente WSL2/Kali retirado: duplicaba ids del paso A del wizard
+                     (wsl-busid/wsl-cmd/wsl-status…) y sus lecturas iban al primer
+                     id = el del wizard. Todo vive ahora en el paso A.) -->
                 <!-- VirtualHere: transporte USB alternativo a usbipd (ROADMAP_WSL2 Fase 6b) -->
                 <div class="atk-card">
                   <h3 class="atk-title">VirtualHere — USB a Kali</h3>
@@ -1543,7 +1515,7 @@
 
             <!-- ══════════════════ ACCESO (objetivo: conectarse) ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">10 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+              <h2 class="section-title">8 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
               <div class="attack-grid">
 
                 <!-- Conectar con clave -->

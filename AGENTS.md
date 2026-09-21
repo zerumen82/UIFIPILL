@@ -238,6 +238,26 @@ Síntoma del usuario: «una vez se lanza el ataque, si vas a Consola ya no vuelv
   procesos → los builds largos se lanzan con `schtasks /create + /run` y se
   sondean con `Get-Content ...log` (borrar la tarea al terminar).
 
+## Parche driver RT3070 (netr28ux.sys) — rev. 2026-09-20 (DRIVER_RE.md)
+- RE completa del driver MediaTek 5.01.25.0 (objdump, `driver_re/`): el OID
+  canal (0x0D010335) está implementado y llama a SwitchChannel (0x14006a7f4,
+  rutina RF real con registros RF + BBP + comando USB 0x5D4), pero se
+  auto-bloquea con el gate del bit17 (0x20000) de opState (+0x32D468) cuando
+  el adaptador está en modo extensible/monitor → doble bloqueo (OID devuelve
+  0xC0232002 y la rutina sale sin tocar la radio).
+- Parche construido (17 bytes): NOP del test+jne del gate bit17 en
+  SwitchChannel (0x14006a8c2, 11 B + 6 B) y je→jmp en el OID canal para
+  aceptar SET en ExtSTA (0x1402163df). Verificado con objdump.
+- `netr28ux_patched_clean.sys` firmado (Authenticode SHA-256, cert
+  `UIFIPILL Lab Test` self-signed, makecert+signtool), checksum PE
+  recalculado, firma vieja eliminada.
+- `deploy_driver.ps1` (admin: backup → confiar cert → testsigning on →
+  copiar .sys con fallback a PendingFileRenameOperations si está bloqueado)
+  y `restore_driver.ps1` (rollback completo). Requieren reinicio.
+- PENDIENTE (no automatizable sin elevar): ejecutar deploy como admin,
+  reiniciar, verificar que la radio cambia de canal en monitor. TX/inyección
+  puede seguir bloqueada por Npcap #85 (capa independiente).
+
 ## Estado actual — rev. 2026-09-18 (fin de sesión, dónde está la app)
 Instalado en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe` (md5 `4d02e333b2f3a2545ffa0e0fb59908ce`,
 instalador `src-tauri/target/release/bundle/nsis/UIFIPILL_1.0.0_x64-setup.exe` con las
@@ -292,11 +312,25 @@ DLLs del bundle incluidas). Master con 12 commits sin push.
 - Driver Windows del RT3070: `netr28ux.sys` MediaTek 2015, cerrado y firmado —
   parchearlo exigiría desactivar Secure Boot/testsigning + certificado EV +
   reversing de 2.2 MB. Descartado explícitamente como opción.
-- **Vías reales para RF activa decididas en sesión**: (1) Kali live USB con el
-  RT3070 nativo (rt2800usb funciona perfecto; 0 €, ~20 min, PENDIENTE de hacer:
-  falta pendrive ≥8 GB y decidir ISO), (2) antena RTL8812AU/AWUS036ACH (~30 €,
-  driver Windows SÍ inyecta vía Npcap y la app ya está lista para ello vía
-  check_injection_capability).
+- **Vías reales para RF activa — DECISIÓN FINAL (2026-09-20, rev. 2)**: la
+  antena RTL8812AU NO llegará y el driver netr28ux.sys NO se parchea. La app se
+  adapta a la antena ACTUAL (RT3070): pipeline pasivo en Windows + «Kit Kali»
+  para exprimirla con RF activa. **Implantación**:
+  · `index.html`: línea `#hw-cap-line` INFORMATIVA arriba del tab Ataque (sin
+  gating: ningún botón se bloquea ni se grisa — decisión del usuario);
+  numeración de secciones 1 wizard → 2 crack → 3 WPA3 → 4 WPS → 5 inyección →
+  6 DoS → 7 Evil Twin → 8 Acceso.
+  · `app.js`: `applyHardwareGates()` ahora SOLO informa (detect_adapters +
+  check_injection_capability al abrir el tab); nuevo `genKaliKit()` — botón
+  «Kit Kali para este objetivo» en el paso A del wizard: genera bloque de
+  comandos Kali live USB (monitor + canal del scan + hcxdumptool + aireplay +
+  hcxpcapngtool + hashcat + reaver) con BSSID/SSID/canal del objetivo ya
+  sustituidos, en `#kali-kit-out`. La vía RF activa real con esta antena es
+  Kali live USB (rt2800usb nativo).
+  · Limpieza: retirada la tarjeta «Puente WSL2/Kali» duplicada de la sección Evil
+  Twin (duplicaba 5 ids del wizard paso A). Wizard paso A = dueño único.
+  · Verificado: `npm run lint` OK, `npx vite build` OK (98.11 kB + 53.63 kB),
+  0 ids duplicados, HTML balanceado, onclick↔función cableados.
 - **Funcionando HOY en Windows con este hardware**: scan, captura pasiva Npcap
   (392 pkts reales), pcap_to_22000, crack hashcat+rockyou, keygen
   Comtrend/Thomson, wifi_connect. Pipeline completo pasivo end-to-end.

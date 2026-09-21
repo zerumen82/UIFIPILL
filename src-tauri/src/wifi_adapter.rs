@@ -6,6 +6,10 @@ use tauri::{command, AppHandle};
 const CHIPS: &[(&str, &str, bool, &str, &str)] = &[
     ("Atheros AR9271",        "0CF3:9271", true, "Driver NPcap modificado",       "https://github.com/aircrack-ng/aircrack-ng"),
     ("Realtek RTL8812AU",     "2357:0109", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8812au"),
+    // AWUS036ACH y dongles genéricos: VID Realtek (el 2357 es TP-Link)
+    ("Realtek RTL8812AU",     "0BDA:8812", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8812au"),
+    ("Realtek RTL8812AU",     "0BDA:881A", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8812au"),
+    ("Realtek RTL8811AU",     "0BDA:0811", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8812au"),
     ("Realtek RTL8814AU",     "2357:0107", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8814au"),
     ("Realtek RTL8188CUS",    "0BDA:818C", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8188cus"),
     ("Realtek RTL8188L",      "0BDA:818B", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8188"),

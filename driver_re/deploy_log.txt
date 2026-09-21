@@ -1,0 +1,22 @@
+﻿== 1/5 Copia de seguridad del driver original ==
+   backup -> C:\WINDOWS\System32\drivers\netr28ux.sys.orig
+== 2/5 Confiar en el cert de laboratorio (TrustedPublisher + Root) ==
+   OK
+== 3/5 Activar testsigning ==
+   OK (se aplica tras reiniciar)
+== 4/5 Instalar driver parcheado ==
+   .sys bloqueado (driver en uso): agendando reemplazo en el prÃ³ximo arranque
+   OK: el fichero se sustituirÃ¡ al arrancar (antes de cargar el driver)
+== 5/5 Re-scan PnP ==
+
+HECHO. REINICIA el equipo para cargar el driver parcheado.
+Tras reiniciar: verificar hash y probar cambio de canal en modo monitor.
+EXITCODE 0
+
+== VERIFICACIÓN POST-REINICIO (2026-09-21) ==
+FALLO del reemplazo: hash de netr28ux.sys = ade38351... (ORIGINAL, no parcheado).
+Causa: el origen del rename pendiente se escribió como '??' + ruta (dos '?') —
+no es el prefijo NT '\??\'. Session Manager descarta pares inválidos al arrancar.
+FIX: deploy_driver.ps1 corregido (staging a netr28ux_patched_stage.sys + pares
+'\\??\ruta') y nuevo redeploy_pending.ps1 (solo re-agenda el rename; backup/cert/
+testsigning ya aplicados). Pendiente: ejecutar redeploy_pending.ps1 COMO ADMIN + reiniciar. 
