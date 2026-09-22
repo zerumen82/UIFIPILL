@@ -450,11 +450,145 @@ mod lab_capture_tests {
                     let e = if rc == 0 { String::new() } else { w.err_str(h) };
                     println!("SEND {} len={} -> rc={} {}", tag, frame.len(), rc, e.lines().next().unwrap_or(""));
                 }
+                // Discriminador MaxFrameSize (NPF_Write): si MaxFrameSize>0,
+                // un paquete de 6000B da error DISTINTO (INVALID_LENGTH); si
+                // MaxFrameSize==0, el check de Npcap da el MISMO error 31.
+                let mut big = rt.clone();
+                big.extend_from_slice(&cts);
+                big.resize(6000, 0);
+                let rc = (w.sendpacket)(h, big.as_ptr(), big.len() as c_int);
+                let e = if rc == 0 { String::new() } else { w.err_str(h) };
+                println!("SEND OVERSIZE len={} -> rc={} {} (si error != 31, MaxFrameSize>0 y el envio SÍ llega al driver)", big.len(), rc, e.lines().next().unwrap_or(""));
                 (w.close)(h);
             }
         }
         let rs = restore_managed(guid.clone()).await;
         println!("RESTORE ok={}", rs.success);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lab_send_managed_ethernet() {
+        //! Test discriminador TX: en modo MANAGED envía (1) un frame Ethernet
+        //! por el LWF normal NPF_ y (2) el CTS-to-self por NPF_WIFI_.
+        //! Si (1) da rc=-1 err31 también, el driver TX está roto en general.
+        //! Si (1) pasa y (2) falla, el rechazo es del path 802.11 nativo NDIS.
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        let a = rep.adapters.iter().find(|x| !x.guid.is_empty())
+            .expect("sin adaptador");
+        let guid = a.guid.clone().trim_matches(|c| c == '{' || c == '}').to_string();
+        println!("TARGET {} mode-actual", a.name);
+        let w = unsafe { Wpcap::load().expect("wpcap") };
+        unsafe {
+            // ARP broadcast falso (42 B) — inofensivo
+            let mut eth = vec![0xff; 6];
+            eth.extend_from_slice(&[0x00, 0xC0, 0xCA, 0x59, 0xA7, 0xD8]);
+            eth.extend_from_slice(&[0x08, 0x06]);
+            eth.extend_from_slice(&[0u8; 28]);
+            for (tag, dev) in [
+                ("NPF_ (ethernet)", format!(r"\Device\NPF_{{{}}}", guid)),
+                ("NPF_WIFI_ (nativo)", format!(r"\Device\NPF_WIFI_{{{}}}", guid)),
+            ] {
+                let dev_c = CString::new(dev).unwrap();
+                let mut errbuf = [0 as c_char; 256];
+                let h = (w.open_live)(dev_c.as_ptr(), 65536, 1, 500, errbuf.as_mut_ptr());
+                if h.is_null() {
+                    println!("{} open-FAIL: {}", tag, CStr::from_ptr(errbuf.as_ptr()).to_string_lossy());
+                    continue;
+                }
+                let rc = (w.sendpacket)(h, eth.as_ptr(), eth.len() as c_int);
+                let e = if rc == 0 { String::new() } else { w.err_str(h) };
+                println!("{} send len={} -> rc={} {}", tag, eth.len(), rc, e.lines().next().unwrap_or(""));
+                (w.close)(h);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lab_assoc_send_test() {
+        //! Prueba decisiva: enviar frame raw por NPF_WIFI_ estando ASOCIADO a una
+        //! red abierta (BSS válido). Si rc=0 asociado vs err31 sin asociar,
+        //! la capa nativa 802.11 exige BSS y podríamos inyectar en modo asociado.
+        //! `cargo test --lib lab_assoc_send_test -- --ignored --nocapture`
+        use std::process::Command;
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        let a = rep.adapters.iter().find(|x| !x.guid.is_empty()).expect("sin adaptador");
+        let guid = a.guid.clone().trim_matches(|c| c == '{' || c == '}').to_string();
+        let mac = a.mac.clone();
+        println!("TARGET {} guid={} mac={}", a.name, guid, mac);
+
+        // Red abierta conocida del entorno de lab (impresora HP, canal 3)
+        let ssid = "HP-Print-34-ENVY 4500 series";
+        println!("perfil+connect a red abierta: {}", ssid);
+        let profile = format!(
+            "<?xml version=\"1.0\"?><WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\"><name>{}</name><SSIDConfig><SSID><name>{}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>manual</connectionMode><MSM><security><authEncryption><authentication>open</authentication><encryption>none</encryption><useOneX>false</useOneX></authEncryption></security></MSM></WLANProfile>",
+            ssid, ssid
+        );
+        let mut pf = std::env::temp_dir();
+        pf.push("uifipill_open_profile.xml");
+        std::fs::write(&pf, profile).unwrap();
+        let _ = Command::new("netsh")
+            .args([
+                "wlan", "add", "profile",
+                "filename=&".trim_end_matches("&"),
+            ])
+            .status();
+        // netsh requiere filename= sin espacios problemáticos; usar cmd para pasar la ruta
+        let add = Command::new("cmd")
+            .args(["/C", &format!(
+                "netsh wlan add profile filename=\"{}\" user=all",
+                pf.to_string_lossy()
+            )])
+            .output()
+            .unwrap();
+        println!("add-profile: {}", String::from_utf8_lossy(&add.stdout).trim());
+        let conn = Command::new("cmd")
+            .args(["/C", &format!("netsh wlan connect name=\"{}\"", ssid)])
+            .output()
+            .unwrap();
+        println!("connect: {}", String::from_utf8_lossy(&conn.stdout).trim());
+        std::thread::sleep(std::time::Duration::from_secs(8));
+        let st = Command::new("netsh").args(["wlan", "show", "interfaces"]).output().unwrap();
+        let st_out = String::from_utf8_lossy(&st.stdout).to_string();
+        for line in st_out.lines() {
+            if line.contains("Estado") || line.contains("State") || line.contains("SSID") { println!("  {}", line.trim()); }
+        }
+
+        let macb: Vec<u8> = mac.split(':')
+            .filter_map(|h| u8::from_str_radix(h, 16).ok()).collect();
+        let w = unsafe { Wpcap::load().expect("wpcap") };
+        unsafe {
+            // CTS-to-self por NPF_WIFI_ (asociados)
+            let mut cts = vec![0xC4, 0x00, 0x00, 0x00];
+            cts.extend_from_slice(&macb);
+            let rt = vec![0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
+            let mut with_rt = rt.clone();
+            with_rt.extend_from_slice(&cts);
+            let dev_c = CString::new(format!(r"\Device\NPF_WIFI_{{{}}}", guid)).unwrap();
+            let mut errbuf = [0 as c_char; 256];
+            let h = (w.open_live)(dev_c.as_ptr(), 65536, 1, 500, errbuf.as_mut_ptr());
+            if h.is_null() {
+                println!("OPEN-FAIL");
+            } else {
+                for (tag, frame) in [("WIFI con-radiotap", &with_rt), ("WIFI sin-radiotap", &cts)] {
+                    let rc = (w.sendpacket)(h, frame.as_ptr(), frame.len() as c_int);
+                    let e = if rc == 0 { String::new() } else { w.err_str(h) };
+                    println!("SEND-ASSOC {} len={} -> rc={} {}", tag, frame.len(), rc, e.lines().next().unwrap_or(""));
+                }
+                // Y un data-frame real hacia el AP (QoS-null func, 0x48: FC+dur+RA=BSSID+TA=mac)
+                let mut qnull = vec![0x48, 0x01, 0x00, 0x00];
+                qnull.extend_from_slice(&[0xf0, 0x92, 0x1c, 0xcf, 0x19, 0x34]); // RA=BSSID impresora
+                qnull.extend_from_slice(&macb);                                  // TA=nosotros
+                qnull.extend_from_slice(&[0x00, 0x53, 0x92]);                    // BSSID... 3B dummy
+                let rc = (w.sendpacket)(h, qnull.as_ptr(), qnull.len() as c_int);
+                let e = if rc == 0 { String::new() } else { w.err_str(h) };
+                println!("SEND-ASSOC qos-null len={} -> rc={} {}", qnull.len(), rc, e.lines().next().unwrap_or(""));
+                (w.close)(h);
+            }
+        }
+        let _ = Command::new("netsh").args(["wlan", "disconnect"]).status();
+        println!("disconnect enviado");
     }
 
     #[tokio::test]

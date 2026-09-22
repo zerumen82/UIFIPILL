@@ -1,0 +1,28 @@
+== 1/6 Estado actual ==
+   netr28ux.sys actual: ad3e2d41908d878edb2d20992bcbb8f04a2a1f5bd88db7158fe4bb68016277a2
+   testsigning:
+     testsigning             Yes
+== 2/6 Verificar hash TX-3 ==
+   tx3: 30080e89c6141529237cd77c999c275b48d38850a2931cd440ef75ef6d055579
+== 3/6 Desactivar dispositivo PnP (descarga el driver) ==
+Utilidad PnP de Microsoft
+
+Se está deshabilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se deshabilitó correctamente.
+
+   disabled: True (tras 1 s)
+== 4/6 Copiar TX-1 ==
+   copia OK
+== 5/6 Re-activar dispositivo ==
+Utilidad PnP de Microsoft
+
+Se está habilitando el dispositivo:          USB\VID_148F&PID_3070\1.0
+El dispositivo se habilitó correctamente.
+
+== 6/6 Verificaci¢n ==
+   netr28ux.sys ahora: 30080e89c6141529237cd77c999c275b48d38850a2931cd440ef75ef6d055579
+   OK: TX-3 EN SITIO (9 kills raw parcheados).
+   servicio netr28ux RUNNING: True
+
+Siguiente paso: cargo test --lib lab_inject_probe -- --ignored --nocapture
+EXITCODE 0 

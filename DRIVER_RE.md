@@ -235,7 +235,117 @@ el OID al modo ExtSTA.
   driver parcheado; rollback con `restore_driver.ps1` +
   `bcdedit /set testsigning off` cuando ya no se necesite
 
+## 7. Fase 3 — Ruta TX (inyección) — reconocimiento 2026-09-21
+
+Objetivo: eliminar el error 31 (STATUS_UNSUCCESSFUL → ERROR_GEN_FAILURE) de
+`pcap_sendpacket` en modo monitor. Recon estático completo, SIN parchear todavía
+(la ruta TX corre en kernel: parche a ciegas = BSOD).
+
+### 7.1 Mapa de la ruta de envío
+
+| Componente | VA | Notas |
+|---|---|---|
+| `SendNetBufferListsHandler` | `0x140040e8c` | Slot +0x40 de la tabla NDIS (rev 2, 0x98 B). Solo ENCOLA en `0x21f0/0x21f8/0x2200` con `lock decl 0x332244` |
+| Send engine (dequeue) | `0x14000f98f…0x1400108f2` | Colas por prioridad `0x3312e8/f0/f8` (8 slots × 0x80 B); lee `0x21f0/0x21f8/0x2200` en `0x140010b13` |
+| Validador por paquete | `0x140015d18` | Args: adapter(rcx), tipo(dl=0xa), idx(r8b), contador_paquete(r9d). Devuelve STATUS en eax |
+| Descarte por BSS-mismatch | `0x140010656…06c5` | `pkt->0x88->0x20 != adapter->0x172d98->0x8` → `0xc0000001` en `0x8c(%rdx)` + complete vía `0x1401afbb8` (NdisMSendNetBufferListsComplete, thunk único) |
+
+### 7.2 Gates encontrados en el validador `0x140015d18`
+
+- `tipo != 0x0a/0x0c` → return `0xc0000001` (WPP log 0x32).
+- Path 0x0a (el que usa el caller `0x140010123`): comprueba profundidad de cola
+  por slot (`0x33143c/0x331444/0x331440` con stride `idx<<7`): **falla si
+  `C − A ≤ 0xf000` o `A ≥ C`**. Si los contadores no se inicializan en modo
+  monitor (solo se usan en modo infra), todo paquete muere aquí — coincide con
+  el error 31 medido.
+- Cuando la cola "se llena" setea flag de pausa: `or (0x10000<<idx), 0x3322d4(adapter)`.
+
+### 7.3 Inventario de gates bit17 de opState (0x32d468) — 14 sites
+
+Parcheados: `0x14006a8c2` (SwitchChannel) + `0x1402163df` (OID canal, je→jmp).
+Pendientes de clasificar: `0x14003e866, 0x140047327, 0x14007d6a4, 0x140099042,
+0x1400a0b8b, 0x1400aa681, 0x140108d2d, 0x140118765, 0x140118ea7, 0x140119853,
+0x14021a52c, 0x1402162f5`. `0x14021a52c` está en un bloque de teardown/conexión
+(no TX normal). Cualquiera puede estar en el path TX según el modo.
+
+### 7.4 Siguiente paso (instrumentar, no parchear)
+
+1. WinDbg (livekd) con bp en `0x140015d18+X` (paths de fallo) y `0x140010656`.
+2. Lanzar `cargo test --lib lab_inject_probe -- --ignored --nocapture`.
+3. Ver qué gate dispara de verdad (¿colas sin init en monitor? ¿BSS mismatch?
+   ¿bit17 en otro sitio? ¿NDIS rechaza antes de llegar al driver?).
+4. Parchear SOLO el gate confirmado + test + medir de nuevo.
+
+Riesgo conocido: NDIS puede rechazar el send antes de que el driver vea el
+paquete (Npcap #85 habla de la capa NDIS/NPC); si el bp no llega a dispararse,
+el bloqueo está por encima del driver y este RE no puede arreglarlo.
+
+## 8. Fase 3 — Medición con parches TX en sitio (2026-09-22)
+
+Variantes construidas tras el recon §7 (todas partiendo de
+`netr28ux_patched_clean.sys` d2c7cf43…, canal ya funcional):
+
+| Variante | sha256 (prefijo) | Contenido |
+|---|---|---|
+| TX-1 → `netr28ux_tx1.sys` | 5684849f | validador `0x140015d18`: forzar success del check de cola (xor edi,edi) |
+| TX-2 → `netr28ux_tx2.sys` | ad3e2d41 | gates send `0x140010656…06c5` (BSS-mismatch) neutralizados |
+| TX-3 → `netr28ux_tx3.sys` | 30080e89 | **9 kills raw** en send engine `0x14000f98f…0x140010b13` (checks de cola y descartes por estado) |
+
+Despliegue en caliente verificado (`hotswap_tx1.ps1`, ciclo PnP disable→copy→
+enable, SIN reinicio): TX-3 en sitio, servicio RUNNING.
+
+### Resultado medido (TX-3 activo)
+
+`lab_inject_probe` (monitor + CTS-to-self por `\Device\NPF_WIFI_{GUID}`):
+
+```
+SEND con-radiotap len=18  -> rc=-1 err 31 (ERROR_GEN_FAILURE)   [antes igual]
+SEND sin-radiotap  len=10 -> rc=-1 err 31                        [antes igual]
+SEND OVERSIZE len=6000    -> rc=-1 err 20 (ERROR_FILE_NOT_FOUND)
+```
+
+**Hallazgo del OVERSIZE discriminator**: con 6000 B el error CAMBIA (31 → 20).
+Eso demuestra que el paquete SÍ llega al driver/NPC y que el rechazo depende
+del tamaño/contenido — NO es un rechazo ciego de NDIS por encima. El bloqueo
+de TX sigue DENTRO del stack del driver (o del LWF Npcap), no es la capa NDIS
+genérica.
+
+Discriminador managed (`lab_send_managed_ethernet`): en modo MANAGED, un ARP
+por `NPF_` (LWF Ethernet normal) da error 2150891551 (media desconectada,
+esperado sin asociar) y el MISMO frame por `NPF_WIFI_` da err 31 → el path
+802.11 nativo rechaza aunque el otro LWF funcione.
+
+### Prueba asociado (lab_assoc_send_test) — INCONCLUYENTE / CUELGUE
+
+La prueba (asociarse a red abierta + enviar CTS/QoS-null por NPF_WIFI_)
+CUELGUE el proceso de test: el binario de test queda zombie (1 hilo, Wait:
+Executive, no matable ni con NtTerminateProcess desde otro proceso) tras el
+paso de conexión/con envío. 3 ejecuciones, mismo resultado. Hipótesis: el
+cmdlet send/open del NPF_WIFI_ con BSS activo bloquea en kernel (deadlock
+send vs. contexto del propio NDIS send del sistema asociado). NO repetir sin
+VM snapshot.
+
+**Cleanup**: los 3 procesos colgados son incorregibles sin reinicio (no
+consumen CPU; la interfaz queda re-asociada a la impresora — desconectar con
+`netsh wlan disconnect`).
+
+### Veredicto TX
+
+- TX en monitor con RT3070+Npcap: **SIGUE BLOQUEADA** aunque se neutralicen
+  TODOS los gates identificados en el driver (err 31 persistente).
+- El cambio de error con tamaño (31 → 20 en OVERSIZE) localiza el rechazo
+  en el LWF/path NPC, no en la cola NDIS ni en NDIS genérico.
+- **Conclusión**: Npcap #85 confirma su naturaleza — el filtro Npcap no
+  completa el path de envío 802.11 nativo sobre LWF. Ningún parche adicional
+  de netr28ux.sys lo va a resolver. Cerrar la línea de RE del driver: el
+  canal queda ganado (hito 2026-09-21); TX queda descartada por software en
+  esta combinación. Vías restantes: antena con driver NDIS6 nativo 802.11 TX
+  (RTL8812AU con su port) o Kali live USB (rt2800usb).
+- [x] Fase 3 completada: instrumentada y medida. Resultado negativo pero
+  concluyente (bloqueo FUERA del driver).
+
 ## 6. Diario
+
 
 - 2026-09-20: fase 1 completa. Desensamblado completo generado. Handler
   de canal localizado y leído.
@@ -258,3 +368,11 @@ el OID al modo ExtSTA.
   `set_monitor_channel` (éxito por SET aceptado + reintentos). Tests:
   23 passed / 0 failed (5 ignored), build release 0 warnings. Primera
   vez en el proyecto que el RT3070 cambia de canal en Windows.
+- 2026-09-22: fase TX medida con variantes TX-1/2/3 desplegadas en
+  caliente (ciclo PnP). err 31 persiste; OVERSIZE (6000 B) cambia el
+  error a 20 → el paquete SÍ llega al stack, rechazo del LWF/path NPC.
+  `lab_assoc_send_test` cuelga el proceso de test en kernel (zombie no
+  matable) — documentado, no repetir sin VM. **Veredicto: TX imposible
+  por software con RT3070+Npcap; cerrada la línea de RE.** Canal ganado,
+  TX vía Kali live USB o antena compatible. Tests: 23 passed / 0 failed
+  (7 ignored), build release 0 warnings, lint+vite OK.

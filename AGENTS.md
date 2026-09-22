@@ -238,6 +238,23 @@ Síntoma del usuario: «una vez se lanza el ataque, si vas a Consola ya no vuelv
   procesos → los builds largos se lanzan con `schtasks /create + /run` y se
   sondean con `Get-Content ...log` (borrar la tarea al terminar).
 
+## Fase TX netr28ux — MEDIDA Y CERRADA (2026-09-22, veredicto negativo concluyente)
+- Variantes TX-1/TX-2/TX-3 (`driver_re/netr28ux_tx*.sys`) con TODOS los gates
+  del send engine neutralizados (validador de cola, BSS-mismatch, 9 kills raw
+  en dequeue). Despliegue en caliente verificado (ciclo PnP sin reinicio,
+  `hotswap_tx1.ps1`).
+- `lab_inject_probe` con TX-3: err 31 persiste; OVERSIZE 6000 B cambia a err 20
+  → el paquete SÍ llega al stack del driver, el rechazo es del LWF/path NPC
+  (Npcap #85), NO de la cola NDIS ni del driver. Ningún parche adicional de
+  netr28ux.sys lo resolverá.
+- `lab_assoc_send_test` (envío asociado a BSS abierto) CUELGUE el proceso de
+  test en kernel (zombie no matable). Documentado; no repetir sin VM.
+- **Línea de RE del driver CERRADA**: canal ganado (hito 2026-09-21), TX
+  imposible por software con RT3070+Npcap. Vías restantes: Kali live USB
+  (rt2800usb) o antena con driver NDIS6 802.11 nativo.
+- Verificación: `cargo test --lib` 23 passed / 0 failed (7 ignored),
+  `cargo build --release` 0 warnings, `npm run lint` OK, `npx vite build` OK.
+
 ## Parche driver RT3070 — VERIFICADO FUNCIONA (2026-09-21)
 - Driver parcheado CARGANDO en Windows (testsigning ON, hash `d2c7cf43...` en
   `C:\Windows\System32\drivers\netr28ux.sys`; el redeploy con rutas NT `\\??\`
