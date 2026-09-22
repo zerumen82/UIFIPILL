@@ -177,6 +177,33 @@ pub async fn usb_raw_deauth(bssid: String, channel: u8, count: u32) -> UsbRawRes
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
 }
 
+/// Sniff: RX por EP 0x81 con el MISMO chip (sin Npcap). Vuelca pcap DLT 127.
+#[command]
+pub async fn usb_raw_sniff(duration_secs: u32, channel: u8, output_path: Option<String>) -> UsbRawResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secs = duration_secs.clamp(5, 300).to_string();
+        let exe = match usb_tx_exe("rt3070_sniff.exe") {
+            Ok(e) => e,
+            Err(e) => return UsbRawResult { success: false, message: e, output: String::new() },
+        };
+        let out = output_path.unwrap_or_else(|| {
+            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs()).unwrap_or(0);
+            format!("%TEMP%\\uifipill_sniff_{t}.pcap")
+        });
+        let _ = channel; // el canal lo fija usb_raw_init antes
+        let r = run_usb_tool(&exe, &[&secs, &out]);
+        let mut res = r;
+        // extraer ruta real del pcap del output
+        if let Some(line) = res.output.lines().find(|l| l.contains("→")) {
+            if let Some(p) = line.split("→").last() {
+                res.message = format!("{} (pcap: {})", res.message, p.trim());
+            }
+        }
+        res
+    }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
+}
+
 /// Diagnóstico completo del protocolo vendor (para depurar estados raros).
 #[command]
 pub async fn usb_raw_diag() -> UsbRawResult {

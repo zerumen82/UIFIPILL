@@ -144,6 +144,7 @@ pub fn run() {
             usb_raw::usb_raw_init,
             usb_raw::usb_raw_tx_beacon,
             usb_raw::usb_raw_deauth,
+            usb_raw::usb_raw_sniff,
             usb_raw::usb_raw_diag,
         ])
         .run(tauri::generate_context!())

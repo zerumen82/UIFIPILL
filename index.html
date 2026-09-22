@@ -751,6 +751,8 @@
                     <button class="atk-btn atk-btn--blue" onclick="usbRawInit()">&#x26A1; Init (firmware+canal)</button>
                     <button class="atk-btn atk-btn--green" onclick="usbRawTxBeacon()">&#x1F4E1; TX beacons de prueba</button>
                     <button class="atk-btn atk-btn--red" onclick="usbRawDeauth()">&#x26A1; Deauth objetivo (SOLO tu red)</button>
+                    <button class="atk-btn atk-btn--blue" onclick="usbRawSniff()">&#x1F4E1; Sniff (RX mismo chip)</button>
+                    <button class="atk-btn atk-btn--green" onclick="usbRawHandshake()">&#x1F3AF; Handshake: deauth+captura UNA antena</button>
                     <button class="atk-btn atk-btn--red" onclick="usbRawAttackCycle()">&#x1F300; CICLO: deauth + aviso captura</button>
                     <button class="atk-btn" onclick="usbRawDiag()">&#x1FA79; Diagnóstico</button>
                   </div>
@@ -774,6 +776,10 @@
                     <div class="field-row">
                       <label>Nº deauth:</label>
                       <input id="usbraw-deauth-count" type="number" min="1" max="500" value="10">
+                    </div>
+                    <div class="field-row">
+                      <label>Sniff (segundos):</label>
+                      <input id="usbraw-sniff-secs" type="number" min="5" max="300" value="30">
                     </div>
                   </div>
                   <pre id="usbraw-out" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:11px;color:var(--text);white-space:pre-wrap;max-height:260px;overflow-y:auto"></pre>

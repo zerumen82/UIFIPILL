@@ -23,5 +23,9 @@ path = "src/diag.rs"
 name = "rt3070_deauth"
 path = "src/deauth.rs"
 
+[[bin]]
+name = "rt3070_sniff"
+path = "src/sniff.rs"
+
 [dependencies]
 rusb = "0.9"
