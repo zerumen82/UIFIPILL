@@ -1985,3 +1985,101 @@ window.genKaliKit = function () {
   }
   log('Kit Kali generado para ' + ssid + ' (' + bssid + ', CH' + ch + '). Copia los comandos a la terminal de Kali live USB.', 'ok');
 };
+
+// ── TX por USB crudo (RT3070 + WinUSB) — hito 2026-09-22 ─────────────────
+// Envuelve los binarios driver_re/usb_tx (probe/init/tx/diag) vía comandos
+// usb_raw_*. Requiere la antena rebindeada a WinUSB (ver driver_re/usb_tx).
+window.usbRawShow = function (r) {
+  const out = $('usbraw-out');
+  if (out) {
+    out.textContent = (r.output || r.message || '(sin salida)');
+    out.style.display = 'block';
+  }
+  return r;
+};
+
+window.usbRawStatus = async function () {
+  log('[usbraw] Comprobando chip RT3070 por WinUSB…', 'info');
+  try {
+    const r = await window.__invoke('usb_raw_status');
+    const line = $('usbraw-status');
+    if (line) {
+      line.textContent = 'Chip USB: ' + (r.success ? '✅ ' : '⚠️ ') + r.message;
+      line.className = 'wiz-status' + (r.success ? ' ok' : ' warn');
+    }
+    log('[usbraw] ' + r.message, r.success ? 'ok' : 'warn');
+    window.usbRawShow(r);
+    return r.success;
+  } catch (e) {
+    log('[usbraw] estado: ' + e, 'error');
+    return false;
+  }
+};
+
+window.usbRawInit = async function () {
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || 11;
+  log('[usbraw] Init: firmware + radio ON + canal ' + chan + '…', 'info');
+  try {
+    const r = await window.usbRawShow(await window.__invoke('usb_raw_init', { channel: chan }));
+    log('[usbraw] init: ' + r.message, r.success ? 'ok' : 'error');
+    if (r.output) log(r.output.split('\n').filter(l => l.includes('✅') || l.includes('❌')).join('\n'), r.success ? 'ok' : 'warn');
+    const line = $('usbraw-status');
+    if (line) {
+      line.textContent = 'Chip USB: ' + (r.success ? '✅ radio ON canal ' + chan : '⚠️ init falló — revisa salida');
+      line.className = 'wiz-status' + (r.success ? ' ok' : ' warn');
+    }
+    return r.success;
+  } catch (e) {
+    log('[usbraw] init: ' + e, 'error');
+    return false;
+  }
+};
+
+window.usbRawTxBeacon = async function () {
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || 11;
+  const ssidEl = $('usbraw-ssid');
+  const ssid = (ssidEl && ssidEl.value.trim()) || 'UIFIPILL-TX';
+  const count = parseInt(($('usbraw-count') || {}).value, 10) || 100;
+  log('[usbraw] TX ' + count + ' beacons "' + ssid + '" canal ' + chan + '…', 'info');
+  try {
+    const r = await window.usbRawShow(await window.__invoke('usb_raw_tx_beacon', { ssid, channel: chan, count }));
+    log('[usbraw] TX: ' + r.message, r.success ? 'ok' : 'warn');
+    if (r.success) log('Frames escritos al chip. Verifica en la OTRA radio: netsh wlan show networks (o el escaneo de la app).', 'info');
+    return r.success;
+  } catch (e) {
+    log('[usbraw] TX: ' + e, 'error');
+    return false;
+  }
+};
+
+window.usbRawDiag = async function () {
+  log('[usbraw] Diagnóstico del protocolo vendor…', 'info');
+  try {
+    const r = await window.usbRawShow(await window.__invoke('usb_raw_diag'));
+    log('[usbraw] diag: ' + r.message, r.success ? 'ok' : 'warn');
+    return r.success;
+  } catch (e) {
+    log('[usbraw] diag: ' + e, 'error');
+    return false;
+  }
+};
+
+window.usbRawDeauth = async function () {
+  const bssidInput = $('usbraw-bssid');
+  let bssid = bssidInput && bssidInput.value.trim();
+  if (!bssid) bssid = getSelectedBssid();
+  if (!bssid) { log('[usbraw] Deauth: selecciona un objetivo del escaneo o escribe el BSSID.', 'warn'); return false; }
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || (selectedChannel() || 11);
+  const count = parseInt(($('usbraw-deauth-count') || {}).value, 10) || 10;
+  const bx = $('usbraw-bssid'); if (bx && !bx.value) bx.value = bssid;
+  log('[usbraw] Deauth x' + count + ' → ' + bssid + ' canal ' + chan + ' (SOLO redes propias)', 'warn');
+  try {
+    const r = await window.usbRawShow(await window.__invoke('usb_raw_deauth', { bssid, channel: chan, count }));
+    log('[usbraw] deauth: ' + r.message, r.success ? 'ok' : 'warn');
+    if (r.success) log('Deauth enviados. El cliente se reconectará → captura el handshake con la captura Npcap (paso B).', 'info');
+    return r.success;
+  } catch (e) {
+    log('[usbraw] deauth: ' + e, 'error');
+    return false;
+  }
+};

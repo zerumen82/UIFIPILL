@@ -11,6 +11,7 @@ mod monitor_mode;
 mod pcap_convert;
 mod wpa3;
 mod wsl;
+mod usb_raw;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -138,6 +139,12 @@ pub fn run() {
             wsl::vh_use,
             wsl::vh_stop,
             wsl::vh_rf_check,
+            // TX por USB crudo RT3070 (WinUSB, sin Npcap) — hito 2026-09-22
+            usb_raw::usb_raw_status,
+            usb_raw::usb_raw_init,
+            usb_raw::usb_raw_tx_beacon,
+            usb_raw::usb_raw_deauth,
+            usb_raw::usb_raw_diag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

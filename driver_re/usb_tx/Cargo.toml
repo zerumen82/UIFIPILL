@@ -19,5 +19,9 @@ path = "src/tx.rs"
 name = "rt3070_diag"
 path = "src/diag.rs"
 
+[[bin]]
+name = "rt3070_deauth"
+path = "src/deauth.rs"
+
 [dependencies]
 rusb = "0.9"

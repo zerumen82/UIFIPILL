@@ -736,7 +736,49 @@
               <h2 class="section-title">1 &#183; Flujo principal (el camino corto)</h2>
               <div class="wizard">
 
-                <!-- PASO A: Kali -->
+                <!-- PASO A: TX USB crudo (RT3070 + WinUSB) -->
+                <div class="wiz-step wiz-step--green">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--green">TX</span>
+                    <div>
+                      <h3 class="wiz-title">TX por USB crudo (RT3070 + WinUSB) &#8212; la vía que Npcap nunca dio</h3>
+                      <p class="wiz-desc">Habla con el chip directamente por WinUSB (sin driver WiFi, sin Npcap). Requiere la antena rebindeada a WinUSB (ver driver_re/usb_tx). Con WinUSB activo netsh NO ve la antena &#8212; es el precio del acceso crudo. Reversible con restore_netr28ux.ps1.</p>
+                    </div>
+                  </div>
+                  <div id="usbraw-status" class="wiz-status">Chip USB: sin verificar — pulsa «Estado chip»</div>
+                  <div class="wiz-btns">
+                    <button class="atk-btn" onclick="usbRawStatus()">&#x1F50D; Estado chip</button>
+                    <button class="atk-btn atk-btn--blue" onclick="usbRawInit()">&#x26A1; Init (firmware+canal)</button>
+                    <button class="atk-btn atk-btn--green" onclick="usbRawTxBeacon()">&#x1F4E1; TX beacons de prueba</button>
+                    <button class="atk-btn atk-btn--red" onclick="usbRawDeauth()">&#x26A1; Deauth objetivo (SOLO tu red)</button>
+                    <button class="atk-btn" onclick="usbRawDiag()">&#x1FA79; Diagnóstico</button>
+                  </div>
+                  <div class="atk-fields" style="margin-top:8px">
+                    <div class="field-row">
+                      <label>BSSID objetivo (solo tu red):</label>
+                      <input id="usbraw-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                    <div class="field-row">
+                      <label>Canal 1-14:</label>
+                      <input id="usbraw-chan" type="number" min="1" max="14" value="11">
+                    </div>
+                    <div class="field-row">
+                      <label>SSID del beacon:</label>
+                      <input id="usbraw-ssid" type="text" value="UIFIPILL-TX">
+                    </div>
+                    <div class="field-row">
+                      <label>Nº beacons:</label>
+                      <input id="usbraw-count" type="number" min="1" max="5000" value="100">
+                    </div>
+                    <div class="field-row">
+                      <label>Nº deauth:</label>
+                      <input id="usbraw-deauth-count" type="number" min="1" max="500" value="10">
+                    </div>
+                  </div>
+                  <pre id="usbraw-out" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:11px;color:var(--text);white-space:pre-wrap;max-height:260px;overflow-y:auto"></pre>
+                </div>
+
+                <!-- PASO B: Kali -->
                 <div class="wiz-step">
                   <div class="wiz-head">
                     <span class="wiz-n">A</span>
