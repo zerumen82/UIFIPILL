@@ -1,0 +1,53 @@
+; rt3070_winusb.inf — bindea WinUSB al Ralink RT3070 para acceso USB crudo
+; (libusb/rusb). Reversible: "pnputil /delete-driver oemXX.inf /uninstall"
+; o restore_netr28ux.ps1. Lab-only.
+; NOTA técnica: un solo INF con secciones decoradas NT$ARCH$ es el formato
+; "TransportMania" estándar de WinUSB (igual que el OSR USB FX2 template).
+[Version]
+Signature   = "$Windows NT$"
+Class       = USB
+ClassGuid   = {36fc9e60-c465-11cf-8056-444553540000}
+Provider    = %ProviderName%
+CatalogFile = rt3070_winusb.cat
+DriverVer   = 09/22/2026,1.0.0.2
+PnpLockdown = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard, NT$ARCH$.10.0...17134
+
+[Standard.NT$ARCH$.10.0...17134]
+%DeviceName% = USB_Install, USB\VID_148F&PID_3070
+
+; ********** Windows 10/11 WinUSB user-mode driver template (OSR style) **********
+[USB_Install]
+Include    = winusb.inf
+Needs      = WINUSB.NT
+
+[USB_Install.Services]
+Include    = winusb.inf
+AddService = WinUSB,0x00000002,WinUSB_ServiceInstall
+
+[WinUSB_ServiceInstall]
+DisplayName   = %WinUSB_SvcDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\WinUSB.sys
+
+[USB_Install.HW]
+AddReg = Dev_AddReg
+
+[Dev_AddReg]
+; DeviceInterfaceGUIDs: expone el device a libusb/rusb
+HKR,,DeviceInterfaceGUIDs,0x10000,"{B6B8667C-EF86-4A0D-9B8E-3D5F1A9C4E21}"
+
+; ********** DestinationDirs **********
+[DestinationDirs]
+DefaultDestDir = 12
+
+; ********** Strings **********
+[Strings]
+ProviderName     = "UIFIPILL Lab"
+ManufacturerName = "UIFIPILL Lab"
+DeviceName       = "RT3070 Raw USB (WinUSB)"
+WinUSB_SvcDesc   = "WinUSB para RT3070 raw"

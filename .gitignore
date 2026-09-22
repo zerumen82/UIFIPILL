@@ -5,6 +5,24 @@ target/
 src-tauri/build.log
 src-tauri/target/
 *.log
+
+# Claves privadas del cert de lab — NUNCA al repo
+*.pfx
+*.pvk
+
+# Binarios de driver test-firmados (peso + riesgo de uso indebido)
+driver_re/*.sys
+
+# Logs locales de driver_re
+driver_re/*_log.txt
+driver_re/usb_tx/*_log.txt
+
+# Ejecutables/objetos construidos localmente
+driver_re/usb_tx/target/
+
+# Binarios grandes vendorizados (zadig, firmware) — descargables de upstream
+driver_re/usb_tx/zadig.exe
+driver_re/usb_tx/rt2870.bin
 # capturas y hashes (artefactos de laboratorio, no commitear)
 *.pcap
 *.pcapng

@@ -1,5 +1,46 @@
 # AGENTS.md — UIFIPILL Project
 
+## 🚀 HITO MAYOR — TX POR USB CRUDO RT3070 EN WINDOWS (2026-09-22, verificado con hardware real)
+Primer TX activo en Windows de todo el proyecto, SIN Npcap, SIN Kali, SIN usbipd.
+Nuevo módulo `driver_re/usb_tx/` (Rust + rusb 0.9, binarios rt3070_probe/diag/init/tx).
+
+Pipeline verificado end-to-end con la antena real (RT3070):
+1. **WinUSB rebind**: `rt3070_winusb.inf` (firmado con cert lab vía makecat+signtool,
+   `oem180.inf` en store) + `force_winusb_elevated.ps1`/Zadig. `Service: WinUSB` OK.
+2. **Sonda** (`rt3070_probe`): abre device, reclama interfaz 0, 7 EP bulk visibles
+   (0x81 RX + 0x01–0x06 TX).
+3. **Firmware** (`rt3070_init 11 rt2870.bin`): CSR ready → 64/64 chunks a
+   FIRMWARE_IMAGE_BASE → MCU UP → radio ON (MAC_SYS_CTRL=0x0C) → canal 11.
+4. **TX beacons** (`rt3070_tx "SSID" 11 N`): frames TXINFO+TXWI+802.11 a EP 0x01.
+   Primeros frames escritos al chip (backpressure a refinar).
+
+### Bugs clave descubiertos (documentar para no repetir)
+- **Tabla de vendor requests INCORRECTA era la causa raíz de todo el bloqueo**:
+  en rt2x00usb.h el RT2800/RT3070 usa SINGLE_WRITE=2, SINGLE_READ=3,
+  MULTI_WRITE=6, MULTI_READ=7 (la tabla 2/3/4/5 que usábamos era la de RT2500/RT73).
+  Con la tabla bien, el chip responde TODO: ASIC 0x30700201, registros, firmware.
+- `USB_DEVICE_MODE(reset)` ANTES de leer registros DEJA EL CHIP SORDO (CPU parada
+  esperando firmware) — nunca hacerlo en probe; solo rt2800usb lo usa en watchdog.
+- Windows/WinUSB: `set_active_configuration(1)` explícito (Linux lo hace solo).
+- Deshabilitar device en PnP NO libera el driver para libusb: hace falta rebind
+  real a WinUSB (Zadig o UpdateDriverForPlugAndPlayDevices; pnputil add-driver solo
+  acepta INF firmado con .cat).
+- El chip se degrada (STALL→timeout total) tras intentos fallidos: cada cambio de
+  codificación exige power-cycle (desenchufar 15 s).
+
+### Scripts (todos en `driver_re/usb_tx/`)
+- `run_zadig.cmd` + `zadig_helper.ps1`: rebind manual WinUSB con guía.
+- `force_winusb_elevated.ps1` / `run_force_winusb.cmd`: rebind SetupAPI (fallback).
+- `restore_netr28ux.ps1`: REVERSIÓN completa (elimina paquete WinUSB del store,
+  reinstala netr28ux desde DriverStore, restaura INF inbox si fue ocultado).
+- `rt3070_winusb.inf` + `rt3070_winusb.cat` (firmado lab) — paquete en store oem180.
+- `winusb_install_log.txt` / `force_log.txt` / `rebind_log.txt`: bitácoras.
+
+⚠️ Con WinUSB activo la antena NO es WiFi para netsh/Windows (sin RF nativa).
+Revertir con `restore_netr28ux.ps1` + re-enchufar cuando se necesite modo normal.
+Siguientes pasos TX: refinar TXINFO/TXWI (beacons reales visibles en otra radio),
+RX por EP 0x81 (captura por USB crudo), y puente de la app (uifipill) a estos binarios.
+
 ## Goal
 Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + WPS PIN bruteforce. Lab-only.
 
@@ -371,9 +412,14 @@ DLLs del bundle incluidas). Master con 12 commits sin push.
   Comtrend/Thomson, wifi_connect. Pipeline completo pasivo end-to-end.
 
 ### Deuda abierta conocida
-- El resto de secciones del tab Ataque (WPA3/WPS/Inyección/DoS/Evil Twin,
-  ahora numeradas 4–10) mantienen el layout antiguo `.attack-grid` — funcionan
-  pero no siguen el estilo wizard. Unificarlas sería el siguiente paso de UI.
+- **RESUELTA 2026-09-22**: el tab Ataque completo (secciones 2–8: crack, WPA3, WPS,
+  inyección, DoS, Evil Twin, Acceso) unificado al estilo wizard `.wiz-step` — todas
+  las tarjetas `.attack-grid`/`.atk-card` retiradas; campos avanzados en
+  `<details class="wiz-more">` (constructor hashcat, candidato ET, VH inputs, WEP
+  agrupado en un solo paso con sub-bloques `.wiz-sub`). 24 `.wiz-step` en total,
+  0 ids duplicados, 0 onclicks huérfanos, HTML balanceado; `npm run lint` OK,
+  `npx vite build` OK (105.35 kB + 53.63 kB JS). Todos los ids y handlers
+  conservados (no cambió app.js).
 - VirtualHere USE sigue bloqueado por licencia (trial = API Timeout).
 - ROADMAP_WSL2.md §ESTADO ACTUAL (2026-09-18) tiene la medición completa del
   puente; decisión de camino RF (Kali USB vs antena nueva) sin cerrar.

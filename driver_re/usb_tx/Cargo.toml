@@ -1,0 +1,23 @@
+[package]
+name = "rt3070_usb_tx"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rt3070_probe"
+path = "src/probe.rs"
+
+[[bin]]
+name = "rt3070_init"
+path = "src/init.rs"
+
+[[bin]]
+name = "rt3070_tx"
+path = "src/tx.rs"
+
+[[bin]]
+name = "rt3070_diag"
+path = "src/diag.rs"
+
+[dependencies]
+rusb = "0.9"

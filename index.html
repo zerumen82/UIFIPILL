@@ -323,6 +323,24 @@
     .wiz-more > summary::-webkit-details-marker { display: none; }
     .wiz-more > summary::before { content: '\25B8\00a0avanzado: '; color: var(--gray); font-style: italic; }
     .wiz-more[open] > summary::before { content: '\25BE\00a0avanzado: '; }
+    /* Wizard: pasos 2-8 usan el círculo con el color del tema de la sección */
+    .wiz-n.wiz-n--green  { background: var(--green); }
+    .wiz-n.wiz-n--orange { background: var(--orange); }
+    .wiz-n.wiz-n--yellow { background: var(--yellow); }
+    .wiz-n.wiz-n--red    { background: var(--red); }
+    .wiz-n.wiz-n--gray   { background: var(--gray); }
+    .wiz-step.wiz-step--green  { border-left-color: var(--green); }
+    .wiz-step.wiz-step--orange { border-left-color: var(--orange); }
+    .wiz-step.wiz-step--yellow { border-left-color: var(--yellow); }
+    .wiz-step.wiz-step--red    { border-left-color: var(--red); }
+    .wiz-step.wiz-step--gray   { border-left-color: var(--gray); }
+    /* Wizard: filas de campos a dos columnas en pasos con muchas tarjetas */
+    .wiz-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .wiz-cols > * { min-width: 0; }
+    /* Wizard: sub-bloque dentro de un details avanzado (varias herramientas) */
+    .wiz-sub { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+    .wiz-sub h4 { font-size: 12.5px; margin-bottom: 2px; }
+    .wiz-sub .atk-desc { margin-bottom: 8px; }
 
     /* ── Tools status ─────────────────────────────────────────────────── */
     .tool-row {
@@ -929,108 +947,125 @@
             <!-- ══════════════════ ESTRATEGIA DE CRACK ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">2 &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Inspector .22000 -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">&#x1F50D; Inspector .22000</h3>
-                  <p class="atk-desc">Qué contiene el hash antes de quemar GPU: PMKID vs EAPOL challenge/authorized</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Hash:</label>
-                      <input id="insp-hash" type="text" placeholder="capture_xxx.22000">
-                    </div>
-                    <div class="field-row">
-                      <label>Filtrar:</label>
-                      <select id="insp-kind">
-                        <option value="pmkid">PMKID</option>
-                        <option value="authorized">EAPOL authorized</option>
-                        <option value="challenge">EAPOL challenge</option>
-                      </select>
+                <div class="wiz-step wiz-step--blue">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--blue">&#x1F50D;</span>
+                    <div>
+                      <h3 class="wiz-title">Inspector .22000</h3>
+                      <p class="wiz-desc">Qué contiene el hash antes de quemar GPU: PMKID vs EAPOL challenge/authorized</p>
                     </div>
                   </div>
-                  <div class="atk-btn-row">
-                    <button class="atk-btn atk-btn--blue" onclick="inspectHash()">Inspeccionar</button>
-                    <button class="atk-btn" style="background:var(--gray)" onclick="filterHash()">Filtrar</button>
+                  <div class="wiz-cols" style="margin-top:10px">
+                    <div class="atk-fields">
+                      <div class="field-row">
+                        <label>Hash:</label>
+                        <input id="insp-hash" type="text" placeholder="capture_xxx.22000">
+                      </div>
+                      <div class="field-row">
+                        <label>Filtrar:</label>
+                        <select id="insp-kind">
+                          <option value="pmkid">PMKID</option>
+                          <option value="authorized">EAPOL authorized</option>
+                          <option value="challenge">EAPOL challenge</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="wiz-btns" style="margin-top:0">
+                        <button class="atk-btn atk-btn--blue" onclick="inspectHash()">Inspeccionar</button>
+                        <button class="atk-btn" style="background:var(--gray)" onclick="filterHash()">Filtrar</button>
+                      </div>
+                      <pre id="insp-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
+                    </div>
                   </div>
-                  <pre id="insp-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                 </div>
 
                 <!-- Constructor hashcat -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">&#x1F3AF; Constructor hashcat</h3>
-                  <p class="atk-desc">-m 22000 con las reglas y wordlists reales de tu instalación</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Hash:</label>
-                      <input id="crackx-hash" type="text" placeholder="capture_xxx.22000">
-                    </div>
-                    <div class="field-row">
-                      <label>Modo:</label>
-                      <select id="crackx-mode">
-                        <option value="0">0 — diccionario</option>
-                        <option value="6">6 — dicc + máscara</option>
-                        <option value="3">3 — máscara</option>
-                        <option value="1">1 — combinator</option>
-                        <option value="7">7 — máscara + dicc</option>
-                      </select>
-                    </div>
-                    <div class="field-row">
-                      <label>Wordlist:</label>
-                      <input id="crackx-wordlist" type="text" list="crackx-wl-list" placeholder="rockyou.txt">
-                      <datalist id="crackx-wl-list"></datalist>
-                    </div>
-                    <div class="field-row">
-                      <label>Regla:</label>
-                      <select id="crackx-rule">
-                        <option value="">(sin regla)</option>
-                      </select>
-                    </div>
-                    <div class="field-row">
-                      <label>Máscara:</label>
-                      <select id="crackx-preset" onchange="document.getElementById('crackx-mask').value=this.value">
-                        <option value="">-- preset --</option>
-                        <option value="?d?d?d?d?d?d?d?d">8 dígitos</option>
-                        <option value="?d?d?d?d?d?d?d?d?d">9 dígitos</option>
-                        <option value="?d?d?d?d?d?d?d?d?d?d">10 dígitos</option>
-                        <option value="?l?l?l?l?l?l?l?l">8 minúsculas</option>
-                        <option value="?u?l?l?l?l?l?l?d?d">Nombre+2 dígitos</option>
-                      </select>
-                    </div>
-                    <div class="field-row">
-                      <label></label>
-                      <input id="crackx-mask" type="text" placeholder="?d?d?d?d?d?d?d?d (o personalizada)">
-                    </div>
-                    <div class="field-row">
-                      <label>Sesión:</label>
-                      <input id="crackx-session" type="text" placeholder="uifipill (opcional)">
+                <div class="wiz-step wiz-step--red">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--red">&#x1F3AF;</span>
+                    <div>
+                      <h3 class="wiz-title">Constructor hashcat</h3>
+                      <p class="wiz-desc">-m 22000 con las reglas y wordlists reales de tu instalación</p>
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="loadCrackAssets()">&#8635; Assets</button>
                     <button class="atk-btn atk-btn--red" onclick="launchCustomCrack()">Lanzar crack</button>
                   </div>
                   <p id="crackx-hint" style="margin-top:8px;font-size:11px;color:var(--muted)"></p>
+                  <details class="wiz-more">
+                    <summary>modo, wordlist, regla, máscara y sesión</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Hash:</label>
+                        <input id="crackx-hash" type="text" placeholder="capture_xxx.22000">
+                      </div>
+                      <div class="field-row">
+                        <label>Modo:</label>
+                        <select id="crackx-mode">
+                          <option value="0">0 — diccionario</option>
+                          <option value="6">6 — dicc + máscara</option>
+                          <option value="3">3 — máscara</option>
+                          <option value="1">1 — combinator</option>
+                          <option value="7">7 — máscara + dicc</option>
+                        </select>
+                      </div>
+                      <div class="field-row">
+                        <label>Wordlist:</label>
+                        <input id="crackx-wordlist" type="text" list="crackx-wl-list" placeholder="rockyou.txt">
+                        <datalist id="crackx-wl-list"></datalist>
+                      </div>
+                      <div class="field-row">
+                        <label>Regla:</label>
+                        <select id="crackx-rule">
+                          <option value="">(sin regla)</option>
+                        </select>
+                      </div>
+                      <div class="field-row">
+                        <label>Máscara:</label>
+                        <select id="crackx-preset" onchange="document.getElementById('crackx-mask').value=this.value">
+                          <option value="">-- preset --</option>
+                          <option value="?d?d?d?d?d?d?d?d">8 dígitos</option>
+                          <option value="?d?d?d?d?d?d?d?d?d">9 dígitos</option>
+                          <option value="?d?d?d?d?d?d?d?d?d?d">10 dígitos</option>
+                          <option value="?l?l?l?l?l?l?l?l">8 minúsculas</option>
+                          <option value="?u?l?l?l?l?l?l?d?d">Nombre+2 dígitos</option>
+                        </select>
+                      </div>
+                      <div class="field-row">
+                        <label></label>
+                        <input id="crackx-mask" type="text" placeholder="?d?d?d?d?d?d?d?d (o personalizada)">
+                      </div>
+                      <div class="field-row">
+                        <label>Sesión:</label>
+                        <input id="crackx-session" type="text" placeholder="uifipill (opcional)">
+                      </div>
+                    </div>
+                  </details>
                 </div>
+
               </div>
             </div>
 
             <!-- ══════════════════ WPA3 ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">3 &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Auditoría WPA3 -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">Auditoría WPA3</h3>
-                  <p class="atk-desc">¿SAE puro o transición? Solo lectura; la transición se confirma con tshark en Linux</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID:</label>
-                      <input id="wpa3-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x1F409;</span>
+                    <div>
+                      <h3 class="wiz-title">Auditoría WPA3</h3>
+                      <p class="wiz-desc">¿SAE puro o transición? Solo lectura; la transición se confirma con tshark en Linux</p>
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForWpa3()">Usar objetivo</button>
                     <button class="atk-btn atk-btn--orange" onclick="wpa3Audit()">Auditar</button>
                   </div>
@@ -1038,9 +1073,14 @@
                 </div>
 
                 <!-- Rogue WPA2 para downgrade -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">Rogue WPA2 (downgrade)</h3>
-                  <p class="atk-desc">Genera el .conf de hostapd-mana para capturar el handshake WPA2 en Kali</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x2699;</span>
+                    <div>
+                      <h3 class="wiz-title">Rogue WPA2 (downgrade)</h3>
+                      <p class="wiz-desc">Genera el .conf de hostapd-mana para capturar el handshake WPA2 en Kali</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>SSID:</label>
@@ -1059,14 +1099,21 @@
                       <input id="wpa3-confout" type="text" placeholder="rogue_SSID.conf (auto)">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--orange" onclick="genRogueConf()">Generar .conf</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--orange" onclick="genRogueConf()">Generar .conf</button>
+                  </div>
                   <pre id="rogue-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                 </div>
 
                 <!-- Wacker online -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">Wacker online (experimental)</h3>
-                  <p class="atk-desc">Fuerza bruta SAE en vivo — lento, ruidoso, solo vs claves débiles. Se ejecuta en Kali, no aquí.</p>
+                <div class="wiz-step wiz-step--red">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--red">&#x1F9EA;</span>
+                    <div>
+                      <h3 class="wiz-title">Wacker online (experimental)</h3>
+                      <p class="wiz-desc">Fuerza bruta SAE en vivo — lento, ruidoso, solo vs claves débiles. Se ejecuta en Kali, no aquí.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Wordlist:</label>
@@ -1077,7 +1124,9 @@
                       <input id="wpa3-miface" type="text" placeholder="wlan0 (managed)">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--red" onclick="fillWacker()">Rellenar comando</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--red" onclick="fillWacker()">Rellenar comando</button>
+                  </div>
                   <pre id="wacker-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap">Pulsa para generar la plantilla (revisa --help del repo Wacker en Kali).</pre>
                 </div>
               </div>
@@ -1086,12 +1135,17 @@
             <!-- ══════════════════ WPS ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">4 &#183; &#x1F511; WPS <span style="font-size:10px;font-weight:600;color:var(--gray);border:1px solid var(--gray);border-radius:99px;padding:2px 10px;vertical-align:middle">wash OK &#183; ataques activos requieren TX</span></h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Wash scan -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">Wash scan (WPS)</h3>
-                  <p class="atk-desc">Enumera APs con WPS y locked — wash.exe nativo. Lab-only.</p>
+                <div class="wiz-step wiz-step--blue">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--blue">&#x1F9FC;</span>
+                    <div>
+                      <h3 class="wiz-title">Wash scan (WPS)</h3>
+                      <p class="wiz-desc">Enumera APs con WPS y locked — wash.exe nativo. Lab-only.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Interface:</label>
@@ -1102,13 +1156,20 @@
                       <input id="wash-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--blue" onclick="doCmd('wash_scan', doWashScan)">Escanear WPS</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--blue" onclick="doCmd('wash_scan', doWashScan)">Escanear WPS</button>
+                  </div>
                 </div>
 
                 <!-- WPS PIN bruteforce -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">WPS PIN bruteforce</h3>
-                  <p class="atk-desc">reaver.exe por defecto; bully.exe solo si existe (opcional). WSL2/Kali como alternativa si la interfaz no soporta inyección en Windows. Fija canal: reaver Win no cambia solo. Npcap + RTL8812AU/AR9271.</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x1F511;</span>
+                    <div>
+                      <h3 class="wiz-title">WPS PIN bruteforce</h3>
+                      <p class="wiz-desc">reaver.exe por defecto; bully.exe solo si existe (opcional). WSL2/Kali como alternativa si la interfaz no soporta inyección en Windows. Fija canal: reaver Win no cambia solo. Npcap + RTL8812AU/AR9271.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Tool:</label>
@@ -1123,16 +1184,21 @@
                       <input id="wps-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pin_bruteforce', wpsBrute)">&#x25B6; Iniciar WPS PIN</button>
                     <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar WPS">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
                 <!-- WPS PBC -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">WPS PBC</h3>
-                  <p class="atk-desc">Ataque por Push-Button Configuration (PBC) — reaver-wps -S</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x1F511;</span>
+                    <div>
+                      <h3 class="wiz-title">WPS PBC</h3>
+                      <p class="wiz-desc">Ataque por Push-Button Configuration (PBC) — reaver-wps -S</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>BSSID AP:</label>
@@ -1147,16 +1213,21 @@
                       <input id="wpspbc-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pbc_attack', doWpsPbc)">WPS PBC</button>
                     <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
                 <!-- WPS Pixie Dust -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">WPS Pixie Dust</h3>
-                  <p class="atk-desc">Ataque Pixie Dust (-K 1) sobre el E-Hash — obtiene el PIN WPS en segundos en chips vulnerables</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x26A1;</span>
+                    <div>
+                      <h3 class="wiz-title">WPS Pixie Dust</h3>
+                      <p class="wiz-desc">Ataque Pixie Dust (-K 1) sobre el E-Hash — obtiene el PIN WPS en segundos en chips vulnerables</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>BSSID AP:</label>
@@ -1171,7 +1242,7 @@
                       <input id="pixie-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pixiedust', doWpsPixieDust)">&#x26A1; Pixie Dust</button>
                     <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Cancelar</button>
                   </div>
@@ -1181,47 +1252,38 @@
 
             <!-- ══════════════════ INYECCIÓN AIREPLAY-NG ══════════════════ -->
             <div class="atk-section">
-              <h2 class="section-title">5 &#183; &#x26A1; Inyección aireplay-ng</h2>
-              <div class="attack-grid">
+              <h2 class="section-title">5 &#183; &#x26A1; Inyección aireplay-ng <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; TX bloqueada en RT3070+Npcap</span></h2>
+              <div class="wizard">
 
                 <!-- Injection Test -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">Injection Test</h3>
-                  <p class="atk-desc">Verifica si el adaptador en modo monitor puede inyectar paquetes 802.11</p>
+                <div class="wiz-step wiz-step--blue">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--blue">&#x1F50C;</span>
+                    <div>
+                      <h3 class="wiz-title">Injection Test</h3>
+                      <p class="wiz-desc">Verifica si el adaptador en modo monitor puede inyectar paquetes 802.11</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Interface:</label>
                       <input id="injtest-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--blue" onclick="doCmd('injection_test', injectionTest)">&#x1F50C; Probar inyecci&oacute;n</button>
-                </div>
-
-                <!-- Fakeauth -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--yellow">Fakeauth</h3>
-                  <p class="atk-desc">Asociaci&oacute;n falsa con el AP — necesaria para WEP y preparaci&oacute;n de handshake WPA</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID AP:</label>
-                      <input id="fakeauth-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>MAC origen:</label>
-                      <input id="fakeauth-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)">
-                    </div>
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="fakeauth-iface" type="text" placeholder="NPF_{GUID} o nombre">
-                    </div>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--blue" onclick="doCmd('injection_test', injectionTest)">&#x1F50C; Probar inyecci&oacute;n</button>
                   </div>
-                  <button class="atk-btn" onclick="doCmd('fakeauth_inject', doFakeauth)">&#x1F4E1; Fakeauth</button>
                 </div>
 
                 <!-- Deauth / Disassoc -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">Deauth / Disassoc</h3>
-                  <p class="atk-desc">Fuerza desconexión de un cliente para capturar re-handshake</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x26A1;</span>
+                    <div>
+                      <h3 class="wiz-title">Deauth / Disassoc</h3>
+                      <p class="wiz-desc">Fuerza desconexión de un cliente para capturar re-handshake. SOLO tu propio AP.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>BSSID AP:</label>
@@ -1240,58 +1302,21 @@
                       <input id="deauth-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('deauth_inject', doDeauth)">&#x26A1; Deauth</button>
                     <button class="atk-btn" onclick="doCmd('disassoc_inject', doDisassoc)">&#x21AF; Disassoc</button>
                   </div>
                 </div>
 
-                <!-- ARP Replay -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">ARP Replay Inject</h3>
-                  <p class="atk-desc">Inyecta paquetes ARP reply para capturar handshake WPA</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID AP:</label>
-                      <input id="arpreply-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>MAC fake:</label>
-                      <input id="arpreply-mac" type="text" placeholder="ff:ff:ff:ff:ff:ff=broadcast">
-                    </div>
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="arpreply-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                <!-- Scan airodump -->
+                <div class="wiz-step wiz-step--blue">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--blue">&#x1F4BF;</span>
+                    <div>
+                      <h3 class="wiz-title">Scan airodump</h3>
+                      <p class="wiz-desc">Escaneo en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--blue" onclick="doCmd('arp_replay_inject', doArpreply)">&#x26A1; ARP Reply Inject</button>
-                </div>
-
-                <!-- ChopChop WEP -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--yellow">ChopChop WEP</h3>
-                  <p class="atk-desc">Descifra paquetes WEP generando IVs (aireplay-ng --chopchop)</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID AP:</label>
-                      <input id="chopchop-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>MAC origen:</label>
-                      <input id="chopchop-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)">
-                    </div>
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="chopchop-iface" type="text" placeholder="NPF_{GUID} o nombre">
-                    </div>
-                  </div>
-                  <button class="atk-btn" onclick="doCmd('chopchop_inject', doChopChop)">&#x2702; ChopChop</button>
-                </div>
-
-                <!-- Airodump Scan -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">Scan airodump</h3>
-                  <p class="atk-desc">Escaneo en vivo con airodump-ng · obtiene CSV con clientes y APs</p>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Canal:</label>
@@ -1310,74 +1335,164 @@
                       <input id="airodump-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn atk-btn--blue" onclick="doCmd('scan_airodump', doAirodumpScan)">&#x1F4BF; Escanear airodump</button>
                     <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar escaneo">&#x25A0; Cancelar</button>
                   </div>
                 </div>
 
-                <!-- Fragment Inject -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--yellow">Fragment Inject (WEP)</h3>
-                  <p class="atk-desc">Ataque de fragmentación WEP — genera PRGA para obtener keystream (aireplay-ng --fragment)</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID AP:</label>
-                      <input id="frag-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="frag-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                <!-- WEP y asociaciones experimentales -->
+                <div class="wiz-step wiz-step--yellow">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--yellow">&#x2702;</span>
+                    <div>
+                      <h3 class="wiz-title">WEP, fakeauth e inyección avanzada</h3>
+                      <p class="wiz-desc">Ataques clásicos de aireplay-ng (WEP y asociación falsa). Históricos: hoy casi ninguna red usa WEP.</p>
                     </div>
                   </div>
-                  <button class="atk-btn" onclick="doCmd('fragment_inject', doFragment)">&#x1F4A5; Fragment Inject</button>
+                  <details class="wiz-more">
+                    <summary>fakeauth, ARP replay, chopchop, fragment, interactive y café latte</summary>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--yellow)">Fakeauth</h4>
+                      <p class="atk-desc">Asociaci&oacute;n falsa con el AP — necesaria para WEP y preparaci&oacute;n de handshake WPA</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>BSSID AP:</label>
+                          <input id="fakeauth-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>MAC origen:</label>
+                          <input id="fakeauth-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)">
+                        </div>
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="fakeauth-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn" onclick="doCmd('fakeauth_inject', doFakeauth)">&#x1F4E1; Fakeauth</button>
+                      </div>
+                    </div>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--blue)">ARP Replay Inject</h4>
+                      <p class="atk-desc">Inyecta paquetes ARP reply para capturar handshake WPA</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>BSSID AP:</label>
+                          <input id="arpreply-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>MAC fake:</label>
+                          <input id="arpreply-mac" type="text" placeholder="ff:ff:ff:ff:ff:ff=broadcast">
+                        </div>
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="arpreply-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn atk-btn--blue" onclick="doCmd('arp_replay_inject', doArpreply)">&#x26A1; ARP Reply Inject</button>
+                      </div>
+                    </div>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--yellow)">ChopChop WEP</h4>
+                      <p class="atk-desc">Descifra paquetes WEP generando IVs (aireplay-ng --chopchop)</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>BSSID AP:</label>
+                          <input id="chopchop-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>MAC origen:</label>
+                          <input id="chopchop-mac" type="text" placeholder="00:11:22:33:44:55 (falsa)">
+                        </div>
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="chopchop-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn" onclick="doCmd('chopchop_inject', doChopChop)">&#x2702; ChopChop</button>
+                      </div>
+                    </div>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--yellow)">Fragment Inject (WEP)</h4>
+                      <p class="atk-desc">Ataque de fragmentación WEP — genera PRGA para obtener keystream (aireplay-ng --fragment)</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>BSSID AP:</label>
+                          <input id="frag-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="frag-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn" onclick="doCmd('fragment_inject', doFragment)">&#x1F4A5; Fragment Inject</button>
+                      </div>
+                    </div>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--blue)">Interactive Inject</h4>
+                      <p class="atk-desc">Inyección interactiva de tramas 802.11 personalizadas (aireplay-ng --interactive)</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="inter-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn atk-btn--blue" onclick="doCmd('interactive_inject', doInteractive)">&#x1F3AF; Interactive Inject</button>
+                      </div>
+                    </div>
+
+                    <div class="wiz-sub">
+                      <h4 style="color:var(--orange)">Café Latte Attack</h4>
+                      <p class="atk-desc">Ataque WPA usando paquetes de un cliente ya asociado (aireplay-ng --cafe-latte)</p>
+                      <div class="atk-fields">
+                        <div class="field-row">
+                          <label>BSSID AP:</label>
+                          <input id="latte-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>MAC cliente:</label>
+                          <input id="latte-mac" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="field-row">
+                          <label>Interface:</label>
+                          <input id="latte-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                        </div>
+                      </div>
+                      <div class="wiz-btns">
+                        <button class="atk-btn atk-btn--orange" onclick="doCmd('cafe_latte_attack', doCafeLatte)">&#x2615; Café Latte</button>
+                      </div>
+                    </div>
+
+                  </details>
                 </div>
 
-                <!-- Interactive Inject -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--blue">Interactive Inject</h3>
-                  <p class="atk-desc">Inyección interactiva de tramas 802.11 personalizadas (aireplay-ng --interactive)</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="inter-iface" type="text" placeholder="NPF_{GUID} o nombre">
-                    </div>
-                  </div>
-                  <button class="atk-btn atk-btn--blue" onclick="doCmd('interactive_inject', doInteractive)">&#x1F3AF; Interactive Inject</button>
-                </div>
-
-                <!-- Café Latte Attack -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">Café Latte Attack</h3>
-                  <p class="atk-desc">Ataque WPA usando paquetes de un cliente ya asociado (aireplay-ng --cafe-latte)</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>BSSID AP:</label>
-                      <input id="latte-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>MAC cliente:</label>
-                      <input id="latte-mac" type="text" placeholder="AA:BB:CC:DD:EE:FF">
-                    </div>
-                    <div class="field-row">
-                      <label>Interface:</label>
-                      <input id="latte-iface" type="text" placeholder="NPF_{GUID} o nombre">
-                    </div>
-                  </div>
-                  <button class="atk-btn atk-btn--orange" onclick="doCmd('cafe_latte_attack', doCafeLatte)">&#x2615; Café Latte</button>
-                </div>
               </div>
             </div>
 
             <!-- ══════════════════ DOS / FLOOD ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">6 &#183; &#x1F525; DoS / Flood</h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Beacon Flood (airbase-ng) -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--orange">Beacon Flood (airbase-ng)</h3>
-                  <p class="atk-desc">Inunda el espectro con beacons falsos (airbase-ng)</p>
+                <div class="wiz-step wiz-step--orange">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--orange">&#x1F525;</span>
+                    <div>
+                      <h3 class="wiz-title">Beacon Flood (airbase-ng)</h3>
+                      <p class="wiz-desc">Inunda el espectro con beacons falsos (airbase-ng). SOLO laboratorio.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>ESSID falso:</label>
@@ -1396,7 +1511,9 @@
                       <input id="beacon-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--orange" onclick="doCmd('beacon_flood', doBeaconFlood)">&#x1F525; Enviar beacons</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--orange" onclick="doCmd('beacon_flood', doBeaconFlood)">&#x1F525; Enviar beacons</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1404,12 +1521,17 @@
             <!-- ══════════════════ EVIL TWIN ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">7 &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Kit Evil Twin -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">Kit Evil Twin (lab)</h3>
-                  <p class="atk-desc">Genera hostapd + dnsmasq + portal + verificación para Kali (2 adaptadores). Sin handshake previo no hay verificación: captúralo primero.</p>
+                <div class="wiz-step wiz-step--red">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--red">&#x1F608;</span>
+                    <div>
+                      <h3 class="wiz-title">Kit Evil Twin (lab)</h3>
+                      <p class="wiz-desc">Genera hostapd + dnsmasq + portal + verificación para Kali (2 adaptadores). Sin handshake previo no hay verificación: captúralo primero.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>SSID clon:</label>
@@ -1432,7 +1554,7 @@
                       <input id="et-outdir" type="text" placeholder="eviltwin_SSID (auto)">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForEvil()">Usar objetivo</button>
                     <button class="atk-btn atk-btn--red" onclick="genEvilTwinKit()">Generar kit</button>
                   </div>
@@ -1440,26 +1562,41 @@
                 </div>
 
                 <!-- Verificar 1 candidato -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--accent">Verificar 1 candidato <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h3>
-                  <p class="atk-desc">Comprueba una clave contra el .22000 con hashcat local, sin quemar GPU. La clave viaja en fichero temporal, nunca en argv.</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Hash:</label>
-                      <input id="et-hash" type="text" placeholder="capture_xxx.22000">
-                    </div>
-                    <div class="field-row">
-                      <label>Clave:</label>
-                      <input id="et-pass" type="password" placeholder="candidata del portal">
+                <div class="wiz-step wiz-step--green">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--green">&#10003;</span>
+                    <div>
+                      <h3 class="wiz-title">Verificar 1 candidato</h3>
+                      <p class="wiz-desc">Comprueba una clave contra el .22000 con hashcat local, sin quemar GPU. La clave viaja en fichero temporal, nunca en argv.</p>
                     </div>
                   </div>
-                  <button class="atk-btn" onclick="verifyCandidate()">Verificar</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn" onclick="verifyCandidate()">Verificar</button>
+                  </div>
+                  <details class="wiz-more">
+                    <summary>hash .22000 y clave candidata del portal</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Hash:</label>
+                        <input id="et-hash" type="text" placeholder="capture_xxx.22000">
+                      </div>
+                      <div class="field-row">
+                        <label>Clave:</label>
+                        <input id="et-pass" type="password" placeholder="candidata del portal">
+                      </div>
+                    </div>
+                  </details>
                 </div>
 
                 <!-- Rogue AP clásico -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--red">Evil Twin / Rogue AP</h3>
-                  <p class="atk-desc">Clona un AP legítimo con airbase-ng para capturar handshake de clientes</p>
+                <div class="wiz-step wiz-step--red">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--red">&#x1F480;</span>
+                    <div>
+                      <h3 class="wiz-title">Evil Twin / Rogue AP</h3>
+                      <p class="wiz-desc">Clona un AP legítimo con airbase-ng para capturar handshake de clientes</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>ESSID clon:</label>
@@ -1478,27 +1615,24 @@
                       <input id="rogue-iface" type="text" placeholder="NPF_{GUID} o nombre">
                     </div>
                   </div>
-                  <button class="atk-btn atk-btn--red" onclick="doCmd('rogue_ap', doRogueAp)">&#x1F608; Lanzar Evil Twin</button>
+                  <div class="wiz-btns">
+                    <button class="atk-btn atk-btn--red" onclick="doCmd('rogue_ap', doRogueAp)">&#x1F608; Lanzar Evil Twin</button>
+                  </div>
                 </div>
 
                 <!-- (Puente WSL2/Kali retirado: duplicaba ids del paso A del wizard
                      (wsl-busid/wsl-cmd/wsl-status…) y sus lecturas iban al primer
                      id = el del wizard. Todo vive ahora en el paso A.) -->
                 <!-- VirtualHere: transporte USB alternativo a usbipd (ROADMAP_WSL2 Fase 6b) -->
-                <div class="atk-card">
-                  <h3 class="atk-title">VirtualHere — USB a Kali</h3>
-                  <p class="atk-desc">Alternativa a usbipd para mover el RT3070 a Kali. Requiere el servidor VH en Windows (puerto 7575). OJO: el USE por consola exige licencia de pago; con trial da API Timeout.</p>
-                  <div class="atk-fields">
-                    <div class="field-row">
-                      <label>Servidor VH:</label>
-                      <input id="vh-server" type="text" placeholder="172.29.80.1" value="172.29.80.1">
-                    </div>
-                    <div class="field-row">
-                      <label>Dispositivo (del List):</label>
-                      <input id="vh-device" type="text" placeholder="DESKTOP-33B27GN.8">
+                <div class="wiz-step wiz-step--gray">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--gray">&#x1F50C;</span>
+                    <div>
+                      <h3 class="wiz-title">VirtualHere — USB a Kali</h3>
+                      <p class="wiz-desc">Alternativa a usbipd para mover el RT3070 a Kali. Requiere el servidor VH en Windows (puerto 7575). OJO: el USE por consola exige licencia de pago; con trial da API Timeout.</p>
                     </div>
                   </div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <div class="wiz-btns">
                     <button class="atk-btn" onclick="doVhCheck()">&#x1F50D; Servidor</button>
                     <button class="atk-btn" onclick="doVhProvision()">&#x1F4E5; Provision</button>
                     <button class="atk-btn" onclick="doVhDaemon()">&#x2699; Demonio</button>
@@ -1508,7 +1642,20 @@
                     <button class="atk-btn atk-stop" style="background:#3a3a52" onclick="doVhStop()">&#x25A0; STOP</button>
                     <button class="atk-btn" onclick="doVhRf()">&#x1F4F6; RF-check 15s</button>
                   </div>
-                  <p class="atk-desc" style="margin-top:6px">Orden: Servidor → Provision → Demonio → +Hub → List → USE → RF-check. STOP devuelve el USB a Windows.</p>
+                  <details class="wiz-more">
+                    <summary>servidor VH y nombre de dispositivo</summary>
+                    <div class="atk-fields" style="margin-top:8px">
+                      <div class="field-row">
+                        <label>Servidor VH:</label>
+                        <input id="vh-server" type="text" placeholder="172.29.80.1" value="172.29.80.1">
+                      </div>
+                      <div class="field-row">
+                        <label>Dispositivo (del List):</label>
+                        <input id="vh-device" type="text" placeholder="DESKTOP-33B27GN.8">
+                      </div>
+                    </div>
+                    <p class="wiz-desc" style="margin-top:6px">Orden: Servidor → Provision → Demonio → +Hub → List → USE → RF-check. STOP devuelve el USB a Windows.</p>
+                  </details>
                 </div>
               </div>
             </div>
@@ -1516,12 +1663,17 @@
             <!-- ══════════════════ ACCESO (objetivo: conectarse) ══════════════════ -->
             <div class="atk-section">
               <h2 class="section-title">8 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
-              <div class="attack-grid">
+              <div class="wizard">
 
                 <!-- Conectar con clave -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--accent">&#x1F517; Conectar con clave</h3>
-                  <p class="atk-desc">Cierra el círculo: con la clave (crack, portal, keygen o conocida) conecta este equipo vía perfil netsh</p>
+                <div class="wiz-step wiz-step--green">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--green">&#x1F517;</span>
+                    <div>
+                      <h3 class="wiz-title">Conectar con clave</h3>
+                      <p class="wiz-desc">Cierra el círculo: con la clave (crack, portal, keygen o conocida) conecta este equipo vía perfil netsh</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>SSID:</label>
@@ -1532,7 +1684,7 @@
                       <input id="conn-pass" type="password" placeholder="clave WPA2">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForConnect()">Usar objetivo</button>
                     <button class="atk-btn" onclick="wifiConnect()">Conectar</button>
                     <button class="atk-btn" style="background:var(--gray)" onclick="wifiDisconnect()">Desconectar</button>
@@ -1540,9 +1692,14 @@
                 </div>
 
                 <!-- Keygen claves por defecto -->
-                <div class="atk-card">
-                  <h3 class="atk-title atk-title--yellow">&#x1F511; Keygen por defecto</h3>
-                  <p class="atk-desc">Claves de fábrica derivadas de SSID/BSSID: Comtrend (Jazztel_/WLAN_, directo) y Thomson/familia (búsqueda SHA1 ~21.8M, tarda segundos). Sin RF, sin captura.</p>
+                <div class="wiz-step wiz-step--yellow">
+                  <div class="wiz-head">
+                    <span class="wiz-n wiz-n--yellow">&#x1F511;</span>
+                    <div>
+                      <h3 class="wiz-title">Keygen por defecto</h3>
+                      <p class="wiz-desc">Claves de fábrica derivadas de SSID/BSSID: Comtrend (Jazztel_/WLAN_, directo) y Thomson/familia (búsqueda SHA1 ~21.8M, tarda segundos). Sin RF, sin captura.</p>
+                    </div>
+                  </div>
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>SSID:</label>
@@ -1557,7 +1714,7 @@
                       <input id="keygen-max" type="number" min="1" max="50" value="5" title="Candidatos máximos en la búsqueda Thomson">
                     </div>
                   </div>
-                  <div class="atk-btn-row">
+                  <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForKeygen()">Usar objetivo</button>
                     <button class="atk-btn" onclick="keygenDetect()">Detectar</button>
                     <button class="atk-btn" onclick="keygenRun()">Generar</button>
