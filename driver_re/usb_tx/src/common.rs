@@ -92,6 +92,7 @@ pub const BKOFF_SLOT_CFG: u16 = 0x1104;
 pub const CH_TIME_CFG: u16 = 0x110c;
 pub const INT_TIMER_CFG: u16 = 0x1128;
 pub const MAC_STATUS_CFG: u16 = 0x1200;
+pub const AUTOWAKEUP_CFG: u16 = 0x1208;   // rt2800.h:1044 (0 antes de cargar firmware)
 pub const TX_SW_CFG0: u16 = 0x1330;
 pub const TX_SW_CFG1: u16 = 0x1334;
 pub const TX_SW_CFG2: u16 = 0x1338;
@@ -120,12 +121,36 @@ pub const HT_BASIC_RATE: u16 = 0x140c;
 /// Comando MCU completo (port de rt2800_mcu_request): mailbox con token/args
 /// + HOST_CMD_CSR con el comando. La 0x70 que escribíamos antes al CSR era el
 /// comando sin token ni puerta — el MCU lo ignoraba.
+/// FIX 2026-09-24 (bbpdiag session): OWNER es FIELD32(0xff000000) con valor 1
+/// → 0x01000000 (SET_FIELD = value << bit_offset). Escribíamos 0x80000000
+/// (OWNER=0x80) — el MCU no reconocía el comando y NUNCA consumió el
+/// BOOT_SIGNAL → el BBP se quedaba en reset (bbp0=0x00 siempre, medido).
 pub fn mcu_request(h: &rusb::DeviceHandle<rusb::Context>, command: u8, token: u8, arg0: u8, arg1: u8) -> rusb::Result<()> {
-    let _ = wait_busy(h, H2M_MAILBOX_CSR, 0xff00_0000, 0); // OWNER libre
-    let mailbox: u32 = 0x8000_0000                              // OWNER=1
+    mcu_request_wait(h, command, token, arg0, arg1, 0).map(|_| ()).map_err(|_| rusb::Error::Other)
+}
+
+/// Igual que mcu_request pero espera a que el MCU consuma el comando (OWNER
+/// vuelve a 0). `timeout_ms` = 0 → sin espera. Devuelve true si se consumió.
+pub fn mcu_request_wait(h: &rusb::DeviceHandle<rusb::Context>, command: u8, token: u8, arg0: u8, arg1: u8, timeout_ms: u64) -> Result<bool, String> {
+    let _ = wait_busy(h, H2M_MAILBOX_CSR, 0xff00_0000, 0).map_err(|e| e.to_string())?; // OWNER libre
+    let mailbox: u32 = 0x0100_0000                              // OWNER=1 (¡no 0x80!)
         | ((token as u32) << 16) | ((arg0 as u32)) | ((arg1 as u32) << 8);
-    reg_write(h, H2M_MAILBOX_CSR, mailbox)?;
-    reg_write(h, HOST_CMD_CSR, command as u32)
+    reg_write(h, H2M_MAILBOX_CSR, mailbox).map_err(|e| e.to_string())?;
+    reg_write(h, HOST_CMD_CSR, command as u32).map_err(|e| e.to_string())?;
+    if timeout_ms == 0 {
+        return Ok(true);
+    }
+    // El MCU limpia OWNER al tomar el comando (rt2x00 WAIT_FOR_MCU semantics)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    while std::time::Instant::now() < deadline {
+        if let Ok(v) = reg_read(h, H2M_MAILBOX_CSR) {
+            if v & 0xff00_0000 == 0 {
+                return Ok(true); // consumido
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    Ok(false)
 }
 
 // Comandos MCU (rt2800.h:3024+)
@@ -554,7 +579,6 @@ pub fn init_bbp_rt3070(h: &rusb::DeviceHandle<rusb::Context>) -> Result<(), Stri
             "BBP no responde (reg0=0x00/0xff) — MAC_STATUS_CFG={mac_st:#010x}"
         ));
     }
-
     for (reg, val) in [
         (65u8, 0x2cu8), (66, 0x38), (69, 0x12), (73, 0x10), (70, 0x0a),
         (79, 0x13), (80, 0x05), (81, 0x33), (82, 0x62), (83, 0x6a),
@@ -681,6 +705,9 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
 
     // 2. Firmware
     let fw = std::fs::read(fw_path).map_err(|e| format!("leer {fw_path}: {e}"))?;
+    // rt2800_load_firmware: AUTOWAKEUP_CFG=0 ANTES del firmware (evita que el
+    // MCU duerma el BBP durante el boot — nos faltaba, FIX 2026-09-24)
+    reg_write(h, AUTOWAKEUP_CFG, 0).map_err(|e| e.to_string())?;
     let mut buf4 = [0u8; 4];
     let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, 0, USB_MODE_AUTORUN, &mut buf4, FIRMWARE_TIMEOUT)
         .map(|_| u32::from_le_bytes(buf4) & 3 == 2)
@@ -710,10 +737,15 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
         }
         if !mcu_up { return Err("MCU no arrancó tras firmware".into()); }
         reg_write(h, H2M_MAILBOX_CSR, 0).map_err(|e| e.to_string())?;
-        // MCU_BOOT_SIGNAL — señal de arranque inicial del firmware (rt2800.c)
-        let _ = mcu_request(h, MCU_BOOT_SIGNAL, 0, 0, 0);
+        // MCU_BOOT_SIGNAL — señal de arranque inicial del firmware (rt2800.c).
+        // Con verificación real de consumo (OWNER→0): antes el MCU ignoraba el
+        // comando (bug OWNER=0x80) y seguíamos como si nada.
+        match mcu_request_wait(h, MCU_BOOT_SIGNAL, 0, 0, 0, 500) {
+            Ok(true) => log.push("MCU arriba + BOOT_SIGNAL consumido".into()),
+            Ok(false) => log.push("⚠️ BOOT_SIGNAL NO consumido por el MCU (OWNER no volvió a 0)".into()),
+            Err(e) => return Err(format!("BOOT_SIGNAL: {e}")),
+        }
         std::thread::sleep(std::time::Duration::from_millis(1));
-        log.push("MCU arriba + BOOT_SIGNAL".into());
     }
 
     // 3. USB DMA (rt2800usb_enable_radio) — el DMA se configura ANTES de la
@@ -735,9 +767,12 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
     reg_write(h, H2M_BBP_AGENT, 0).map_err(|e| e.to_string())?;
     reg_write(h, H2M_MAILBOX_CSR, 0).map_err(|e| e.to_string())?;
     reg_write(h, H2M_INT_SRC, 0).map_err(|e| e.to_string())?;
-    let _ = mcu_request(h, MCU_BOOT_SIGNAL, 0, 0, 0);
+    match mcu_request_wait(h, MCU_BOOT_SIGNAL, 0, 0, 0, 500) {
+        Ok(true) => log.push("radio ON (BOOT_SIGNAL consumido)".into()),
+        Ok(false) => log.push("⚠️ BOOT_SIGNAL (radio) no consumido".into()),
+        Err(e) => return Err(format!("BOOT_SIGNAL radio: {e}")),
+    }
     std::thread::sleep(std::time::Duration::from_millis(1));
-    log.push("radio ON (BOOT_SIGNAL)".into());
 
     // BBP init (incluye wait_bbp_ready: sondeo bbp0 != 0x00/0xff)
     match init_bbp_rt3070(h) {

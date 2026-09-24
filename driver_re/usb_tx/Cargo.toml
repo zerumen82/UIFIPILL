@@ -35,5 +35,13 @@ path = "src/scan.rs"
 name = "rt3070_bbpdiag"
 path = "src/bbpdiag.rs"
 
+[[bin]]
+name = "rt3070_bootdiag"
+path = "src/bootdiag.rs"
+
+[[bin]]
+name = "rt3070_bbpexp"
+path = "src/bbpexp.rs"
+
 [dependencies]
 rusb = "0.9"

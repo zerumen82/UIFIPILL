@@ -524,6 +524,64 @@ DLLs del bundle incluidas). Master con 12 commits sin push.
 - ROADMAP_WSL2.md §ESTADO ACTUAL (2026-09-18) tiene la medición completa del
   puente; decisión de camino RF (Kali USB vs antena nueva) sin cerrar.
 
+## TEST HARDWARE REAL 2026-09-24 (sesión «SIGUE») — BBP mudo: diagnóstico profundo
+
+Power-cycle + re-diagnóstico sistemático. Binarios nuevos: `rt3070_bootdiag`
+(init paso a paso con verificación de consumo MCU) y `rt3070_bbpexp`
+(experimentos quirúrgicos de read/write paths).
+
+### Qué responde y qué no (MEDIDO, firmware cargado + BOOT_SIGNAL)
+- ✅ MAC registers: write+readback perfecto (MAC_ADDR_DW0=0x11223344 pega).
+- ✅ Mailbox H2M (0x7010): write+readback perfecto.
+- ✅ RFCSR: lecturas plausibles de fábrica (r0=0x42, r4=0x33, r7=0x60…) y
+  WRITE+READBACK funciona (rfcsr[2]=0x80 pega) — el bloque RF está vivo.
+- ✅ Efuse: PRESENT=true, map legible (word0=0x3070, MAC C0:00:59:CA:B5:F8,
+  version 0x0101). La sospecha «EEPROM vacía» se matiza: NO está vacía,
+  está PARTIALMENTE programada (ver abajo).
+- ✅ MCU: con el fix del OWNER (bug encontrado hoy), BOOT_SIGNAL #1 y #2 se
+  CONSUMEN (OWNER vuelve a 0) — el firmware corre y atiende comandos.
+- ❌ BBP: lee 0x00 SIEMPRE: con RW_MODE=0 y 1, antes/después de firmware,
+  con/without init. BUSY se limpia (bit17=0) pero VALUE=0. El «write pega»
+  de bbp[4] anterior era falso positivo (escribir 0 y leer 0).
+
+### Bugs corregidos esta sesión (código)
+- **MCU OWNER mal formado**: escribíamos 0x8000_0000 (OWNER=0x80); el driver
+  usa FIELD32(0xff000000)=1 → **0x0100_0000**. Con el bug el MCU ignoraba los
+  comandos (probablemente también los TXDONE previos venían del auto-drain).
+  `mcu_request_wait()` nuevo verifica consumo real (OWNER→0, timeout).
+- **AUTOWAKEUP_CFG (0x1208)=0 antes del firmware** — faltaba (rt2800_load_firmware).
+- Fix build: `?` sobre rusb::Error en init_registers_rt3070 → unwrap_or.
+
+### Verificaciones del port (contra driver Linux 6.6 descargado, NO de memoria)
+- init_bbp_30xx, init_rfcsr_30xx (tabla 19 regs), rx_filter_calibration
+  (loopback BBP + tonos, filter_target 0x16/0x19), normal_mode_setup_3xxx
+  (RFCSR17 R=bit5 0x20, RFCSR27), mcu_request (OWNER=1, wait OWNER=0),
+  efuse_read (ADDRESS_IN bits17-25, DATA3→DATA0 end-to-start),
+  enable_radio (orden completo) — TODO coincide con rt2800lib.c. La
+  secuencia NO es el problema.
+- El firmware/MCU NO toca el RF al boot: RFCSR idéntico antes y después de
+  firmware+BOOT_SIGNAL.
+
+### Dato clave: EFUSE parcialmente programado (map medido)
+- words 0-4 OK: chip ID 0x3070, version 0x0101, MAC C0:00:59:CA:B5:F8.
+- **words 5-7 (NIC_CONF0, NIC_CONF1, FREQ) = 0x0000** → RF_TYPE=0 (RF2820,
+  inexistente en este chip), RXPATH=0, TXPATH=0 (¡cero antenas!).
+- words 8-15 = 0xffff; zona LNA/RSSI/txpower (0x30-0x5e) CON datos
+  (0511, 00a6, 0808, 0708…); 0x60+ firma/hash (c5ff a5b5 627a 3a50).
+- Un driver Linux ante esto: NIC_CONF0=0 ≠ 0xffff → NO defaulta (solo
+  defaulta ante 0xffff) y sigue con RXPATH/TXPATH=0. Puede ser legal para
+  el probe del driver, pero el firmware del MCU podría leer este mapa al
+  boot y dejar el BBP sin habilitar.
+
+### Estado y siguientes pasos (rev. 2, pendiente prueba)
+1. TX ya verificado (TXDONE success=true) — probar `rt3070_tx` y comprobar
+   en la otra radio si los beacons salen AL AIRE aunque el RX BBP esté mudo.
+2. Escribir efuse words 5-7 con NIC_CONF0 válido (RF_TYPE=RF3070=0x9 →
+   word=0x0901? verificar layout RXPATH/TXPATH/RF_TYPE en rt2800.h:2681) vía
+   EFUSE_CTRL MODE=1. ALTO RIESGO OTP-like: documentar y solo si se acepta
+   perder la antena.
+3. Si no: aceptar límite RX de ESTA antena (TX sí, RX no) y antena B para RX.
+
 ## External tools required (lab machine)
 - Npcap (NPcap.dll driver)
 - hcxdumptool + hcxpcapngtool (hcxtools)
