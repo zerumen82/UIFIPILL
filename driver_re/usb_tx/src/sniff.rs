@@ -9,8 +9,8 @@ mod common;
 
 use common::*;
 use std::io::Write;
-use std::process::exit;
 
+#[allow(dead_code)]
 const RXWI_USB_DESC: usize = 4;  // USB RXDMA: bytes = le32 (incluye propia cabecera)
 // RT2870 RX packet: [USB_DMA_LEN u32 le][RXWI 32B cuando aggr no][802.11 frame]
 // RXWI word0 (le): DATA_BYTE_CNT bits 16-27, TID etc; se usa para validar.

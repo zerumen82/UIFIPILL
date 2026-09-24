@@ -1,5 +1,37 @@
 # AGENTS.md — UIFIPILL Project
 
+## HITO — TX REFINADO: TXWI/TXINFO REALES + FEEDBACK TX_STA_FIFO (2026-09-23, código verificado; pendiente prueba con hardware)
+Auditoría del TX del 2026-09-22 contra el driver Linux REAL (torvalds/linux 6.6:
+rt2800.h, rt2800usb.h/c, rt2800lib.c — descargados y grepeados, NO de memoria).
+Hallazgos y correcciones (todo en `driver_re/usb_tx/src/`):
+- **TXWI estaba MAL construido**: la longitud del frame se ponía en w0 bits16-27
+  (que son MCS+BW) y w1 iba a 0. REAL: w0 = MCS(bits16-22) | PHYMODE(bits30-31,
+  CCK=1); w1 = ACK(bit0) | WCID(bits8-15) | MPDU_TOTAL_BYTE_COUNT(bits16-27) |
+  PACKETID(bits28-31, ≠0 → feedback). Ahora `txwi_bytes()` en common.rs.
+- **TXINFO activaba bits equivocados**: `| (1<<30) | (2<<26)` = NEXT_VALID y
+  SW_USE_LAST_ROUND en vez de WIV(bit24) y QSEL=2(bits25-26); y restaba 4 al
+  PKT_LEN cuando el campo es TXWI+802.11 sin TXINFO. Corregido en tx.rs/deauth.rs.
+- **MAC_ADDR/BSSID mal direcciones**: ADDR_DW0=0x1008 (no 0x1004), ADDR_DW1=0x100C,
+  BSSID_DW0=0x1010, BSSID_DW1=0x1014 (0x1004 es MAC_SYS_CTRL, ya correcto).
+- **USB_DMA_CFG es 0x02a0, no 0x0250** (0x0250 es TX_BASE_PTR2 del bus PCI).
+- **FEEDBACK TX REAL (TX_STA_FIFO 0x1718)**: con PACKETID≠0 el chip deja una
+  entrada VALID|TX_SUCCESS|MCS|PHYMODE por frame procesado. `drain_tx_status()`
+  en common.rs; tx.rs y deauth.rs imprimen líneas `[status] TXDONE success=…`;
+  usb_raw.rs las resume en el message («TXDONE: N confirmaciones (TX al aire OK)»).
+  Esto resuelve el «backpressure a refinar»: ahora SABEMOS si el chip TX-eó.
+- **Canal REAL portado** (`config_channel_rt3070` en common.rs): la vía rf53xx que
+  usa RF3070 — RFCSR8=N/RFCSR9=K/RFCSR11.R de la tabla rf_vals_3x[] del driver
+  (ej. CH11 = N=246,K=2,R=2), RFCSR1 (bloques RF/PLL), RFCSR30 (20MHz),
+  RFCSR3.VCOCAL_EN, BBP 62/63/64/82/75/86, TX_BAND_CFG=BG. El código anterior
+  escribía RF_CSR_CFG sin el bit WRITE (bit16) → **el chip ignoraba el canal**.
+- **PA nunca se encendieron** (`enable_tx_pa`): TX_PIN_CFG (0x1328) con
+  PA_PE_G0_EN|LNA_PE|RFTR|TRSW — sin esto el chip modula pero no sale al aire.
+- Verificación: `cargo build --release` en usb_tx **0 warnings**; src-tauri
+  `cargo build --release` limpio y `cargo test --lib` 23 passed / 0 failed.
+- **Siguiente paso con HW**: power-cycle + WinUSB rebind → `rt3070_init 11` →
+  `rt3070_tx "SSID" 11 20` y mirar las líneas TXDONE; si success=true, buscar el
+  SSID en la OTRA radio (netsh). Ajustar MCS/PHYMODO o potencia (RFCSR49) si no.
+
 ## 🚀 HITO MAYOR — TX POR USB CRUDO RT3070 EN WINDOWS (2026-09-22, verificado con hardware real)
 Primer TX activo en Windows de todo el proyecto, SIN Npcap, SIN Kali, SIN usbipd.
 Nuevo módulo `driver_re/usb_tx/` (Rust + rusb 0.9, binarios rt3070_probe/diag/init/tx).
@@ -40,6 +72,74 @@ Pipeline verificado end-to-end con la antena real (RT3070):
 Revertir con `restore_netr28ux.ps1` + re-enchufar cuando se necesite modo normal.
 Siguientes pasos TX: refinar TXINFO/TXWI (beacons reales visibles en otra radio),
 RX por EP 0x81 (captura por USB crudo), y puente de la app (uifipill) a estos binarios.
+
+### Refinado TX + SCAN por USB crudo (2026-09-23, build OK, pendiente hardware)
+- TXWI corregido con layouts REALES de rt2800.h (MCS/PHYMODE en W0, len en W1
+  MPDU_TOTAL_BYTE_COUNT, PACKETID≠0 → feedback TX_STA_FIFO). TXINFO: WIV sin
+  invertir, packet len = TXWI+frame. CCK 1Mbps. Hallazgos del refinado:
+  el RF write de init no ponía el bit WRITE (canal nunca se programó de verdad)
+  y USB_DMA_CFG estaba en 0x0250 (dirección PCI) en vez de 0x02a0 (USB).
+- `config_channel_rt3070` + `enable_tx_pa` (TX_PIN_CFG PA_PE_G0|LNA|RFTR|TRSW)
+  portados de rt2800_config_channel_rf53xx (RFCSR8=N/9=K/11.R + VCOCAL + BBP).
+- **SCAN como Linux**: nuevo bin `rt3070_scan` — hopping 1-13 (dwell 250ms),
+  parseo de beacons/probe-resp (SSID IE0, canal IE3, BSSID, RSSI RXWI_W2),
+  salida `AP|ssid|bssid|ch|rssi%`. Comando `usb_raw_scan` (JSON) + botón
+  «Escanear redes (USB crudo)» en el paso TX: fusiona con lastNets y refresca
+  tabla+selector — elegir objetivo = canal auto para los ataques USB.
+  `init_radio()` en common.rs compartida por init/scan (firmware+radio+canal).
+- Verificación: usb_tx 0 warnings; src-tauri 0 warnings; cargo test --lib
+  23 passed / 0 failed (7 ignored); lint+vite OK.
+
+### TEST HARDWARE REAL 2026-09-23 — RX aún bloqueado por BBP mudo (documentado)
+Sesión de prueba del scan con la antena real. Resultado medido, no adivinado:
+- **USB_DMA_CFG con AGG_LIMIT mal COLGABA EL USB** (desconexión del bus en
+  segundos, device phantom repetido): el valor antiguo ponía RX_BULK_AGG_EN=1
+  con 0x9C en el campo bajo (mezclaba AGG_TIMEOUT con bits de AGG_LIMIT).
+  Sin AGG_LIMIT el chip SOBREVIVE al scan/init (probado) pero no entrega URBs
+  de RX (0 frames). **Fix final aplicado**: valor EXACTO de
+  `rt2800usb_enable_radio` — AGG_EN=0, TIMEOUT=128,
+  AGG_LIMIT=(128*2432/1024)-3=**301**, RX|TX_BULK_EN.
+- **Constantes del mailbox H2M ERRÓNEAS (crítico)**: H2M_MAILBOX_CSR real es
+  **0x7010** (no 0x070C), H2M_MAILBOX_CID **0x7014** (no 0x0704), y
+  H2M_BBP_AGENT **0x7028** — nuestro código lo escribía en 0x0800
+  (=FIRMWARE_IMAGE_BASE, ¡pisando el firmware cargado!). MCU_CMD va vía
+  HOST_CMD_CSR (0x0404) con argumentos en los mailbox, no por 0x0704.
+- **BBP_RW_MODE (bit 16=0x80000... concretamente 1<<19=0x00080000)** faltaba en
+  TODOS los accesos BBP (rt2800_bbp_read/write lo ponen siempre). Añadido.
+- **El BBP responde 0x00 SIEMPRE** (write+readback no pega) aunque:
+  ASIC vivo (MAC_CSR0=0x30700201, rev F), firmware 64/64, MCU UP,
+  MAC_STATUS_CFG (0x1200) reporta BBP despierto (bits=0), PBF READY=1.
+  Sin BBP no hay demodulación → 0 frames RX con chip sano.
+- **Sospecha principal: EEPROM vacía**. La lectura EEPROM (vendor MULTI_READ,
+  protocolo verificado contra rt2x00usb) devuelve 0xFFFF en toda la zona de
+  config (EEPROM_NIC_CONF0=0xffff). Antena sin EEPROM válida o efuse: el
+  driver usa la EEPROM para RF type, TXMIXER gain, LNA… la secuencia de init
+  del vendor puede quedar coja sin datos válidos.
+- **Diagnóstico**: bin `rt3070_bbpdiag` (efuse present + volcado 64 words +
+  comparativa EEPROM vendor + test BBP write/readback + RFCSR readback).
+  Repetir con power-cycle ANTES de más iteraciones (el chip se degrada:
+  STALL → desconexión de bus).
+- **PORTADO 2026-09-24 (sesión «SIGUE»)**: los 3 pasos del plan de desbloqueo
+  ya están en código — `init_bbp_rt3070` (wait_bbp_ready + rt2800_init_bbp_30xx
+  17 regs, BBP103=0xc0 rev F), `init_rfcsr_rt3070` (rt2800_init_rfcsr_30xx rev F
+  19 regs + rx_filter_calibration REAL con loopback BBP/tono, NO LDO/31=0x14
+  que son RT3071/3090) y `init_registers_rt3070` (init_registers completo con el
+  SEGUNDO reset MAC+BBP DESPUÉS del firmware). Todo integrado en `init_radio`
+  (orden real de rt2800_enable_radio: init_registers → wait_bbp_rf_ready →
+  BOOT_SIGNAL → wait_bbp_ready → init_bbp → init_rfcsr → MCU_CURRENT →
+  MAC enable TX+RX → canal+PA). Añadido también acceso EFUSE (port
+  rt2800_efuse_read, ADDRESS_IN bits17-25, lectura end-to-start DATA3→DATA0)
+  para verificar la sospecha de EEPROM vacía. **Pendiente con HW**:
+  power-cycle → `rt3070_bbpdiag` (si efuse present=false y eeprom=0xffff, la
+  antena no tiene datos calibración → init vendor cojo confirmado) → si BBP
+  despierta, `rt3070_scan` debería ver redes; si sigue mudo tras 2 power-cycles,
+  el BBP/EEPROM de ESTA antena está dañado → probar otra RT3070.
+- **Estado de build (2026-09-24)**: usb_tx `cargo build --release` 0 warnings
+  (fix: `?` sobre rusb::Error en init_registers_rt3070 → unwrap_or); src-tauri
+  build release limpio + `cargo test --lib` 23 passed / 0 failed (7 ignored);
+  `npm run lint` OK, `npx vite build` OK (dist 109 kB + 61.3 kB JS).
+  Mensaje de `usb_raw_scan` actualizado (ya no dice "pendiente init_rfcsr").
+- `diag_usb.ps1`: diagnóstico PnP del device (estado, eventos Kernel-PnP).
 
 ## Goal
 Windows desktop WiFi suite: scan + monitor mode + PMKID capture/convert/crack + WPS PIN bruteforce. Lab-only.

@@ -27,5 +27,13 @@ path = "src/deauth.rs"
 name = "rt3070_sniff"
 path = "src/sniff.rs"
 
+[[bin]]
+name = "rt3070_scan"
+path = "src/scan.rs"
+
+[[bin]]
+name = "rt3070_bbpdiag"
+path = "src/bbpdiag.rs"
+
 [dependencies]
 rusb = "0.9"

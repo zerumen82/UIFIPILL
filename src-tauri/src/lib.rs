@@ -146,6 +146,7 @@ pub fn run() {
             usb_raw::usb_raw_deauth,
             usb_raw::usb_raw_sniff,
             usb_raw::usb_raw_diag,
+            usb_raw::usb_raw_scan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

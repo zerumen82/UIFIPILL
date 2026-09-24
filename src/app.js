@@ -1989,6 +1989,50 @@ window.genKaliKit = function () {
 // ── TX por USB crudo (RT3070 + WinUSB) — hito 2026-09-22 ─────────────────
 // Envuelve los binarios driver_re/usb_tx (probe/init/tx/diag) vía comandos
 // usb_raw_*. Requiere la antena rebindeada a WinUSB (ver driver_re/usb_tx).
+
+// Scan por USB crudo (2026-09-23): rt3070_scan salta canales 1-13, parsea
+// beacons y devuelve redes. Se fusionan con lastNets (prioridad USB: es el
+// scan que "ve" la antena cuando está en WinUSB) y se refresca la tabla de
+// Escanear + el selector de objetivo — clicables igual que el scan netsh.
+window.usbRawScan = async function () {
+  log('[usb-scan] Escaneando redes por USB crudo (channel hopping 1-13, ~20s)…', 'info');
+  try {
+    const r = await window.__invoke('usb_raw_scan', { durationSecs: 20 });
+    const line = $('usbraw-status');
+    if (line) {
+      line.textContent = 'Chip USB: ' + (r.success ? '✅ ' : '⚠️ ') + r.message;
+      line.className = 'wiz-status' + (r.success ? ' ok' : ' warn');
+    }
+    if (!r.networks || !r.networks.length) {
+      log('[usb-scan] ' + r.message, 'warn');
+      return false;
+    }
+    log('[usb-scan] ' + r.message + ': ' + r.networks.map(n => (n.ssid || '?') + ' (CH' + n.channel + ')').join(', '), 'ok');
+    // fusionar con lastNets: USB sobrescribe canal/señal de BSSIDs conocidos, añade nuevos
+    const byBssid = {};
+    (typeof lastNets !== 'undefined' ? lastNets : []).forEach(n => { byBssid[(n.bssid || '').toUpperCase()] = n; });
+    r.networks.forEach(n => {
+      byBssid[n.bssid.toUpperCase()] = {
+        bssid: n.bssid,
+        ssid: n.ssid || '(oculta)',
+        channel: n.channel,
+        signal: n.signal,
+        security: (byBssid[n.bssid.toUpperCase()] || {}).security || 'WPA2',
+        usbScan: true,
+      };
+    });
+    lastNets = Object.values(byBssid).sort((a, b) => (b.signal || 0) - (a.signal || 0));
+    if (typeof syncTargetList === 'function') syncTargetList();
+    if (typeof renderRows === 'function') renderRows(lastNets);
+    if (typeof renderHeader === 'function') renderHeader(lastNets.length + ' red(es) · scan USB crudo');
+    log('[usb-scan] ' + lastNets.length + ' redes en la tabla — clic para elegir objetivo (canal auto para ataques TX).', 'ok');
+    return true;
+  } catch (e) {
+    log('[usb-scan] FALLO: ' + e, 'error');
+    return false;
+  }
+};
+
 window.usbRawShow = function (r) {
   const out = $('usbraw-out');
   if (out) {

@@ -141,11 +141,20 @@ pub async fn usb_raw_tx_beacon(ssid: String, channel: u8, count: u32) -> UsbRawR
         };
         let n = count.clamp(1, 5000).to_string();
         let r = run_usb_tool(&exe, &[&ssid, &chan.to_string(), &n]);
-        // "éxito" honesto: frames escritos al chip != garantía de salida al aire
+        // "éxito" honesto: frames escritos al chip != garantía de salida al aire.
+        // Feedback real: las líneas "TXDONE success=true" de TX_STA_FIFO confirman
+        // que el chip procesó (transmitió) los frames, no solo que el USB los aceptó.
         let written = r.output.lines().find(|l| l.contains("frames escritos")).map(|s| s.to_string());
+        let txdone = r.output.lines().filter(|l| l.contains("TXDONE")).count();
+        let txdone_ok = r.output.lines().any(|l| l.contains("TXDONE success=true"));
+        let had_written = written.is_some();
+        let mut msg = written.unwrap_or_else(|| r.message.clone());
+        if txdone > 0 {
+            msg.push_str(&format!(" | TXDONE: {txdone} confirmaciones{}", if txdone_ok { " (TX al aire OK)" } else { " (FALLOS de TX: ¿canal/PA?)" }));
+        }
         UsbRawResult {
-            success: r.success && written.is_some(),
-            message: written.unwrap_or_else(|| r.message.clone()),
+            success: r.success && had_written,
+            message: msg,
             output: r.output,
         }
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
@@ -169,9 +178,16 @@ pub async fn usb_raw_deauth(bssid: String, channel: u8, count: u32) -> UsbRawRes
         let n = count.clamp(1, 500).to_string();
         let r = run_usb_tool(&exe, &[&b, &chan.to_string(), &n]);
         let written = r.output.lines().find(|l| l.contains("deauth frames escritos")).map(|s| s.to_string());
+        let txdone = r.output.lines().filter(|l| l.contains("TXDONE")).count();
+        let txdone_ok = r.output.lines().any(|l| l.contains("TXDONE success=true"));
+        let had_written = written.is_some();
+        let mut msg = written.unwrap_or_else(|| r.message.clone());
+        if txdone > 0 {
+            msg.push_str(&format!(" | TXDONE: {txdone} confirmaciones{}", if txdone_ok { " (TX al aire OK)" } else { " (FALLOS de TX)" }));
+        }
         UsbRawResult {
-            success: r.success && written.is_some() && r.output.contains("0/"),
-            message: written.unwrap_or_else(|| r.message.clone()),
+            success: r.success && had_written && r.output.contains("0/"),
+            message: msg,
             output: r.output,
         }
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
@@ -213,4 +229,66 @@ pub async fn usb_raw_diag() -> UsbRawResult {
             Err(e) => UsbRawResult { success: false, message: e, output: String::new() },
         }
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
+}
+
+// ── Scan por USB crudo (como Linux: beacons → lista de redes) ─────────────
+
+#[derive(Serialize)]
+pub struct UsbRawNet {
+    pub ssid: String,
+    pub bssid: String,
+    pub channel: u8,
+    pub signal: u8, // % estilo netsh
+}
+
+#[derive(Serialize)]
+pub struct UsbRawScanResult {
+    pub success: bool,
+    pub message: String,
+    pub networks: Vec<UsbRawNet>,
+}
+
+/// Escaneo de redes con el RT3070 en WinUSB (channel hopping 1-13 + parseo de
+/// beacons). Devuelve la lista lista para la tabla de la UI. Duración fija
+/// 20s (ronda completa de hopping con dwell 250ms/canal ~ 3 pasadas).
+#[command]
+pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let secs = duration_secs.unwrap_or(20).clamp(8, 120);
+        let exe = match usb_tx_exe("rt3070_scan.exe") {
+            Ok(e) => e,
+            Err(e) => return UsbRawScanResult { success: false, message: e, networks: vec![] },
+        };
+        let fw = firmware_path().unwrap_or_else(|| "rt2870.bin".into());
+        let r = run_usb_tool(&exe, &[&secs.to_string(), &fw]);
+        let mut networks = Vec::new();
+        for l in r.output.lines() {
+            if let Some(rest) = l.strip_prefix("AP|") {
+                let p: Vec<&str> = rest.split('|').collect();
+                if p.len() == 4 {
+                    let bssid = p[1].trim().to_uppercase();
+                    if bssid.len() == 17 && bssid.chars().filter(|c| *c == ':').count() == 5 {
+                        networks.push(UsbRawNet {
+                            ssid: p[0].trim().to_string(),
+                            bssid,
+                            channel: p[2].trim().parse().unwrap_or(0),
+                            signal: p[3].trim().parse().unwrap_or(0),
+                        });
+                    }
+                }
+            }
+        }
+        let ok = r.success && !networks.is_empty();
+        let msg = if !r.success {
+            r.message.clone()
+        } else if networks.is_empty() {
+            // 2026-09-23: 0 frames con chip vivo = BBP mudo (bloqueo conocido,
+            // ver AGENTS.md «TEST HARDWARE REAL 2026-09-23»). Mensaje honesto
+            // con las 2 causas medidas, no genérico.
+            "Sin redes: chip vivo pero 0 frames recibidos. Causas medidas: (1) BBP mudo — power-cycle (desenchufa 15s) y reintenta; (2) si persiste, mira rt3070_bbpdiag (efuse/EEPROM) — init BBP+RFCSR completo ya portado en common.rs".into()
+        } else {
+            format!("{} redes por USB crudo", networks.len())
+        };
+        UsbRawScanResult { success: ok, message: msg, networks }
+    }).await.unwrap_or_else(|_| UsbRawScanResult { success: false, message: "join error".into(), networks: vec![] })
 }

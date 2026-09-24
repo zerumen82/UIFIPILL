@@ -1,0 +1,1 @@
+Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'VID_148F' -or ($_.FriendlyName -match 'RT3070|Ralink|802\.11n USB') } | Select-Object Status, Class, FriendlyName, InstanceId | Format-List
