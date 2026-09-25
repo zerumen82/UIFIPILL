@@ -55,7 +55,7 @@ fn main() {
     let fw = std::fs::read("rt2870.bin").expect("leer rt2870.bin");
     let _ = reg_write(&h, PBF_SYS_CTRL, reg_read(&h, PBF_SYS_CTRL).unwrap_or(0) & !0x0000_2000);
     let _ = reg_write(&h, MAC_SYS_CTRL, 0x3);
-    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_RESET, &[], REGISTER_TIMEOUT);
+    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_RESET, 0, &[], REGISTER_TIMEOUT);
     std::thread::sleep(std::time::Duration::from_millis(100));
     let _ = reg_write(&h, MAC_SYS_CTRL, 0x0);
     let _ = reg_write(&h, AUTOWAKEUP_CFG, 0);
@@ -67,7 +67,7 @@ fn main() {
     }
     reg_write(&h, H2M_MAILBOX_CID, !0u32).ok();
     reg_write(&h, H2M_MAILBOX_STATUS, !0u32).ok();
-    h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_FIRMWARE, &[], FIRMWARE_TIMEOUT).ok();
+    h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_FIRMWARE, 0, &[], FIRMWARE_TIMEOUT).ok();
     std::thread::sleep(std::time::Duration::from_millis(300));
     reg_write(&h, H2M_MAILBOX_CSR, 0).ok();
     let _ = mcu_request(&h, MCU_BOOT_SIGNAL, 0, 0, 0);

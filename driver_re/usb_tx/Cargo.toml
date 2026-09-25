@@ -43,5 +43,53 @@ path = "src/bootdiag.rs"
 name = "rt3070_bbpexp"
 path = "src/bbpexp.rs"
 
+[[bin]]
+name = "rt3070_hotread"
+path = "src/hotread.rs"
+
+[[bin]]
+name = "rt3070_fwfirst"
+path = "src/fwfirst.rs"
+
+[[bin]]
+name = "rt3070_rediscover"
+path = "src/rediscover.rs"
+
+[[bin]]
+name = "rt3070_linuxfull"
+path = "src/linuxfull.rs"
+
+[[bin]]
+name = "rt3070_fwverify"
+path = "src/fwverify.rs"
+
+[[bin]]
+name = "rt3070_fwreenum"
+path = "src/fwreenum.rs"
+
+[[bin]]
+name = "rt3070_mcutest"
+path = "src/mcutest.rs"
+
+[[bin]]
+name = "rt3070_vendorradio"
+path = "src/vendorradio.rs"
+
+[[bin]]
+name = "rt3070_coldboot"
+path = "src/coldboot.rs"
+
+[[bin]]
+name = "rt3070_mculoop"
+path = "src/mculoop.rs"
+
+[[bin]]
+name = "rt3070_heredrx"
+path = "src/heredrx.rs"
+
+[[bin]]
+name = "rt3070_coldrx"
+path = "src/coldrx.rs"
+
 [dependencies]
 rusb = "0.9"

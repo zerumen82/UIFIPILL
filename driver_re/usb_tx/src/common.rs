@@ -24,10 +24,13 @@ pub const USB_EEPROM_WRITE: u8 = 0x08;
 pub const USB_EEPROM_READ: u8 = 0x09;
 pub const USB_RX_CONTROL: u8 = 0x0C;
 
-// wValue para USB_DEVICE_MODE — rt2800usb.c
+// wValue para USB_DEVICE_MODE — rt2x00usb.h enum rt2x00usb_mode_offset REAL
+// (BUG CRÍTICO 2026-09-24: teníamos FIRMWARE=2 que es UNPLUG; el modo además
+// va en wValue, no en wIndex — ver rt2x00usb_vendor_request_sw en load_firmware)
 pub const USB_MODE_RESET: u16 = 1;
-pub const USB_MODE_AUTORUN: u16 = 0x11;
-pub const USB_MODE_FIRMWARE: u16 = 2;
+pub const USB_MODE_UNPLUG: u16 = 2;
+pub const USB_MODE_FIRMWARE: u16 = 8;
+pub const USB_MODE_AUTORUN: u16 = 17;
 
 /// USB_DMA_CFG armado EXACTO de rt2800usb_enable_radio (rt2800usb.c:299):
 ///   AGG_EN=0, AGG_TIMEOUT=128 (0x80),
@@ -499,7 +502,7 @@ pub fn init_registers_rt3070(h: &rusb::DeviceHandle<rusb::Context>) -> Result<()
         .map_err(|e| e.to_string())?;
     // SEGUNDO RESET MAC+BBP (DESPUÉS del firmware, como el driver)
     reg_write(h, MAC_SYS_CTRL, 0x0000_0003).map_err(|e| e.to_string())?;
-    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_RESET, &[], REGISTER_TIMEOUT);
+    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_RESET, 0, &[], REGISTER_TIMEOUT);
     std::thread::sleep(std::time::Duration::from_millis(10));
     reg_write(h, MAC_SYS_CTRL, 0x0000_0000).map_err(|e| e.to_string())?;
 
@@ -695,10 +698,11 @@ fn rx_filter_calibration(h: &rusb::DeviceHandle<rusb::Context>, bw40: bool, filt
 pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &str) -> Result<Vec<String>, String> {
     let mut log: Vec<String> = Vec::new();
 
-    // 1. Reset MAC+BBP (tolerante)
+    // 1. Reset MAC+BBP (tolerante). NOTA: el modo va en wValue (rt2x00usb
+    // vendor_request_sw: value=mode, offset/index=0).
     let _ = reg_write(h, PBF_SYS_CTRL, reg_read(h, PBF_SYS_CTRL).unwrap_or(0) & !0x0000_2000);
     let _ = reg_write(h, MAC_SYS_CTRL, 0x3);
-    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_RESET, &[], REGISTER_TIMEOUT);
+    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_RESET, 0, &[], REGISTER_TIMEOUT);
     std::thread::sleep(std::time::Duration::from_millis(100));
     let _ = reg_write(h, MAC_SYS_CTRL, 0x0);
     log.push("reset MAC/BBP ok".into());
@@ -709,7 +713,8 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
     // MCU duerma el BBP durante el boot — nos faltaba, FIX 2026-09-24)
     reg_write(h, AUTOWAKEUP_CFG, 0).map_err(|e| e.to_string())?;
     let mut buf4 = [0u8; 4];
-    let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, 0, USB_MODE_AUTORUN, &mut buf4, FIRMWARE_TIMEOUT)
+    // rt2800usb_autorun_detect: USB_DEVICE_MODE IN con value=USB_MODE_AUTORUN(17)
+    let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, USB_MODE_AUTORUN, 0, &mut buf4, FIRMWARE_TIMEOUT)
         .map(|_| u32::from_le_bytes(buf4) & 3 == 2)
         .unwrap_or(false);
     if autorun {
@@ -728,7 +733,11 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
         log.push(format!("firmware {fw_ok}/64 chunks"));
         reg_write(h, H2M_MAILBOX_CID, !0u32).map_err(|e| e.to_string())?;
         reg_write(h, H2M_MAILBOX_STATUS, !0u32).map_err(|e| e.to_string())?;
-        h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_FIRMWARE, &[], FIRMWARE_TIMEOUT)
+        // KICK DEL FIRMWARE: USB_DEVICE_MODE OUT con value=USB_MODE_FIRMWARE(8).
+        // (Antes: value=0, index=2 → UNPLUG en el campo equivocado. El MCU
+        // NUNCA arrancó de verdad y el BBP, que habilita el firmware al boot,
+        // se quedaba muerto: bbp0=0x00 para siempre.)
+        h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_FIRMWARE, 0, &[], FIRMWARE_TIMEOUT)
             .map_err(|e| format!("DEVICE_MODE FIRMWARE: {e}"))?;
         let mut mcu_up = false;
         for _ in 0..30 {

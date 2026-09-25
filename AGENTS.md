@@ -1,5 +1,264 @@
 # AGENTS.md — UIFIPILL Project
 
+## SESIÓN RX 2026-09-25 (cierre definitivo) — coldrx: el autoload NO deja el BBP vivo
+- Experimento final (`rt3070_coldrx`): UNPLUG → re-enum frío (addr 42→43) →
+  SOLO config host-side (USB_DMA_CFG + ENABLE_RX + filtro) SIN tocar BBP/MCU
+  → RX 25 s → **0 frames, bbp[0]=0x00 en frío**.
+- **CONCLUSIÓN DEFINITIVA DEL MISTERIO BBP**: el autoload de fábrica del chip
+  (el que corre tras UNPLUG/power-cycle sin driver) NO deja el BBP ni
+  inicializado ni accesible por 0x11C. El BBP del RT3070 SOLO se activa cuando
+  el firmware del MCU lo hace en un arranque completo con carga de firmware —
+  y ese arranque (kick FIRMWARE(8)) deja el control pipe sordo bajo WinUSB
+  (medido 5/5: power-cycle ×4 + UNPLUG frío ×1).
+- El vendor netr28ux SÍ logra el arranque completo porque rehace TODO el boot
+  desde su IRP_MN_START (incluida la carga de fw) y su wrapper USB bulk soporta
+  la ventana crítica del re-arranque del MCU — algo que el control pipe WinUSB
+  no nos permite (el device desaparece y Windows no nos devuelve un handle
+  utilizable).
+- **Cierre de la vía USB crudo WinUSB para RX: DEFINITIVO.** TX al aire sigue
+  confirmado (hito de hoy). RX de esta antena: SOLO Kali live USB (rt2800usb).
+- Para el próximo acceso RX-WinUSB (si algún día se intenta): la única vía
+  abierta es descubrir el formato de comando del bulk pipe del vendor
+  (RTUSBBulkOutPktCmd) vía USBPcap sniffer mientras netr28ux escanea, y
+  replicar esos paquetes — el resto de vías están cerradas MEDIDAS.
+
+## SESIÓN RX 2026-09-25 (E2 + reversing netr28ux) — H2 en marcha, hallazgos del .sys
+- **E2 ejecutado** (`rt3070_mculoop`): ciclo SLEEP(0xff,0xff,2)→WAKEUP(0xff,0,2),
+  WAKEUP(arg1=0), WAKEUP×2 — **el BBP NO despierta en ninguna variante**. E2 descartado.
+- **heredrx** (`rt3070_heredrx`): sobre estado heredado del vendor SIN tocar BBP/MCU,
+  solo USB_DMA_CFG=0x00c12d80 + ENABLE_RX + filtro monitor → 0 frames. El DMA no
+  basta: el BBP no demodula nada (para nadie).
+- **REVERSING netr28ux.sys (2.2 MB, x64, sin empacar)** — hallazgos:
+  · PE limpio: .text file 0x400-0x1bbc00 (rva 0x1000+0x400), strings de nombres
+    de funciones DENTRO de .text (p.ej. RTMPApplyPacketFilter @file 0x1b0c9c).
+    Mapeo file→rva: rva = file - 0x400 + 0x1000 (ojo: no es .rdata).
+  · El vendor habla con el chip POR BULK OUT (URB_FUNCTION_BULK_OR_INTERRUPT
+    _TRANSFER=0x2B, wrapper @0xade0, 1040 llamadas) — NO solo por control pipe.
+    Nombres RTUSBBulkOutPktCmd / RTUSBBulkOutMLMEPacket / RTUSBBulkReceive:
+    hay PIPES DE COMANDOS BULK dedicados (además de 0x01-0x06/0x81).
+  · Strings BBP localizados (en .text): AsicBbpTuning, AsicWriteBBPR66,
+    BbpInit7601, PostBBPInitialization, NICRestoreBBPValue, WriteBBPR66.
+  · Rutina de logs/asserts con edx=0x11C y [rsp+0x20]=0x208f (@0xd11f) — el
+    vendor TAMBIÉN usa el registro BBP_CSR_CFG 0x11C, aunque su acceso real
+    parece ir por el bulk command pipe.
+  · Par de comandos 0x41/0x42/0x43 con strings de función cerca (@0x69cc/
+    0x6a0a/0x6a2e) — la llamada 0xade0 con r9=string es un LOG con el nombre
+    de la función (debug wrapper), no el comando en sí.
+- **PENDIENTE próxima sesión**: xrefs correctos de BbpInit7601/AsicBbpTuning
+  (los lea rip-rel no cuadran porque los strings están en .text — recalcular con
+  rva=file-0x400+0x1000 y buscar disp32 que apunten al STRING EXACTO) y extraer
+  el formato del paquete de comando BBP por el bulk pipe; alternativa: sniffer
+  USB (USBPcap) capturando lo que el vendor manda al hacer scan y replicarlo.
+- Estado hardware al cierre: chip heredado degradado por los tests → power-cycle
+  antes del siguiente experimento.
+
+## SESIÓN RX 2026-09-25 (E1 ejecutado) — H1 falsada, mecanismo de rebind resuelto
+- **E1 ejecutado completo** (e1_run3.ps1, log en e1_log.txt):
+  1. netr28ux publicado + oem395 desinstalado → **netr28ux tomó el control**
+     (vía pnputil /add-driver + /delete-driver oem395 /uninstall + /scan-devices).
+     NOTA: UpdateDriverForPlugAndPlayDevices (newdev.dll) da win32err=2 SIEMPRE
+     con este device — la vía que funciona es pnputil delete+rescan (3-4 min
+     por el timeout del uninstall, paciencia).
+  2. netsh escaneando en bucle (radio EN USO) durante el rebind.
+  3. delete netr28ux + rescan → **WinUSB (oem395) heredó el device SIN
+     power-cycle** — Status OK, chip respondiendo (MAC_CSR0 vivo, RF vivo,
+     mailbox OWNER=0 limpio).
+- **RESULTADO H1: FALSADA.** Incluso heredando el chip del vendor con la radio
+  EN USO (escaneo activo), el BBP sigue leyendo 0x00. El vendor NO lo duerme al
+  soltar el device: **el BBP está VIVO para el vendor pero INVISIBLE para
+  nosotros** (sus capturas Npcap funcionan, nuestros reads dan 0).
+- mcutest post-rebind: MCU_CURRENT #1 consumido, luego se degradó en vivo
+  (0xffffffff) — el chip heredado es frágil y cada acceso nuestro lo tumba.
+- **Hipótesis H2 (nueva, ganadora provisional)**: el acceso BBP del vendor no
+  usa BBP_CSR_CFG (0x11C) vía vendor request — posiblemente usa la vía MCU
+  (mailbox H2M con comandos de lectura/escritura BBP del firmware) o un path
+  interno distinto. Nuestro write+readback en 0x11C se devuelve vacío porque el
+  arbiter BBP del firmware atiende otra puerta. INVESTIGAR: comandos MCU
+  del firmware RT3070 para acceso BBP/RF (reversing del firmware o del driver
+  vendor netr28ux.sys — tenemos el .sys en driver_re/).
+- Estado del device tras E1: WinUSB oem395 activo, Status OK. Chip probablemente
+  degradado tras los tests (power-cycle antes del siguiente intento).
+- Actualización de RX_PLAN.md: E1 falsado → H2 con plan de reversing.
+
+## SESIÓN RX 2026-09-25 (final) — nueva hipótesis H1 + plan en RX_PLAN.md
+- TX al aire CONFIRMADO y anotado (ver hito arriba). Investigación RX continúa.
+- **Dato que reabre RX**: la antena SÍ capturaba bajo netr28ux (392 pkts Npcap,
+  hito 2026-09-14) → el BBP NO está roto; el vendor lo deja VIVO y algo lo duerme
+  antes de nuestro acceso.
+- **H1 (principal)**: el driver vendor manda MCU_SLEEP al detach/rebind (como
+  rt2800usb_set_device_state STATE_RADIO_OFF) → heredamos BBP dormido y el
+  WAKEUP solo no lo re-arma (medido).
+- **E1 (siguiente experimento)**: hot_rebind to-winusb CON LA RADIO ACTIVA
+  (netsh escaneando en bucle o captura Npcap en monitor) + rt3070_hotread en
+  <2 s — si el BBP hereda vivo, vendorradio → RX directa.
+- **E2**: ciclo MCU_SLEEP(0xff,0xff,2) → MCU_WAKEUP(0xff,0,2) completo (el
+  firmware puede requerir el ciclo; probar arg1=0 vs 2).
+- Verificado en fuente real: USB_RX_CONTROL(0x0C) SOLO se usa para DESactivar
+  la radio (rt2x00usb_disable_radio); la activación es submit de URBs bulk IN
+  (lo que ya hacemos). No hay vendor request mágico de RX-ON que nos falte.
+- Plan completo y órden de experimentos: `driver_re/usb_tx/RX_PLAN.md`.
+- Cerrado definitivamente (no reintentar): kick FIRMWARE en cualquier estado,
+  re-enum tras kick con reapertura simple, confiar en MAC_CSR0 como señal de fw.
+
+## 🎉 HITO TX AL AIRE CONFIRMADO (2026-09-25, veredicto definitivo)
+**La red "TXTEST" (beacon generado por rt3070_tx por USB crudo) es VISIBLE desde
+otro dispositivo.** El pipeline TX completo funciona: TXINFO+TXWI+802.11 → EP 0x01
+→ chip modula → **SALE AL AIRE de verdad**. Primera TX RF activa del proyecto en
+Windows sin Npcap, sin Kali, solo WinUSB.
+- Condiciones del test: power-cycle → rt3070_tx "TXTEST" 11 20 UNA sola vez.
+- Patrón TX reproducido: los 2 primeros frames entran (bulk ACK) y el resto dan
+  Timeout (EP se atasca sin drain de TX status en estado heredado). Con 2 frames
+  por burst basta para beacons continuos si se re-lanza o se añade drain.
+- TXDONE del hito 2026-09-23 (TX_STA_FIFO success=true) + beacons visibles ahora
+  = doble confirmación (chip TX-eó Y sale al aire).
+- Implicación: la app puede hacer ATAQUES TX activos (deauth/beacon flood) por
+  USB crudo en Windows, aunque el RX siga por Kali.
+
+## SESIÓN 2026-09-25 (cont.) — ANTENA NUEVA + COLD BOOT UNPLUG: re-enum frío FUNCIONA, kick sigue matando
+
+### Contexto
+User trajo UNA SEGUNDA RT3070 idéntica (…D8:A7) para comparativa. Luego preguntó
+«¿es que tu driver no lo has copiado de Linux?» → la respuesta motivó el último
+experimento: el UNPLUG del watchdog rt2x00 para replicar el «chip fresco» de
+Linux sin power-cycle.
+
+### Comparativa antena VIEJA (…B5:F8) vs NUEVA (…D8:A7) — MEDIDO
+- efuse NUEVA: patrón idéntico a la vieja (word0=0x3070, MAC C0:00:59:CA:D8:A7,
+  words 5-7 NIC_CONF=0x0000, zona LNA/txpower con datos, misma firma 0x6e-0x74).
+  → **El efuse parcial es DE FÁBRICA en estas RT3070, no avería de la vieja.**
+- BBP NUEVA: mudo igual (write 0x11 lee 0x00). RFCSR vivo (r0=0x42).
+- mcutest NUEVA fresca: MCU_CURRENT ×3 consumido ✅ pero mailbox STATUS
+  0x00ff0000 (vieja: 0xf00f1587) y **BOOT_SIGNAL timeout** — diferencia real.
+- vendorradio NUEVA: el chip **DESAPARECIÓ DEL BUS COMPLETO** durante el init
+  (peor que la vieja). No vuelve sola. La NUEVA se degrada más rápido.
+- Veredicto: misma conducta base (MCU vivo + BBP mudo) pero la NUEVA es más
+  frágil. El BBP mudo NO es defecto de una antena: es del boot.
+
+### COLD BOOT vía USB_MODE_UNPLUG(2) — nuevo bin `rt3070_coldboot` (coldboot.rs)
+Idea: el watchdog rt2x00 usa DEVICE_MODE OUT UNPLUG para forzar desconexión →
+re-enum en frío → replicar el punto de partida de Linux (chip fresco) sin
+power-cycle físico. Resultados:
+1. **UNPLUG FUNCIONA**: el chip SE DESCONECTA y re-enumeración REAL con nueva
+   addr (033→034→035) — PRIMERA VEZ que conseguimos boot frío sin cable.
+   (err Pipe al enviar es normal: el chip corta el pipe al instante.)
+2. **Tras UNPLUG el chip vuelve con firmware autoload de fábrica ya arrancado**
+   (MAC_CSR0 vivo, mailbox OWNER=181 = estado autoload, igual que hotread
+   heredado). NO queda «virgen»: el chip tiene boot ROM/autoload propio.
+3. autorun_detect = 0x00000000 (NORMAL) también en frío → cargamos fw 64/64 ✅
+4. **Kick FIRMWARE(8) sobre el autoload: MATA el chip igual** (CSR no ready,
+   device sordo en su addr). REPRODUCIDO TAMBIÉN EN FRÍO — no era el estado
+   del vendor: **el kick en sí es lo que el chip no tolera bajo WinUSB**.
+5. Bug corregido en coldboot v2: addr_before se captura ANTES del UNPLUG
+   (v1 lo capturaba después y la re-enum era invisible al bucle).
+
+### CONCLUSIÓN MAESTRA (rev. 5, cierra la cuestión «copiado de Linux»)
+- El port del protocolo ES fiel a Linux (verificado línea a línea contra
+  rt2x00usb.h/rt2800usb.c/rt2800lib.c de 6.6). La diferencia no es el driver:
+  **es que el kick FIRMWARE(8) deja sordo el chip bajo WinUSB incluso desde
+  boot frío replicado**, mientras que en Linux (misma secuencia byte a byte)
+  funciona. Causa probable: el kernel Linux re-sondea/re-vincula y gestiona la
+  re-enum resultante; WinUSB/Windows no nos deja un device utilizable tras el
+  corte del MCU (re-enum con device sordo o muerte total).
+- Vías agotadas en Windows: kick tras power-cycle (modos A/B), kick en frío vía
+  UNPLUG, radio sobre MCU vendor sin kick (BBP mudo ×2 antenas).
+- **El BBP mudo es consustancial al estado que podemos alcanzar por WinUSB**:
+  sin boot frío REAL (replug eléctrico con autoload corriendo desde ROM) el BBP
+  no despierta, y el kick que lo despertaría mata el USB.
+- **DECISIÓN: la vía USB crudo Windows queda cerrada para RX.** TX ya verificado
+  (TXDONE success=true) — pendiente solo confirmar beacons al aire desde otra
+  radio. Para RX: Kali live USB (rt2800usb hace el boot frío completo en kernel).
+- Siguientes pasos: (a) TX al aire (rt3070_tx + verificación con otra radio);
+  (b) integrar TX por USB crudo en la app uifipill (deauth/beacon con RX solo
+  por Kali); (c) NO comprar más RT3070 para RX bajo WinUSB.
+
+## SESIÓN 2026-09-25 — KICK FIRMWARE: CAUSA RAÍZ ENCONTRADA (MCU del vendor VIVO) + fwverify/fwreenum/mcutest/vendorradio
+Diagnóstico sistemático del «kick FIRMWARE(8) deja el chip sordo». Binarios nuevos en
+`driver_re/usb_tx/src/`: `fwverify.rs` (write+readback del fw SIN kick), `fwreenum.rs`
+(kick + re-enum + discriminador ep0/vendor), `mcutest.rs` (¿el MCU ejecuta código?),
+`vendorradio.rs` (radio sobre MCU vendor sin carga de fw). `linuxfull.rs` reescrito
+(autorun_detect con valor crudo, re-enum REAL que exige desaparición del device,
+port reset automático al reaparecer, modo --resume).
+
+### ME DIDO (todos los datos de esta sesión, chip RT3070 real)
+1. **Tras power-cycle el MCU 8051 ESTÁ CORRIENDO**: `MCU_CURRENT` (0x30) se
+   CONSUME ×3, mailbox STATUS responde `0xf00f1587`, PBF READY=1. El firmware del
+   vendor (netr28ux, tras hot-rebind a WinUSB) deja el MCU ejecutando.
+2. **autorun_detect = 0x00000000** (modo NORMAL) — NO autorun. PERO esto NO
+   significa «hay que cargar fw»: es el valor que da el chip con el fw del vendor
+   ya arrancado por otra puerta (el driver vendor no usa DEVICE_MODE).
+3. **MAC_CSR0=0x30700201 NO es «firmware no cargado»**: es el ID de ASIC, responde
+   en frío Y con MCU vivo. Linux lo lee en probe ANTES de load_firmware.
+4. **Cargar fw 64/64 chunks SÍ entra** (ACKs), pero el readback de la zona
+   0x0800-0x17FF devuelve TODO 0x00 (fwverify): la zona no es legible por
+   MULTI_READ (o no pega — indistinguible desde fuera; MAC normal 0x1008 sí pega).
+5. **El kick FIRMWARE(8) sobre MCU VIVO MATA el chip de 2 formas**:
+   - Modo A (2×): el device DESAPARECE del bus y re-enumeración REAL (nueva addr,
+     019→020→022→023) pero vuelve SORDO (control pipe timeout, ni con port reset).
+   - Modo B (2×): el device NO re-enumera y queda sordo in-situ.
+   En ambos: solo power-cycle físico recupera. REPRODUCIBLE 4/4.
+6. **Radio sobre el MCU vivo del vendor SIN kick** (vendorradio): el chip
+   SOBREVIVE a toda la secuencia (WAKEUP, init_registers, BOOT_SIGNAL), pero el
+   BBP sigue leyendo 0x00 — mudo en TODOS los estados probados hasta la fecha.
+
+### CONCLUSIÓN (rev. 4 del bloqueo RX)
+- El «kick sordo» NO era un bug de nuestro protocolo USB: es que **reiniciar el
+  MCU cuando ya corre fw del vendor no tiene sentido** y el chip muere al
+  re-arrancar sin las condiciones del boot frío (Linux nunca lo hace: carga fw
+  solo desde probe con el chip recién enumerado, y Windows ya nos da el chip
+  «calentado» por el driver vendor).
+- El BBP mudo persiste incluso con MCU vivo + WAKEUP + init completo → la
+  hipótesis **efuse parcial (words 5-7 = 0x0000, RXPATH=0/TXPATH=0)** gana
+  fuerza: esta antena puede tener el BBP sin habilitar de fábrica o dañado.
+- Próximos pasos: (a) otra RT3070 distinta para comparar (la vía más barata);
+  (b) si se acepta el riesgo OTP: escribir efuse words 5-7 (RF_TYPE=RF3070=0x9,
+  RXPATH/TXPATH=1) vía EFUSE_CTRL MODE=1 — ALTO RIESGO, documentar antes;
+  (c) TX ya verificado (TXDONE success=true) — probar beacons al aire con
+  `rt3070_tx` aunque el RX esté mudo.
+- Lección de método: **leer el estado del MCU con MCU_CURRENT antes de decidir
+  si cargar firmware** (lo que hace mcutest). Nunca dar el kick sobre MCU vivo.
+
+### COMPARATIVA ANTENA VIEJA (…B5:F8) vs NUEVA (…D8:A7) — 2026-09-25, MISMA TARDE
+La antena nueva (identica, RT3070) llegó y se probó con la batería completa:
+- **efuse NUEVA**: mismo patrón que la vieja — word0=0x3070, MAC C0:00:59:CA:D8:A7
+  (vieja: …B5:F8), version 0x0101, **words 5-7 (NIC_CONF0/1, FREQ) = 0x0000**,
+  zona 0x10-0x2e = 0xffff, zona LNA/txpower con datos (0511, 00a6…), firma
+  0x6e-0x74 (c5ff a5b5 627a 3a50). **El efuse parcial NO es defecto de UNA
+  antena: así salen estas RT3070 de fábrica** (o ambas comparten el mismo
+  defecto de lote).
+- **BBP NUEVA**: mudo IGUAL que la vieja — write/readback no pega (bbp[1]=0x11
+  leído 0x00), rfcsr vivo (r0=0x42, r3=0x33, r7=0x60). MAILBOX arranca en
+  0xb555584f (OWNER=181) — distinto del estado tras vendor (0xf00f1587).
+- **Degradación en vivo**: durante mcutest el chip NUEVA dejó de responder a
+  mitad del test (0xffffffff en mailbox/PBF tras MCU_CURRENT #2) — se degrada
+  más rápido que la vieja. Solo power-cycle.
+- **Consecuencia**: el BBP mudo NO es avería de la antena vieja. O ambas están
+  tocadas igual, o (más probable) falta la pieza que despierta el BBP en el
+  boot frío — que solo ocurre en el boot real del chip (reset USB completo,
+  no power-cycle del puerto). La vía Kali/rt2800usb sigue siendo la única
+  probada para RX.
+- Prueba limpia pendiente tras power-cycle: mcutest + vendorradio en la NUEVA
+  con chip fresco (sin nada más antes), para descartar estado heredado raro.
+- **RESULTADO prueba limpia NUEVA (rev. final 2026-09-25)**:
+  · mcutest fresco: MCU_CURRENT ×3 CONSUMIDO ✅ (MCU vivo, igual que vieja)
+    pero STATUS=0x00ff0000 (vieja: 0xf00f1587) y **BOOT_SIGNAL timeout** —
+    primera diferencia real entre chips.
+  · vendorradio directo (sin mcutest antes): el chip **DESAPARECIÓ DEL BUS
+    POR COMPLETO** durante el init (ni phantom en PnP) — la NUEVA se degrada
+    más rápido y de forma más violenta que la vieja. No vuelve sola.
+  · **VEREDICTO COMPARATIVA**: la nueva NO despierta el BBP (mudo igual) y
+    además muere más fácil. El efuse parcial idéntico en ambas confirma que
+    **así salen estas RT3070 de fábrica** (efuse parcial = normal en este
+    hardware barato), no es avería de la vieja.
+- **CONCLUSIÓN FINAL DE LA VÍA USB CRUDO EN WINDOWS**: con WinUSB no podemos
+  reproducir el boot frío (el driver vendor siempre llega primero y deja un
+  estado del que no podemos partir para el BBP). El BBP mudo en DOS antenas
+  distintas + TX verificado (TXDONE success=true) deja el mapa: **TX posible,
+  RX bloqueada por hardware/boot, no por código**. La vía probada para RX
+  sigue siendo Kali/rt2800usb. Siguientes pasos razonables:
+  (a) cerrar la vía TX al aire (rt3070_tx + verificar beacons desde otra radio);
+  (b) Kali live USB para RX (rt2800usb nativo hace el boot frío completo);
+  (c) NO comprar más RT3070 para RX por WinUSB.
+
 ## HITO — TX REFINADO: TXWI/TXINFO REALES + FEEDBACK TX_STA_FIFO (2026-09-23, código verificado; pendiente prueba con hardware)
 Auditoría del TX del 2026-09-22 contra el driver Linux REAL (torvalds/linux 6.6:
 rt2800.h, rt2800usb.h/c, rt2800lib.c — descargados y grepeados, NO de memoria).
@@ -581,6 +840,61 @@ Power-cycle + re-diagnóstico sistemático. Binarios nuevos: `rt3070_bootdiag`
    EFUSE_CTRL MODE=1. ALTO RIESGO OTP-like: documentar y solo si se acepta
    perder la antena.
 3. Si no: aceptar límite RX de ESTA antena (TX sí, RX no) y antena B para RX.
+
+## SESIÓN «RX MISMA ANTENA» 2026-09-24/25 — HOT-REBIND + BUG USB_DEVICE_MODE
+
+### Hot-rebind netr28ux ↔ WinUSB SIN power-cycle (FUNCIONA)
+- `hot_rebind.ps1` + `run_hot_rebind.cmd` (auto-elevado): cambia el driver con
+  UpdateDriverForPlugAndPlayDevices (newdev.dll) SIN disable del device →
+  el chip NO se resetea y conserva el estado. MEDIDO: tras el cambio, el chip
+  conservaba EXACTAMENTE el estado del vendor (USB_DMA_CFG=0x00c12d80 = valor
+  del vendor, TX_PIN_CFG=0xf0347 PAs on, MAC_SYS_CTRL=0x20408 RX on).
+- Reversión a netr28ux: el INF está en
+  `C:\Windows\System32\DriverStore\FileRepository\netr28ux.inf_amd64_2613a90929adebda`
+  (el inbox C:\Windows\INF\netr28ux.inf sigue ocultado por rebind_winusb.ps1).
+  El script ya busca en el DriverStore. UAC pendiente de confirmar en pantalla
+  al ejecutar (run_hot_rebind.cmd auto-eleva).
+- **Estado conservado ≠ BBP vivo**: con el estado heredado del vendor, el BBP
+  siguió leyendo 0x00 y MCU_WAKEUP (0x31, tok 0xff, arg 0,2) se consumió sin
+  despertarlo → 0 frames. El vendor despierta el BBP por otra puerta.
+- Nuevo bin `rt3070_hotread`: abre sin reset/firmware, vuelca estado vivo
+  (MAC/BBP/RF/mailbox), opcional --wake (MCU_WAKEUP), --chan N (canal RF) y
+  lee EP 0x81 con el parser de scan. Con el BBP mudo: 0 frames (correcto).
+
+### BUG CRÍTICO ENCONTRADO: USB_DEVICE_MODE mal mandado desde el inicio
+Verificación fina de rt2x00usb.h/rt2800lib.c (2026-09-24, NO de memoria):
+- **El modo va en wValue, NO en wIndex**: vendor_request_sw(USB_DEVICE_MODE,
+  offset=0, value=MODE). Nosotros: value=0, index=mode → NUNCA llegó el modo.
+- **USB_MODE_FIRMWARE = 8, NO 2**: el enum real es RESET=1, UNPLUG=2,
+  FIRMWARE=8, AUTORUN=17. Nuestro «FIRMWARE=2» era UNPLUG.
+- Con el fix, el RESET correcto (wValue=1) esta vez SÍ pegó y dejó el CPU
+  parado esperando firmware (comportamiento REAL del reset, ya documentado
+  2026-09-22: «USB_DEVICE_MODE reset DEJA EL CHIP SORDO»). Antes el reset
+  no hacía nada porque iba mal mandado — por eso el chip «respondía siempre».
+- **El BBP lo habilita el firmware del MCU al arrancar** (rt2x00: «BBP was
+  enabled after firmware was loaded, but we need to reactivate it now»). Si
+  el MCU nunca arrancó (FIRMWARE=2=UNPLUG + wValue=0), el BBP nunca
+  despertó: bbp0=0x00 para siempre. ESTE es el candidato raíz del BBP mudo.
+- FIXES APLICADOS en common.rs (+bbpexp/bootdiag): USB_MODE_FIRMWARE=8,
+  USB_MODE_UNPLUG=2, y todas las write_control/read_control de DEVICE_MODE
+  con (wValue=mode, wIndex=0).
+
+### ESTADO ACTUAL (rev. 3, chip degradado tras el fix — pendiente power-cycle)
+- Tras aplicar el fix y ejecutar init: el reset correcto dejó el chip sordo
+  (control pipe timeout total, probe/diag/hotread no responden; PnP Status OK
+  en WinUSB oem395). Estado de degradación conocido; NO es daño nuevo.
+- **Siguiente paso inmediato**: power-cycle 15 s y al re-enumerar ejecutar:
+  1. `rt3070_probe` (verificar vivo)
+  2. init SIN reset inicial — firmware PRIMERO (Linux: probe no manda reset;
+     el reset va en init_registers DESPUÉS de cargar firmware). Secuencia a
+     probar: AUTORUN check → escribir fw → CID/STATUS=~0 → DEVICE_MODE
+     FIRMWARE(8) → wait CSR → BOOT_SIGNAL → enable_radio completo.
+  3. Si el MCU arranca de verdad (BOOT_SIGNAL consumido + PBF ready), el BBP
+     debería despertar → `rt3070_scan` para RX completo EN LA MISMA ANTENA.
+- Si el BBP despierta, revertir también los cambios de orden si hiciera
+  falta y correr scan/deauth/tx de usb_tx ya con RX real.
+- Archivos tocados esta ronda: common.rs (fixes), hotread.rs, bootdiag.rs,
+  bbpexp.rs (diag), hot_rebind.ps1, run_hot_rebind.cmd. Sin commitear.
 
 ## External tools required (lab machine)
 - Npcap (NPcap.dll driver)

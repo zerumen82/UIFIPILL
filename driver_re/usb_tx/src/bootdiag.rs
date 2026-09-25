@@ -36,7 +36,7 @@ fn main() {
 fn init_radio_verbose(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &str) -> Result<(), String> {
     let _ = reg_write(h, PBF_SYS_CTRL, reg_read(h, PBF_SYS_CTRL).unwrap_or(0) & !0x0000_2000);
     let _ = reg_write(h, MAC_SYS_CTRL, 0x3);
-    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_RESET, &[], REGISTER_TIMEOUT);
+    let _ = h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_RESET, 0, &[], REGISTER_TIMEOUT);
     std::thread::sleep(std::time::Duration::from_millis(100));
     let _ = reg_write(h, MAC_SYS_CTRL, 0x0);
     println!("  [1] reset MAC/BBP ok");
@@ -46,7 +46,7 @@ fn init_radio_verbose(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_pat
     println!("  [2] AUTOWAKEUP_CFG=0");
 
     let mut buf4 = [0u8; 4];
-    let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, 0, USB_MODE_AUTORUN, &mut buf4, FIRMWARE_TIMEOUT)
+    let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, USB_MODE_AUTORUN, 0, &mut buf4, FIRMWARE_TIMEOUT)
         .map(|_| u32::from_le_bytes(buf4) & 3 == 2)
         .unwrap_or(false);
     if autorun {
@@ -65,7 +65,7 @@ fn init_radio_verbose(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_pat
         println!("  [3] firmware {fw_ok}/64 chunks");
         reg_write(h, H2M_MAILBOX_CID, !0u32).map_err(|e| e.to_string())?;
         reg_write(h, H2M_MAILBOX_STATUS, !0u32).map_err(|e| e.to_string())?;
-        h.write_control(REQ_OUT, USB_DEVICE_MODE, 0, USB_MODE_FIRMWARE, &[], FIRMWARE_TIMEOUT)
+        h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_FIRMWARE, 0, &[], FIRMWARE_TIMEOUT)
             .map_err(|e| format!("DEVICE_MODE FIRMWARE: {e}"))?;
         println!("  [4] DEVICE_MODE FIRMWARE enviado; esperando MCU…");
         let mut mcu_up = false;
