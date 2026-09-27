@@ -1,5 +1,43 @@
 # RX_PLAN.md — Investigación RX por WinUSB (2026-09-25)
 
+## REV. 3 (2026-09-26) — REVERSING ESTÁTICO netr28ux CERRADO: todo era logging
+Herramientas nuevas en usb_tx/: `find_str_refs.py` (xrefs rip-rel a strings,
+mapeo rva=file-0x400+0x1000 CONFIRMADO — 41 xrefs reales) y `disasm_range.py`
+(objdump -b binary con VMA=0x140000000+rva).
+
+Resultados medidos:
+- Strings BBP localizados: PostBBPInitialization @file 0x1b0fd0,
+  AsicBbpTuning @0x1b50f0, BbpInit7601 @0x1baaf0, RTUSBBulkOutPktCmd @0x1b7790/0x1b77b0.
+- TODAS las xrefs desensambladas (PostBBPInitialization ×7 @rva 0x2a2d9-0x2ae00,
+  AsicBbpTuning ×11 @0x6468e-0x64f3b, BulkOutPktCmd/MLME/BulkReceive @0x1192b7-0x119cd0,
+  BbpInit7601 @0x1807ea) terminan en el MISMO patrón:
+  `lea r9,[string]; lea r8,[0x1401bd388]; mov edx,<linea>; call 0x14000b9e0/0x14000bb20/0x14000ba4c`
+  = wrapper de LOG/trace (WPP/DbgPrint). Los 0x41/0x42/0x43 de la rev. anterior
+  (@0x1400075ba-0x140007644) TAMBIÉN: edx=0x41/0x42/0x43 es el Nº DE LÍNEA del log,
+  NO un comando MCU. Cierre de la pista.
+- Búsqueda de immediatos de registros (0x11C BBP_CSR, 0x138 RF_CSR, 0x7010 mailbox,
+  0x404 HOST_CMD) en .text: solo falsos positivos (bytes de otras instrucciones).
+  El vendor NO accede a los CSR por imm32 visible — o los calcula, o va por la
+  ruta bulk con buffers opacos. Reversing estático AGOTADO sin símbolos.
+
+**CONCLUSIÓN REV. 3**: el formato del paquete de comando BBP por bulk pipe NO se
+puede extraer estáticamente del .sys (solo hay wrappers de log; el payload va en
+buffers construidos en runtime). ÚNICA vía restante para RX-WinUSB (como ya
+apuntaba la rev. 2): SNIFFER USBPcap del vendor en vivo. USBPcapSetup-1.5.4.0.exe
+ya está en usb_tx/ (NO instalado aún — requiere reinicio).
+
+## PROCEDIMIENTO SNIFFER (próxima sesión, si se decide intentar)
+1. Instalar USBPcap (instalador local) + REINICIO.
+2. restore_netr28ux.ps1 → antena con driver vendor.
+3. Capturar: `"C:\Program Files\USBPcap\USBPcapCmd.exe" \\.\USBPcap<N> -o vendor.pcap`
+   mientras netr28ux escanea (netsh en bucle) 30-60 s.
+4. Filtrar en Wireshark: EP bulk OUT del device 148f:3070 que NO sean datos de
+   beacon TX → comandos (look for small transfers, ~32-64 B, hacia EP 0x0d/0x05).
+5. Identificar el formato: los comandos BBP/RF del vendor tendrán patrón
+   [cmd][reg][val] repetido durante el init/scan. Replicar por WinUSB (rusb
+   bulk write al mismo EP) tras hot_rebind a WinUSB.
+6. Riesgo: el estado heredado se degrada — power-cycle antes de cada intento.
+
 ## ✅ E1 EJECUTADO (rev. 2) — H1 FALSADA, H2 abierta
 E1 completo (e1_run3.ps1): netr28ux tomó el control (pnputil add + delete oem395
 + rescan), netsh escaneando en bucle, delete netr28ux + rescan → WinUSB heredó
