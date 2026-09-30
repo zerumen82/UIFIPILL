@@ -5,7 +5,7 @@ crack con hashcat + WPS PIN/Pixie Dust + keygen de router. **Solo laboratorio** 
 propias o con autorización explícita).
 
 - Estado técnico y bitácora de decisiones: `AGENTS.md`
-- Motor dual WSL2/Kali (RF) con bloqueadores medidos: `ROADMAP_WSL2.md`
+- Motor dual WSL2/Kali (RF) con bloqueadores medidos: `memory.md` (§2)
 
 ## Requirements
 
@@ -93,7 +93,7 @@ Todo lo demás se revisó y es real: OIDs Npcap, captura wpcap.dll, parser .2200
 keygen con vectores de test, validadores anti-inyección en WSL y veredictos
 medidos (no simulados) de inyección/canal.
 
-Bloqueadores abiertos del motor dual (detalle y bitácora en `ROADMAP_WSL2.md`): RX muerta
+Bloqueadores abiertos del motor dual (detalle y bitácora en `memory.md` §2): RX muerta
 en Kali sobre usbipd, VM WSL2 reciclada por el host cada 5–60 min y VirtualHere `USE` →
 `API Timeout` con trial. Alternativas: licencia VH, cliente GUI bajo WSLg, depurar RX de
 usbipd o Kali bare-metal.

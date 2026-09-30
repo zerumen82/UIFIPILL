@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Locate BBP-related strings in netr28ux.sys .text and find code references.
 
-Mapping from AGENTS.md: file offset -> rva = file_off - 0x400 + 0x1000
+Mapping from memory.md §1 (bitácora 2026-09-25): file offset -> rva = file_off - 0x400 + 0x1000
 Image base for a PE32+ driver: 0x140000000 (typical for x64).
 We scan the whole file for disp32 little-endian values that match the
 VA of each string, then report the file offset of the referencing instruction.

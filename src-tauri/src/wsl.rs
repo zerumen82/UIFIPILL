@@ -1,4 +1,4 @@
-// Puente WSL2/Kali — motor RF dual (ver ROADMAP_WSL2.md Fase 5).
+// Puente WSL2/Kali — motor RF dual (ver memory.md §2, Fase 5).
 //
 // La UI sigue en Windows; la RF que Windows no puede (inyección, cambio de
 // canal, hcxdumptool…) se ejecuta en Kali-WSL2 con el RT3070 movido vía usbipd.

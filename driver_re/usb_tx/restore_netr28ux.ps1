@@ -1,6 +1,7 @@
 # restore_netr28ux.ps1 — Devuelve la antena a netr28ux (revierte rebind_winusb.ps1).
 # Ejecutar COMO ADMIN.
 $ErrorActionPreference = 'Continue'
+Start-Transcript -Path "$PSScriptRoot\restore_log.txt" -Force
 $dir  = $PSScriptRoot
 $inst = 'USB\VID_148F&PID_3070\1.0'
 

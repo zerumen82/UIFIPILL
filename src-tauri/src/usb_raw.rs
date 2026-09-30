@@ -283,7 +283,7 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
             r.message.clone()
         } else if networks.is_empty() {
             // 2026-09-23: 0 frames con chip vivo = BBP mudo (bloqueo conocido,
-            // ver AGENTS.md «TEST HARDWARE REAL 2026-09-23»). Mensaje honesto
+            // ver memory.md §1 «TEST HARDWARE REAL 2026-09-23»). Mensaje honesto
             // con las 2 causas medidas, no genérico.
             "Sin redes: chip vivo pero 0 frames recibidos. Causas medidas: (1) BBP mudo — power-cycle (desenchufa 15s) y reintenta; (2) si persiste, mira rt3070_bbpdiag (efuse/EEPROM) — init BBP+RFCSR completo ya portado en common.rs".into()
         } else {

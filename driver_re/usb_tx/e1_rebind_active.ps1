@@ -1,4 +1,4 @@
-# e1_rebind_active.ps1 — Experimento E1 del RX_PLAN.md
+# e1_rebind_active.ps1 — Experimento E1 (memory.md §4, rev. 2)
 # Requiere ADMIN. Fases:
 #   1. Republicar netr28ux (pnputil /add-driver del DriverStore repo)
 #   2. Rebind a netr28ux (la antena vuelve a ser WiFi normal)

@@ -1,11 +1,11 @@
-# sniff_vendor.ps1 - USBPcap capture of netr28ux command traffic (RX_PLAN.md rev.3).
+# sniff_vendor.ps1 - USBPcap capture of netr28ux command traffic (memory.md part 4 rev.3).
 #
 # Goal: RX-WinUSB is blocked because the vendor's BBP access does not go through
 # BBP_CSR_CFG (0x11C) visible to us. Static RE of netr28ux.sys is exhausted (all
 # string xrefs are log wrappers). The ONLY remaining path: sniff what the vendor
 # sends on its BULK command pipes during scan/init and replicate it via WinUSB.
 #
-# Steps automated here (see RX_PLAN.md rev.3 "PROCEDIMIENTO SNIFFER"):
+# Steps automated here (see memory.md part 4 rev.3 "PROCEDIMIENTO SNIFFER"):
 #   1. Check USBPcap is installed (USBPcapCmd.exe present). If not, print install
 #      hint (USBPcapSetup-1.5.4.0.exe + REBOOT) and exit.
 #   2. Check the antenna is on netr28ux (restore_netr28ux.ps1 if not).
@@ -83,7 +83,7 @@ Wait-Process -Id $p.Id -ErrorAction SilentlyContinue
 if (Test-Path $pcap) {
     $sz = (Get-Item $pcap).Length
     Write-Output "OK: $pcap ($sz bytes, $n netsh scans)."
-    Write-Output "Next (see RX_PLAN.md rev.3): open in Wireshark, filter bulk OUT of 148f:3070,"
+    Write-Output "Next (see memory.md part 4 rev.3): open in Wireshark, filter bulk OUT of 148f:3070,"
     Write-Output "small transfers 32-64 B to EP 0x05/0x0d = command packets [cmd][reg][val]..."
 } else {
     Write-Output "FAIL: no pcap written. Check USBPcap root enumeration."

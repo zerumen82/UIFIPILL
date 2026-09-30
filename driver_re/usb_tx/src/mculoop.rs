@@ -1,4 +1,4 @@
-// E2 del RX_PLAN.md: ciclo MCU_SLEEP → MCU_WAKEUP completo.
+// E2 (memory.md §4): ciclo MCU_SLEEP → MCU_WAKEUP completo.
 // H1: el vendor durmió el BBP al detach. Si el firmware requiere el ciclo
 // completo (SLEEP con sus args exactos y LUEGO WAKEUP) para re-armar el BBP,
 // esto lo despierta. No destructivo (peor caso: power-cycle).
