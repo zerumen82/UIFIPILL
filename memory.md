@@ -2291,5 +2291,19 @@ en Windows como Kali Linux».
   modificados (+2 778/−622) y ~35 untracked de las sesiones 10-01/10-05
   **sin commitear** (regla: no se commitea sin petición explícita) → anotado
   en spec/03.
+- **Commits EJECUTADOS hoy con aprobación del usuario («hazlo»)** — `git status`
+  **limpio** al cierre. 3 bloques:
+  · `64bb5d0` **docs**: AGENTS/README/memory coherentes + `spec/00..04` +
+    `.gitignore` (evidencias de runs de lab + backups locales).
+  · `d193a30` **feat(ui)**: héroe de flujo + wash/WPS visual + acceso directo
+    a la antena (index.html + app.js, +979/−126).
+  · `33b2b6b` **feat(usb_tx+backend)**: RX WinUSB rf3xxx + wash E2E + fix
+    `default-run` + saneado device + scripts de lab (40 ficheros,
+    +2 839/−413). Incluye `bbpmcu.rs`, `usb_sniff_stats.rs` y los .ps1 de
+    UAC (fix56/restore/run_bbpmcu/run_scan/switch_winusb…).
+  · **Basura borrada**: `1` (479 KB) y `yye` (697 KB, dump con SSID real) de
+    la raíz; logs de runs (`*_run*.txt`, `vendor_timeline.txt`,
+    `force_log2.txt`), `*.bak-arch` y `tools/*.nullbak` → `.gitignore`.
+  · **NO se hizo push** (sigue pendiente de petición explícita).
 - **Verificación**: `npm run lint` ✅ (`node -c src/app.js`). Solo toques de
   documentación (sin cambios de código).
