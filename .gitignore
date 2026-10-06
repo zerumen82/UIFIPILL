@@ -42,6 +42,13 @@ Thumbs.db
 # Fuentes de herramientas: solo se commitean parches/scripts necesarios.
 # Clones git anidados NO: su port Win vive como parche aplicable.
 tools/build/
+# Evidencia de runs de lab (resumen en memory.md; capturas ya cubiertas por *.pcap)
+driver_re/usb_tx/*_run*.txt
+driver_re/usb_tx/force_log2.txt
+driver_re/usb_tx/vendor_timeline.txt
+# Backups locales de INF/driver
+*.bak-arch
+tools/*.nullbak
 # Binarios y blobs descargados en tools/ (~500 MB, no commitear):
 tools/*.exe
 tools/*.dll

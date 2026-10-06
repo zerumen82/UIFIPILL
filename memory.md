@@ -7,7 +7,7 @@
 > Referencias `§N` = secciones de ESTE documento.
 
 ## ÍNDICE
-- §1 — Bitácora de sesiones (2026-09-13 → 2026-09-29, orden cronológico)
+- §1 — Bitácora de sesiones (2026-09-13 → 2026-10-05, orden cronológico; última entrada: 2026-10-06)
 - §2 — Roadmap motor dual WSL2/Kali (origen ROADMAP_WSL2.md)
 - §3 — Ingeniería inversa de netr28ux.sys (origen DRIVER_RE.md)
 - §4 — Investigación RX por WinUSB (origen RX_PLAN.md)
@@ -919,6 +919,414 @@ Windows sin Npcap, sin Kali, solo WinUSB.
   interfaces muestra la antena + (opcional) activate_monitor de la app.
 
 
+## SESIÓN 2026-09-30 — CAUSA RAÍZ DEL 56 ENCONTRADA: faltaba `C:\Windows\INF\netr28ux.inf` (0x80070002)
+
+Post-reboot con HVCI ya OFF (`SecurityServicesRunning={0}`, WlanSvc/nlasvc
+Running), el device seguía en ProblemCode 56 y `netsh` no veía interfaz.
+
+### Diagnóstico nuevo (la pieza que faltaba)
+- Clase `{4d36e972}\0006` del device: **`NetworkInterfaceInstallResult =
+  2147942402 = 0x80070002` (ERROR_FILE_NOT_FOUND)** y **sin `NetCfgInstanceId`**
+  → la instalación de la interfaz de red (NetSetup/INetCfg) fallaba por fichero
+  no encontrado → la class config nunca completaba → 56 permanente.
+- Causa: **`C:\Windows\INF\netr28ux.inf` estaba BORRADO** (solo quedaba el
+  `.PNF`; lo había eliminado `rebind_winusb.ps1` — §1 lo citaba como «oculto»,
+  en realidad ya no estaba). `InfPath` del driver key = `netr28ux.inf`.
+- `setupapi.dev.log` no mostraba NINGUNA sección «Install Device» tras los
+  rescan (solo Delete) — el instalador moría en la fase de clase antes de log.
+- Intentos intermedios medidos (NO bastaron): `fix_restart_dev.ps1`
+  (remove+rescan) → 56; `fix56_services_restart.ps1` (NetSetupSvc+NetMan up +
+  `/restart-device` + remove+rescan) → 56 (NetSetupSvc START_PENDING→Stopped
+  en 3 s).
+
+### FIX (fix56_inf_restore.ps1) — RESULTADO
+1. Restaurar `netr28ux.inf` + `netr28ux.PNF` desde
+   `DriverStore\FileRepository\netr28ux.inf_amd64_2613a90929adebda` → `C:\Windows\INF\`.
+2. Limpiar `ConfigFlags 0x80000` (FAILEDINSTALL) → 0 en la Enum key.
+3. `pnputil /remove-device` + `/scan-devices`, esperar 45 s.
+→ **Device Status=OK, problem=0**, `NetCfgInstanceId={FDA1B084-61E6-4AAA-8A25-56F2549735C8}`,
+`netsh` muestra «Wi-Fi — 802.11n USB Wireless LAN Card» (MAC 00:c0:ca:59:f8:b5,
+HW+SW radio activado) y **scan real: 10 redes visibles** (RF viva).
+
+### Estado del driver y del entorno tras el fix
+- `System32\netr28ux.sys` = sha256 `94734AEF…` = **copia INBOX del DriverStore
+  (5.1.22.0, 2007)** — el driver PARCHEADO (`d2c7cf43…`, canal en monitor §3) se
+  perdió en la cadena de fixes del 09-29. Hasta no redeployar, el canal en
+  monitor NO cambia (gate bit17 activo otra vez). testsigning sin verificar
+  (bcdedit exige admin).
+- usbipd: antena 1-6 `148f:3070` estado **Shared** (no estorba para Windows);
+  aviso conocido: filtro USBPcap incompatible con usbipd (bind --force si se usa).
+- Logs de esta sesión: `driver_re/usb_tx/fix_restart_dev_log.txt`,
+  `fix56_log.txt`, `fix56_inf_log.txt`.
+
+### Deploy del driver parcheado (misma sesión, tarde) — hecho, FALTA EL REBOOT
+1. `deploy_patched_hot.ps1` (wrapper nuevo): chequea testsigning → hot-swap vía
+   `hotswap_driver.ps1` (disable PnP → copia → enable, sin reinicio) → verificación.
+   Resultado: **`.sys` parcheado `d2c7cf43…` EN SITIO** ✅, pero **Problem 52
+   (CM_PROB_UNSIGNED_DRIVER, 0xC0000428)**: `bcdedit` reveals **testsigning estaba
+   OFF** (se perdió en algún punto de la crisis 09-28/29; el 09-21 estaba ON).
+   Sin testsigning el kernel rechaza la firma de lab → no carga → sin interfaz.
+2. **BUG de wrapper encontrado y corregido**: la condición era
+   `if ($tsLine -notmatch 'Yes|S[ií]')` — `-match` es case-insensitive y `S[ií]`
+   casaba con el **"si" de "testsigning"** → la rama siempre iba a "ON". Fix:
+   regex anclada `(?m)^testsigning\s+Yes`. (Anotado para no repetir: nunca usar
+   fragmentos cortos sin anclar contra la propia palabra que estás buscando.)
+3. `set_testsigning.ps1` (nuevo): `bcdedit /set testsigning on` → verificado
+   **`testsigning Yes`**, Secure Boot **False**, hash sigue `d2c7cf43…`.
+4. Preflight antes de pedir el reboot (todo OK): cert `labtest.cer` confiado en
+   LocalMachine Root + TrustedPublisher (thumb AB1C71D6…), HVCI
+   `Enabled=0` + `SecurityServicesRunning={0}`, Secure Boot off.
+   → **El próximo boot debe levantar el device con el parche cargado.**
+
+### Siguiente (orden) — tras el REBOOT pendiente
+1. Verificar: `bcdedit testsigning Yes` + device Status OK (problem 0) +
+   `netsh` ve la antena + hash `d2c7cf43…`.
+2. `cargo test --lib lab_monitor_cycle -- --ignored --nocapture` (monitor CH6 →
+   set CH1 → restore) = prueba del cambio de canal parcheado. Prueba RF dura
+   como el 09-21: `activate_monitor(guid, 1)` + `native_capture` y ver que solo
+   aparecen APs del CH1 (DS Parameter Set).
+3. Si el boot no levanta el parche (52 otra vez): revisar registro de arranque
+   (HVCI puede haber vuelto, CI policy) — rollback posible: copiar la copia
+   inbox `94734AEF` desde DriverStore con el mismo hot-swap (interfaz WiFi
+   recuperada aunque sin cambio de canal).
+4. Después: `hot_rebind.ps1 to-winusb` → power-cycle 15 s → TX crudo en la app
+   (paso A). RX Windows = Npcap pasiva; RX completa = Kali live USB.
+
+## SESIÓN 2026-10-01 — PROTOCOLO BBP vía MCU descifrado + BUG del parser RX (offline verificado)
+
+Origen: captura USBPcap `driver_re/usb_tx/vendor.pcap` (11.6 s, dev=3, 380 vendor
+requests, 111 bulk IN / 43 040 B) analizada con `usb_sniff_stats` (§1-§6).
+
+### Hallazgos MEDIDOS
+1. **El vendor NUNCA toca BBP_CSR_CFG (0x101C)**: las 19 ops BBP van por
+   H2M_BBP_AGENT (`0x7028` valor / `0x702A` flags) + H2M_MAILBOX_CSR (`0x7010`,
+   OWNER=1 `0x01000000`, TOKEN=0xff) + HOST_CMD_CSR (`0x0404`) = **MCU_BBP_SIGNAL
+   (0x80)**. Valores leídos reales: BBP1=0x40, BBP49=0x8a, RF3=0x32, RF6=0x02 →
+   **el BBP está VIVO bajo el vendor**. Word agente: VALUE[7:0] | REGNUM[15:8] |
+   flags<<16 (bit0=READ, bit1=BUSY, bit3=RW_MODE) → 0x0b/0x0a pendiente,
+   0x09/0x08 completado. Escrituras vistas: 62/63/64=0x37, 82=0x62, 75=0x46,
+   66=0x1c, 1=0x40.
+2. **BUG `MCU_CURRENT`**: estaba en `0x30` = **MCU_SLEEP** (rt2800.h:3005); el
+   real es **0x36** (rt2800.h:3008, rt2800lib.c:10709). Nuestro `init_radio`
+   mandaba un power-save al 8051 justo al acabar el init (candidato a RX muda).
+   `MCU_WAKEUP=0x31` y `MCU_BOOT_SIGNAL=0x72` sí eran correctos.
+3. **BUG del parser RX → falso negativo de "0 frames"**: layout real del EP 0x81
+   = `[4 B len][RXWI 16 B][802.11 en el byte 20]` con `n = len + 8` (**111/111
+   URBs**); el código asumía `[4 dma][32 rxwi]` → FC@36 → **0 frames contados
+   aunque el chip entregara datos**. BSSID además se leía de addr1 (DA = broadcast
+   FF:FF:…) en vez de addr3. RSSI sigue en RXWI_W2 bits 0-7 (offset 12).
+4. El vendor **no** hace kick `FIRMWARE(8)` ni re-enumeración en la ventana: solo
+   bReq 2 (SINGLE_WRITE, 16-bit sin payload ×258) / 3 / 6 (MULTI_WRITE) /
+   7 (MULTI_READ ×122). Comandos MCU vistos: 0x80, 0x50 (LED), 0x74 (FREQ_OFFSET),
+   0x30 (MCU_SLEEP). Re-init en t=3.489→4.192 s: US_CYC_CNT, PBF_CFG=0x00f40006
+   (idéntico al nuestro), BCN_TIME_CFG=0x640 (idéntico), MAC_SYS_CTRL, TX_RTS_CFG.
+5. RF por RF_CSR_CFG 0x0500 como dos SINGLE_WRITE con RMW — misma codificación
+   que nuestro `rfcsr_write` (los valores del vendor difieren de la tabla Linux).
+
+### Código
+- `common.rs`: `reg_write16` (SINGLE_WRITE), `MCU_BBP_SIGNAL=0x80`,
+  `MCU_CURRENT→0x36`, `agent_wait`/`mcu_bbp`, `bbp_read`/`bbp_write` **por MCU**
+  (la directa 0x101C queda como `bbp_read_direct`/`bbp_write_direct` para
+  diagnóstico), y **`walk_rx`/`parse_beacon`/`rx_monitor`** con el layout medido.
+- `usb_sniff_stats.rs`: §3b (resumen BBP vía MCU), §5b (layout/longitud/offset),
+  §5c (**validación OFFLINE del parser sobre la captura**).
+- Parser corregido (mismo layout) en: `scan.rs`, `sniff.rs`, `linuxfull.rs`,
+  `vendorradio.rs`, `coldrx.rs`, `heredrx.rs`, `hotread.rs`, `coldboot.rs`,
+  `fwfirst.rs`, `fwreenum.rs`.
+- Bin nuevo `rt3070_bbpmcu`: fase 1 sondeo (MCU 0x36 vs BBP directo), fase 2
+  radio **sin kick FIRMWARE(8)**, fase 3 RX con parser correcto + hex crudo.
+- Tests: 3 unitarios en `common.rs` (layout medido, garbage, constantes MCU).
+
+### Verificación (2026-10-01)
+`npm run lint` ✅ · `npx vite build` ✅ · `src-tauri cargo build --release` ×2 ✅
+(0 warnings) · `cargo test --release --lib` **23 passed / 0 failed / 8 ignored** ✅
+· `driver_re/usb_tx cargo build --release` ✅ (0 warnings) · `cargo test` 3/3 ✅.
+Offline sobre vendor.pcap: **111 frames / 84 beacons / 4 APs reales**
+(TP-Link_29D6 ch3, MIWIFI_APUM ch11, sagemcomDEF0_Plus ch11, Livebox6-34D0 ch11).
+
+### Pendiente (próxima acción — requiere UAC, la antena está en netr28ux)
+`fix_switch_winusb.ps1` → `rt3070_bbpmcu 20 11` → `restore_netr28ux.ps1`.
+
+### Cómo llegar a TX operativo (consolidado)
+
+## SESIÓN 2026-10-01 (cont.) — ?? HITO: RX POR USB CRUDO WINUSB CONFIRMADA (524 frames)
+
+Cierre del diagnóstico "RF sordo" (runs bbpmcu 5/6/7: ΔCCA=0 en 1..14 pese a
+BBP/PA/MAC programados; RFCSR8 devolvía siempre 0x42).
+
+### Causa raíz: path de canal equivocado (rf53xx vs rf3xxx)
+- Nuestro `config_channel_rt3070` portaba `rt2800_config_channel_rf53xx`
+  (N→RFCSR8, K→RFCSR9, R→RFCSR11.R) — ese path es para RF5370/Xtal20M.
+  **Este chip es path 3xxx** (Ralink `RT30xx_ChipSwitchChannel`,
+  chips/rt30xx.c:590 = Linux `rt2800_config_channel_rf3xxx`, rt2800lib.c:2466):
+  **N→RFCSR2, K→RFCSR3[3:0], R→RFCSR6[1:0]**.
+- Evidencia (3 vías): (a) vendor.pcap #184 escribe `RFCSR2=0xF6` (N canal 11);
+  (b) Ralink vendor: `RT30xxWriteRFRegister(RF_R02, FreqItems3020[].N)`;
+  (c) **RFCSR8 = ID de versión del RF** (0x42 fijo en 1..14 — ahí caía el N y
+  el PLL nunca sintonizó → ΔCCA=0). `FreqItems3020` = `rf_vals_3x` idéntica
+  a nuestra `RF_VALS_3X` ✅ (el destino, no la tabla, era el bug).
+- Correcciones añadidas en el mismo port: RFCSR1 streams 1T1R =
+  `(r1 & 0x01) | 0xA0 | 0x50` → **0xf1** (antes `|0x0f`=0xff y, con RMW de
+  bits1:0 heredado de runs viejos, 0xf3 = PLL_PD=1 — medido en run8);
+  RFCSR12/13 TX power 6/5 (campo 0x1f, RMW); RFCSR24/31 = calib BW20 medida
+  en init (`CALIB_BW20`, 0x07-0x09 según run; antes quedaban en estado BW40);
+  RFCSR7.RF_TUNING=1; **pulso VCOCAL RFCSR30 bit7 1 ms** (antes bit7 de
+  RFCSR3 = ese bit es bias PA2 CCK, registro equivocado); RFCSR23 sin tocar
+  (recorte de cristal del silicio).
+
+### Resultados MEDIDOS
+- **run8** (tras el port): ΔCCA>0 en **los 14 canales** (antes 0 en todos);
+  readback N por canal 0xf1…0xf8 ✅, K 0xb2/0xb7 alternando ✅, A/B RFCSR2
+  persiste (0xf6 a 10 ms y 100 ms) ✅; FASE3: 0 URBs pero RX_STA_CNT1 movió
+  (F-CCA=3461, CRC_ERR=106) → el MAC oye; faltaba entregar a USB.
+- **run9** (RFCSR1→0xf1 + RFCSR23 sondeado): **?? URBs=611, bytes=182992,
+  frames=524 en 15 s**, FC siempre offset 20, **3 APs con beacon real**:
+  MIWIFI_APUM (88:0F:A2:49:39:A4), sagemcomDEF0_Plus (CC:D8:43:9F:BC:61),
+  Livebox6-34D0 (E4:C0:E2:9C:34:D4) — todos ch11. FASE4: ΔCCA y ΔCRC>0 en
+  casi todos los canales (ch12: ΔCRC=113, ch13: 82, ch10: 68…).
+- Detalles run9: RFCSR23=0x00 (vendor escribe 0x09 — recorte pendiente, NO
+  bloqueante), RFCSR7=0x60 (bit0 se autolimpia tras el tuning), RFCSR8=0x23
+  (registro de estado, antes 0x42), calib BW20=0x07, RFCSR1=0xf1 ✅.
+
+### Impacto (docs)
+- **RX por USB crudo WinUSB REABIERTA** — las líneas "RX … CERRADA" de
+  memory §4/§5 y AGENTS.md §3 estaban basadas en "BBP mudo"; la raíz era
+  N→RFCSR8 + PLL_PD, no el boot ni el chip. Sniffer USBPcap ya no es la
+  única vía RX.
+- Código: `common.rs` (config reescrita, `CALIB_BW20`/`calib_bw20()`,
+  comentario RF_VALS_3X), `bbpmcu.rs` (fase4: regs 2/3/6/23, A/B RFCSR2,
+  readback por canal 2/3/6, imprime calib). Wrappers `run_bbpmcu8/9.ps1`
+  + logs `bbpmcu_run8/9.txt`.
+- Verificación: `cargo build --release` usb_tx ✅ 0 warnings (runs 8 y 9).
+
+### Continuación (2026-10-01, mismo día) — scan sostenido + RFCSR23 + init_radio seguro
+- **scan1** (`run_scan1.ps1`, 30 s, RFCSR23=0x00): **247 frames / 10 redes**
+  en 5 canales (1/3/6/11/13), parser FC@20, **sin kick FIRMWARE(8)**. Fixes
+  que lo habilitaron en `common.rs`:
+  1. **`init_radio` sin kick**: gate de MCU vivo (`MCU_CURRENT`) → si vivo se
+     salta el firmware (como Linux con autorun); si muerto → error accionable
+     (power-cycle físico). El bloque de carga+kick FIRMWARE(8) se eliminó.
+  2. **Sonda de transporte BBP** (`bbp_probe_transport`): el default
+     `BBP_VIA_MCU=true` daba timeout en `mcu_bbp` sin firmware (runs 8/9:
+     0/5) → `unwrap_or(0)` → "BBP no responde". La sonda (mismo criterio que
+     bbpmcu) conmuta a **directa `BBP_CSR_CFG`** (2/2) → init_bbp OK.
+- **scan2** (RFCSR23=**0x09** ya aplicado en `config_channel_rt3070`, valor
+  vendor de ESTA antena, bit7 preservado): **225 frames / 12 redes** (+2
+  nuevas: MOVISTAR_2B4A_EXT ch6, vodafone3048 ch1) — sin degradación →
+  r23=0x09 se queda.
+- Wrappers/logs nuevos: `run_scan1/2.ps1`, `scan_run1/2.txt`.
+
+### ~~Pendiente~~ CERRADO (2026-10-01)
+1. ~~RX sostenida/scanning~~ → scan1/scan2 arriba ✅ (integración UI abajo).
+2. ~~Recorte RFCSR23=0x09~~ → aplicado y comparado (scan2) ✅.
+3. ~~Actualizar AGENTS.md + memory §4/§5~~ → AGENTS.md en la sesión previa;
+   memory §4/§5 en esta misma edición ✅.
+4. ~~Integración en la app UI~~ → sesión siguiente (abajo).
+
+## SESIÓN 2026-10-01 (cont. 2) — INTEGRACIÓN UI USB-CRUDO E2E (scan + ataque)
+Decisión del usuario: **"sin límites"** (fallback automático), **auto-convertir**
+el handshake a `.22000`, deauth al aire lo prueba él tras el build.
+Hallazgo clave previo: **`rt3070_probe` abre el chip SIN admin** desde el shell
+no-admin → la app (asInvoker) puede usar WinUSB; elevación no hace falta.
+Bugs reales encontrados en el cableado ya existente (8 comandos `usb_raw_*`):
+1. **Ruta pcap `%TEMP%` literal** en `usb_raw_sniff` (`Command` no expande env)
+   → el bin no podía crear el fichero → fix con `std::env::temp_dir()`.
+2. **Sniff sin init previo**: `usbRawSniff` no hacía `usb_raw_init` → RX no
+   armado; además usaba `|| 11` en vez de `selectedChannel()` (regla 8) → fix.
+3. **Sniff exit 0 con 0 frames** (regla 2): `sniff.rs` ahora `exit(2)` +
+   backend marca `success=false` con mensaje accionable.
+4. **Seguridad inventada**: merge USB usaba `security: 'WPA2'` por defecto →
+   (mantenido: las redes netsh conservan su seguridad real; USB-only hereda).
+5. **`wpa3-bssid` huérfano** (input inexistente en index.html) → `wpa3Audit()`
+   y `fillWacker()` crasheaban al hacer click (regla 6) → input añadido.
+Cambios nuevos (visibilidad + ataque):
+- Botón **«📡 Escanear (USB crudo)»** en `tab-scan` (junto a «Escanear ahora»).
+- **Fallback automático**: `scanAndDisplay` → si netsh da error o 0 redes →
+  lanza `usbRawScan()` solo; idem en `scanAndAutoAttack`.
+- **Selección de red rellena el panel USB** (`usbraw-bssid/ssid/chan` en
+  `syncTargetEverywhere`) → canal heredado en todos los flujos USB.
+- **Handshake auto-convierte**: deauth+sniff → `pcap_to_22000` automático →
+  `.22000` prellenado en `crack-hash`+`insp-hash` (fallo honesto si 0 hashes).
+- Textos sin-kick: «Init radio (canal, sin kick)»; `usb_raw_init` ya no pasa
+  firmware (init_radio no lo usa).
+- Auditoría cableado (regla 6): **0 onclick sin definir, 0 invoke sin
+  registrar, 0 ids inexistentes** (script de regex sobre index/app/lib).
+Verificación: `node -c` ✅ · `npm run lint` ✅ · `vite build` ✅ ·
+`cargo build --release` src-tauri **0 warnings** ✅ · usb_tx 0 warnings +
+tests 3/3 ✅.
+**E2E real SIN admin (shell no-admin, chip en WinUSB)**:
+- `rt3070_scan 10s` → **11 redes con seguridad detectada** en el beacon
+  (10×WPA2 + HP-Print «Abierta o WEP» — nada inventado; parser nuevo RSN
+  tag48 → AKM SAE=8→WPA3, vendor 221 00:50:F2→WPA, sin IE→«Abierta o WEP»).
+- `rt3070_init 11` → «MCU vivo — sin kick» + transporte directo ✅.
+- `rt3070_sniff 10s` → **359 frames** y pcap real en `%TEMP%` ✅. La causa
+  del bajo recuento anterior (3 frames): sniff pisaba `USB_DMA_CFG` (AGG
+  perdido) — ya NO lo pisa (usa `rx_filter_monitor` como scan). Caso de 0
+  frames verificado también: **exit 2** + mensaje accionable (regla 2).
+Pendiente de usuario: prueba E2E en la app (scan→objetivo→handshake→crack) y
+deauth al aire con red de lab propia.
+
+## SESIÓN 2026-10-01 (cont. 3) — DRIVER RESTORE + WASH E2E + REAVER: mapa honesto
+**1. Restore del driver a netr28ux (mañana)**: `restore_run3.ps1` (secuencia
+fusionada en **un solo UAC**: INF+PNF desde DriverStore → ConfigFlags=0 →
+remove+rescan → borrar paquete WinUSB `oem180` → add netr28ux → 45 s → verify)
+→ **device Status=OK ProblemCode=0**, `netsh` ve 8-18 SSIDs (Wi-Fi, GUID
+`B2449CCC-38E7-4229-9658-A2EFB3C966B6`, MAC 00:c0:ca:59:f8:b5), módulo cargado
+`= D2C7CF43` (**parcheado**), hash idéntico al de System32. `lab_monitor_cycle`
+pasó no-admin. Lecciones: (a) `Start-Transcript` + `pnputil` elevado en PS 5.1
+**deadlock** → `Start-Process -RedirectStandardOutput` + watchdog; (b) si el
+proceso lanzador muere antes del clic del UAC, el click NO eleva nada (UAC
+huérfano) → relanzar; scripts con log a ruta absoluta (regla 5). Rollback:
+`rebind_winusb.ps1` (vuelta a WinUSB).
+**2. WPS/wash: cuatro causas raíz (todas medidas, todas fixeadas)**:
+(1) `tools/libpcap.dll` era build msys64 con backend **`pcap-null.c`** («live
+packet capture not supported» → `pcap_open_live` NULL → «couldn't get pcap
+handle») → **swap**: backup `libpcap.dll.nullbak` + copia de
+`C:\Windows\System32\Npcap\wpcap.dll` → `tools/libpcap.dll` + `Packet.dll`
+(wpcap importa Packet.dll del mismo dir); `Packet.dll` **añadido a
+`tauri.conf.json` resources** para el NSIS. (2) `wash -i \Device\NPF_{GUID}`
+(dlt=**1** ethernet) no parsea WPS; el correcto es **`\Device\NPF_WIFI_{GUID}`
+(dlt=127 radiotap)** — fix `normalize_wps_iface()` aplicado a los 8 comandos
+WPS (wlan0/vacío → detect_adapters + aviso). (3) El RT3070 añade FCS y wash
+descarta todo («bad FCS, skipping» → 0 filas) → flag **`-F`** en wash y en los
+8 args de reaver (reaver también lo soporta: `-F, --ignore-fcs`). (4) wash en
+survey **nunca termina** → `run_bin_bg_opts()` con watchdog (`timeout 30 s` con
+`-c`, `60 s` sin él), child registrado en AppState → «Cancelar» funciona.
+**3. Parser `parse_wash`** reescrito con salida REAL: `Lck` es `Yes/No` (no la
+palabra «locked»), vendor **truncado a 8 chars** («RalinkTe») → match por
+prefijo y solo si hay ESSID detrás, `(null)`→vacío, dedupe por BSSID (wash
+repite filas en updates). 3 tests unitarios con fixture de salida real.
+**4. Modo monitor — lección de réplica**: el set OID correcto usa **data de 8
+bytes con el modo ULONG en offset 4** (`activate_monitor` de `monitor_mode.rs`
+lo hace bien desde siempre); una réplica C# con data de 4 bytes devolvía
+«SET OK» pero era **no-op** (0 frames). Verificado con la forma correcta:
+**278 frames/8 s**. `WlanHelper mode` lee vía WLAN API y NO refleja el modo
+raw (siempre «managed») — no usar como veredicto.
+**5. E2E wash con los args finales del comando** (`-i NPF_WIFI_ -c 11 -F`,
+kill a 30 s) → **7 filas**: MIWIFI_APUM (WPS2.0 LOCKED), **sagemcomDEF0_Plus
+(WPS2.0, Lck=No — desbloqueado)**, Livebox6-34D0 (LOCKED, además una fila
+WPS1.0). `parse_wash` clava las 7.
+**6. REAVER — veredicto honesto**: binario dual OK (wash==reaver, argv[0]),
+cableado UI/commands OK, args ya correctos (-i/-b/-c/-vv/-L/-F), inj_warn
+dispara… pero **`pcap_sendpacket` en NPF_WIFI_ da `rc=-1, err 203`** → **la
+TX por Npcap sigue cerrada (Npcap #85)** → reaver/bully/aireplay **no pueden
+asociar en Windows nativo**. La ruta para E2E real de WPS sigue siendo
+**Kali live USB** (plan A cerrado 2026-09-25). En la app, reaver saldrá con el
+aviso honesto de inyección y `success=false` (regla 2, sin fakes).
+**7. Cierre**: managed restaurado (mismo set OID 8-byte con mode=4 → netsh
+18 SSIDs). Verificación: lint ✅ vite ✅ `cargo build --release` **0 warnings**
+✅ `cargo test --lib` **26 passed** (23+3 nuevos) / 8 ignored ✅ auditoría
+**0 invokes huérfanos / 0 onclick reales** (los 12 «doVh*/doMonitor…» son
+funciones inline de index.html) ✅.
+Pendiente: E2E del usuario en la app (scan→USB→handshake) + decisión: intento
+de reaver en Windows (solo contra AP propio) para ver el fallo honesto, o
+directamente Kali live USB para WPS real.
+
+## SESIÓN 2026-10-01 (cont. 4) - INTEGRACIÓN UI WPS/WASH VISUAL + AUDITORÍA COMPLETA
+
+Petición: «integrar todo en la UI de manera visual y revisar la UI ante posibles
+fallos/errores/incongruencias» → plan mostrado y aprobado, implementado íntegro.
+
+**Auditoría UI (app.js + index.html) — fallos hallados:**
+- F1: los resultados de wash solo iban a la consola (sin tabla ni selección).
+- F2: `autoAttackBtn` referenciado en app.js:1298/1330 pero **no existía** en
+  index.html (guard `if (btn)` → el texto del auto-ataque nunca se actualizaba).
+- F3: placeholder `NPF_{GUID} o nombre` enseñaba el bug ya vivido (lo correcto:
+  `\Device\NPF_WIFI_{GUID}`, dlt127) — fix en las 4 tarjetas WPS.
+- F4: la tarjeta WPS PIN no mostraba el objetivo (dependía del dropdown sin
+  indicador visual) — inconsistente con PBC/Pixie.
+- F5 (medio-alto): varios handlers fijaban `currentAttackId` ANTES del
+  busy-check de `invokeAttack` → si se lanzaba con ataque en curso, el
+  `attack-completed` real no hacía match y el **lock de UI quedaba pegado**
+  (los botones de la barra `scan-attack-bar` no están en `#tab-attack .atk-btn`).
+- F6: barra de progreso de wash congelada al 10% durante el survey (30-60 s).
+- F7: `doWashScan` sin busy-check (el resto lo tenía).
+- F8: sin panel de resultado WPS (PIN/PSK solo en consola).
+- Checks: 167 ids sin duplicados, 63 handlers todos definidos, 47 invokes con
+  handler. Antes: 1 id faltante (F2).
+
+**Implementación (index.html + src/app.js; commands.rs intacto):**
+- Tabla wash `#wash-results`/`#wash-tbody` con columnas BSSID/CH/WPS/Lck/ESSID
+  (solo `r.entries` reales; filas con `escAttr`, delegación de click) →
+  `selectWashTarget()`: fusiona el AP en `lastNets` si netsh no lo vio, marca
+  fila `selected`, `syncTargetList` + `selectNetwork` → objetivo sincronizado
+  en TODAS las tarjetas (canal incluido, regla 8).
+- `claimAttack(id)`: busy-check + set de `currentAttackId` atómicos; usado en
+  capturePmkid/handshake/airodump/wpsBrute/wash/pbc/pixie; `quickAttack` con
+  busy-check (antes limpiaba `_liveBuf` del ataque en curso); rama WSL de
+  `wpsBrute` ahora con lock (`setAttackRunning`) y cleanup de id.
+- Línea «Objetivo: SSID · BSSID · CH» en la tarjeta WPS PIN
+  (`#wps-target-txt`, actualizada en `syncTargetEverywhere` + `clearSelection`).
+- Panel `#wps-result`: parsea SOLO stdout real (`WPS PIN:`/`WPA PSK:` de reaver,
+  `Pin is`/`Key is` de bully) en `invokeAttack` para `wps_*` + rama WSL; sin
+  match → oculto (nunca un PIN inventado, regla 2).
+- `renderWashRows(null|[])` estado «Encuestando…»; ticker de progreso con
+  segundos (limpio en `finally`); `#autoAttackBtn` id añadido; placeholders WPS.
+
+**Hallazgo E2E CRÍTICO (medido esta sesión):** wash **solo ve frames en modo
+monitor**. Con el driver restaurado a managed (estado de cierre de la sesión
+cont. 3): canal OID SET `ok=True` pero wash **0 filas/32 s** en ch11 (3 APs WPS
+visibles para netsh). Tras `SET modo monitor + canal 11` (réplica exacta de
+`activate_monitor`): **27 filas** — sagemcomDEF0_Plus (Lck=No), MIWIFI_APUM +
+Livebox6-34D0 (LOCKED), MOVISTAR_2B4A_EXT, EPSON… Por eso el E2E de la mañana
+funcionó (corrió en monitor) y el de esta tarde no (managed). Fix en UI:
+`washModeHint()` — con 0 filas consulta `monitor_status` y si es `managed` pinta
+hint accionable («Activa modo monitor y repite») en la tabla + log. NOTA: la
+réplica PowerShell inicial falló por constantes decimales mal convertidas
+(BIOCSETOID=2205728 y OIDs 218170120/218170165 son los correctos; err=1 =
+constante incorrecta, NO rechazo del driver).
+
+**Verificación:** `npm run lint` ✅ · `npx vite build` ✅ · `cargo build
+--release` 0 warnings ✅ · `cargo test --lib` **26 passed**/8 ignored ✅ ·
+auditoría 0 huérfanos (ids/onclick/invokes) ✅ · wash E2E real 27 filas ✅ ·
+`UIFIPILL_1.0.0_x64-setup.exe` recompilado ✅ · radio **restaurada a managed**
+al cierre (set OID mode=4 ok) ✅. Scripts de prueba en
+`%TEMP%\opencode\set_mode.ps1` / `set_chan.ps1` (réplicas de los OIDs, fuera
+del repo).
+
+## SESIÓN 2026-10-01 (cont. 5) - INSTALADOR «SE ABRE Y SE CIERRA» — BINARIO PRINCIPAL
+
+Petición: «lo instalé, se abre y se cierra».
+
+**Diagnóstico (medido):** el NSIS instaló `send_assoc.exe` (224.768 B, la sonda
+TX de laboratorio de `src/bin/send_assoc.rs`,21/09) en `%LOCALAPPDATA%\UIFIPILL\`
+en vez de `uifipill.exe` (15,7 MB); el acceso directo lanzaba la sonda → sin
+args → `.expect()` panic → «se abre y se cierra». Raíz: el paquete tiene 2 bins
+y **`tauri-cli 2.11.2` con autobins y SIN `package.default-run` ni `[[bin]]`
+explícitos marcaba `main` de forma no determinista** → `get_binaries()` solo
+setea main si hay `default-run`, bins==1, o nombre==paquete en el array `bin`;
+sin ninguna de las3, el builder empaquetó `send_assoc` (`installer.nsi`:
+`MAINBINARYNAME "send_assoc"`). El installer del 18/08 funcionaba porque había
+un único bin.
+
+**Intento fallido nº1 (documentado):** añadir solo `"mainBinaryName":
+"uifipill"` a `tauri.conf.json` — **insuficiente**: esa clave solo ejecuta
+`rename_app()` (renombra el binario YA elegido), no cambia la selección. Medido:
+el build renombró `send_assoc.exe`→`uifipill.exe` (224.768 B) **pisando** el real
+(deps\uifipill.exe 15,69 MB intacto en `deps/`; patch warn `__TAURI_BUNDLE_TYPE
+variable not found` presente = binario sin crate `tauri`). El instalador resultante
+seguía roto.
+
+**Fix definitivo:** `src-tauri/Cargo.toml` → `default-run = "uifipill"` +
+`[[bin]]` explícitos (`uifipill`=src/main.rs, `send_assoc`=src/bin/…) →
+`get_binaries()` garantía el main por 3 vías independientes. Verificado:
+`MAINBINARYNAME "uifipill"` + `MAINBINARYSRCPATH`→uifipill.exe **15.692.288 B**,
+patch warn desaparecido (binario con crate tauri).
+
+**Reinstalación y prueba:** `/S` silencioso (installMode currentUser, sin UAC)
+→ instalado `uifipill.exe` 15.692.288 B; diff byte a byte vs fuente = **3 bytes**
+(el tag `__TAURI_BUNDLE_TYPE`: `NSS` en el instalado vs `UNK` en el fuente — el
+CLI lo re-parchea tras bundlear; instalado = etiqueta NSIS correcta). App
+lanzada: **viva, título `UIFIPILL`, responding** → «se abre y se cierra»
+RESUELTO. Nota: el NSIS instala también `send_assoc.exe` (224 KB) al lado
+(binario secundario del bundle) — inofensivo: nada lo lanza, los accesos
+directos apuntan a `uifipill.exe`; registro `MainBinaryName` limpio (los
+upgrades borran el bin viejo automática y una capa).
+
+**Verificación:** `npm run lint` ✅ · vite (dentro del build) ✅ · `cargo build
+--release` 0 warnings ✅ · `cargo test --lib` **26 passed**/8 ignored ✅ ·
+instalado arranca y persiste ✅.
+
 # PARTE 2 — ROADMAP MOTOR DUAL WSL2/KALI (origen: ROADMAP_WSL2.md)
 
 Objetivo: motor dual. UI Tauri en Windows + ejecución RF en Kali-WSL2 (mismo RT3070
@@ -932,11 +1340,14 @@ verificable; no se avanza sin marcarlo. Estado actual arriba del todo.
   `rt3070_tx`, deauth/beacon por WinUSB posible). El motor dual WSL2/VirtualHere
   queda como opción secundaria: usbipd sigue con RX muerta (3 mediciones:
   09-14/15/18), VirtualHere bloqueado por licencia (API Timeout).
-- RX por USB crudo WinUSB: **CERRADA** (BBP mudo en 2 antenas; ver memory.md
-  §4/§5). Única vía de investigación abierta: sniffer USBPcap del vendor.
-- Pendiente de infra: device netr28ux en ProblemCode 31/56 post-HVCI → ejecutar
-  `fix_restart_dev.ps1` en consola admin (bitácora §1 sesión 2026-09-29) y
-  reboot si hace falta. USBPcap 1.5.4.0 instalado (sniffer RX pendiente).
+- RX por USB crudo WinUSB: **CONFIRMADA 2026-10-01** (runs 8/9: 524 frames/15 s;
+  scan1/2: 247 y 225 frames/30 s, 10-12 redes). La raíz del "BBP mudo" era el
+  port del canal (rf53xx→RFCSR8 en vez de rf3xxx→RFCSR2) + RFCSR1 PLL_PD —
+  ver §4/§5. Sniffer USBPcap queda como cotejo histórico, no como única vía.
+- Pendiente de infra: ~~device netr28ux en ProblemCode 31/56 post-HVCI~~ →
+  **SANEADO 2026-09-30** (raíz: faltaba `C:\Windows\INF\netr28ux.inf`;
+  ver bitácora §1 sesión 2026-09-30). USBPcap 1.5.4.0 instalado (sniffer RX
+  pendiente).
 - Fases 0-6b del motor dual: completas en código (ver secciones históricas
   debajo); Fase 7 (cierre) pendiente de decisión RF — ya tomada arriba.
 - Detalle de las mediciones del puente: ESTADO ACTUAL histórico 2026-09-18.
@@ -1552,19 +1963,22 @@ consumen CPU; la interfaz queda re-asociada a la impresora — desconectar con
 # PARTE 4 — INVESTIGACIÓN RX POR WINUSB (origen: driver_re/usb_tx/RX_PLAN.md)
 
 > Orden cronológico de revisiones (rev. 1 → 4). Estados corregidos: H1 FALSADA,
-> E1/E2 EJECUTADOS, reversing estático AGOTADO, vía WinUSB-RX **CERRADA**.
-> Única vía abierta: sniffer USBPcap (§ PROCEDIMIENTO).
+> E1/E2 EJECUTADOS, reversing estático AGOTADO, vía WinUSB-RX **REABIERTA y
+> CONFIRMADA 2026-10-01** (raíz: port del canal rf53xx→rf3xxx + RFCSR1 PLL_PD,
+> NO el boot ni el chip). Detalle en §1 «SESIÓN 2026-10-01 (cont.)».
 
-## ESTADO FINAL (rev. 3-4)
-- **RX por USB crudo WinUSB: CERRADA** — conclusión definitiva del misterio BBP
-  (coldrx, 2026-09-25): el autoload de fábrica NO deja el BBP vivo; el solo boot
-  completo con firmware lo activa, y ese kick mata el USB (5/5). Detalle en §1
-  (bitácora, sesión «RX 2026-09-25 cierre definitivo»).
-- **Única vía abierta**: sniffer USBPcap del vendor → formato del comando bulk
-  (RTUSBBulkOutPktCmd) → replicar por WinUSB. Trabajo de reversing real.
-- **USBPcap 1.5.4.0 YA INSTALADO**: `C:\Program Files\USBPcap\USBPcapCmd.exe`
-  (verificado 2026-09-28; el instalador local USBPcapSetup-1.5.4.0.exe está en
-  usb_tx/). Requiere reboot solo si aún no se instaló en esta máquina.
+## ESTADO FINAL (rev. 3-4) — ACTUALIZADO 2026-10-01
+- **RX por USB crudo WinUSB: CONFIRMADA** — runs 8/9 (611 URBs / 524 frames /
+  3 APs en 15 s) + scan1/scan2 (247 y 225 frames/30 s, 10-12 redes en 5
+  canales), todo **sin kick FIRMWARE(8)**. La conclusión previa («coldrx: el
+  autoload NO deja el BBP vivo; solo el boot con firmware lo activa») estaba
+  en lo cierto sobre los FRAMES perdidos pero atribuía mal la causa: el BBP
+  respondía (bbp_dir[0]=0x60 en frío), el RF nunca sintonizaba porque el port
+  del canal apuntaba a RFCSR8 (path rf53xx) en vez de RFCSR2 (path 3xxx de
+  este chip), y RFCSR1 tenía PLL_PD=1. Detalle: §1 sesión 2026-10-01 (cont.).
+- **Sniffer USBPcap**: ya NO es la única vía — queda como herramienta de
+  cotejo contra el vendor (vendor.pcap sigue siendo la referencia de valores).
+  USBPcap 1.5.4.0 instalado en `C:\Program Files\USBPcap\` (2026-09-28).
 - TX al aire CONFIRMADO (hito 2026-09-25) — no depende de RX.
 
 ## REV. 3 (2026-09-26) — REVERSING ESTÁTICO netr28ux CERRADO: todo era logging
@@ -1591,6 +2005,9 @@ Resultados medidos:
 puede extraer estáticamente del .sys (solo hay wrappers de log; el payload va en
 buffers construidos en runtime). ÚNICA vía restante para RX-WinUSB: SNIFFER USBPcap
 del vendor en vivo (instalado, ver ESTADO FINAL).
+> **SUPERADO (2026-10-01)**: la vía WinUSB-RX se confirmó SIN replicar el bulk
+> del vendor — no hacía falta: la raíz era el port del canal (RFCSR8→RFCSR2) +
+> RFCSR1 PLL_PD. USBPcap queda solo de cotejo.
 
 ## REV. 2 (2026-09-25) — E1 y E2 EJECUTADOS
 
@@ -1649,12 +2066,20 @@ como explicación, no como plan: sin el formato del comando bulk no hay acceso.
   toma control) → escaneo netsh activo → delete netr28ux → rescan (WinUSB
   hereda con radio caliente).
 
-## Estado del problema
+## Estado del problema (act. 2026-10-01)
 - TX al aire CONFIRMADO (beacons "TXTEST" visibles desde otro device).
-- RX: 0 frames en todos los estados probados. BBP lee 0x00 siempre.
+- ~~RX: 0 frames en todos los estados probados. BBP lee 0x00 siempre.~~
+  **SUPERADO 2026-10-01**: 524 frames/15 s (run9) y scan 247 frames/30 s con
+  10 redes — la causa era el port del canal (rf53xx→RFCSR8 en vez de
+  rf3xxx→RFCSR2) + RFCSR1 PLL_PD=1, no el boot ni el chip (§1 «(cont.)»).
 - El port es fiel a Linux (verificado contra rt2x00usb.h/c, rt2800usb.c, rt2800lib.c 6.6).
+  **Corrección 2026-10-01**: la secuencia de CANAL estaba portada de la rama
+  rf53xx — path equivocado para este chip (RT30xx = rf3xxx). Ya corregido.
 - El kick FIRMWARE(8) mata el chip bajo WinUSB (reproducido en frío vía UNPLUG).
-- Autoload de fábrica NO deja el BBP vivo (coldrx: 0 frames en frío).
+- ~~Autoload de fábrica NO deja el BBP vivo (coldrx: 0 frames en frío).~~
+  **Corregido**: el BBP respondía (bbp_dir[0]=0x60 en frío); lo que faltaba era
+  sintonizar el RF y el PLL (path N→RFCSR2). El "0 frames" era RF desafinado,
+  no BBP muerto.
 
 ## Lo que NO volver a intentar (medido, cerrado)
 - Kick FIRMWARE(8) en cualquier estado → chip sordo (5/5: power-cycle ×4 + UNPLUG frío).
@@ -1664,41 +2089,65 @@ como explicación, no como plan: sin el formato del comando bulk no hay acceso.
 - Ciclo MCU SLEEP/WAKEUP para despertar BBP (E2).
 - Rebind con radio activa para heredar BBP vivo (E1) y heredrx (DMA solo).
 - Reversing estático del .sys para el formato de comando bulk (rev. 3: agotado).
+- ~~Vía WinUSB-RX solo por sniffer USBPcap~~ → SUPERADO: RX funciona directa
+  (2026-10-01); USBPcap queda como cotejo de valores contra el vendor.
 
-## Próxima sesión (orden)
-1. Sniffer USBPcap (PROCEDIMIENTO arriba) — única vía abierta para RX-WinUSB.
-2. En paralelo: integrar TX en la app (deauth/beacon por USB crudo ya es posible).
+## Próxima sesión (orden) (act. 2026-10-01)
+1. ~~Sniffer USBPcap como única vía para RX-WinUSB~~ → RX CONFIRMADA sin él
+   (runs 8/9 + scan1/2); USBPcap solo de cotejo.
+2. En paralelo: integrar TX y RX crudos en la app (deauth/beacon ya posible;
+   scan crudo funciona standalone — `rt3070_scan`).
 3. RX operativa HOY: Kali live USB (rt2800usb) — no depende de este plan.
+4. Nuevo: sostenido largo (scan+sniff continuo), efuse/EEPROM (tx power por
+   canal, LNA gain) y comparar RFCSR23=0x09 vs 0x00 en sensibilidad.
 
 
 # PARTE 5 — POR QUÉ NO FUNCIONA IGUAL EN WINDOWS (origen: driver_re/usb_tx/LINUX_EN_WINDOWS.md)
 
-> Doc para NO repetir la explicación cada sesión. Última revisión: 2026-09-29.
-> Todo lo marcado **MEDIDO** está verificado con hardware real, no es opinión.
+> Doc para NO repetir la explicación cada sesión. Última revisión: **2026-10-01**
+> (RX WinUSB CONFIRMADA — se corrigieron §2/§3/§4/§5). Todo lo marcado
+> **MEDIDO** está verificado con hardware real, no es opinión.
 
 ## 1. La pregunta
 
-«Si funciona en Linux debe funcionar en Windows.» — La respuesta corta:
-**el protocolo SÍ está portado bien; lo que no se puede replicar por WinUSB
-es la GESTIÓN del re-arranque del chip que hace el kernel Linux.**
+«Si funciona en Linux debe funcionar en Windows.» — La respuesta corta
+(actualizada 2026-10-01): **el protocolo estaba CASI portado bien: el port del
+CANAL usaba la rama rf53xx (N→RFCSR8) y este chip es rf3xxx (N→RFCSR2) —
+corregido 2026-10-01 y RX ya funciona sin ningún kick. Lo que SÍ no se puede
+replicar por WinUSB es la gestión del RE-ARRANQUE (kick FIRMWARE(8), mata el
+chip 5/5) — pero RX/TX ya no la necesitan.**
 
 ## 2. Qué está verificado (MEDIDO)
 
 - El port del protocolo es FIEL a Linux: verificado línea a línea contra
   rt2x00usb.h / rt2800usb.c / rt2800lib.c del kernel 6.6 (descargados, NO de
   memoria). Secuencia de boot, registros, mailbox H2M, EFUSE, init BBP/RFCSR:
-  todo coincide con rt2800lib.c.
+  todo coincide con rt2800lib.c. **Excepción corregida 2026-10-01**: la
+  secuencia de canal estaba portada de la rama rf53xx; la correcta para RT30xx
+  es rf3xxx (§ «por qué no funciona» abajo).
 - **TX por USB crudo FUNCIONA en Windows**: hito 2026-09-25 — beacons "TXTEST"
   visibles desde otra radio + TXDONE success=true en TX_STA_FIFO. Pipeline
   TXINFO+TXWI+802.11 → EP 0x01 → chip modula → sale al aire.
-- **RX por USB crudo NO funciona en Windows**: el BBP lee 0x00 en TODOS los
-  estados probados (2 antenas distintas, miles de intentos).
+- ~~**RX por USB crudo NO funciona en Windows**: el BBP lee 0x00 en TODOS los
+  estados probados (2 antenas distintas, miles de intentos).~~
+  **FALSADO 2026-10-01**: RX confirmada — run9 (611 URBs / 524 frames / 3 APs
+  en 15 s) y scan1/2 (247 y 225 frames/30 s, 10-12 redes, sin kick). La causa
+  era el port del canal (rf53xx→RFCSR8) + RFCSR1 PLL_PD=1; el BBP y el MCU
+  estaban vivos (MCU_CURRENT consumido, bbp_dir[0]=0x60 en frío).
 
-## 3. Por qué la diferencia (causa raíz)
+## 3. Por qué la diferencia (causa raíz) — CORREGIDA 2026-10-01
 
-El RT3070 necesita un **boot completo con carga de firmware** para despertar
-el BBP: el firmware del MCU (8051 interno) es quien habilita el BBP. Ese boot
-incluye un "kick" (DEVICE_MODE FIRMWARE=8) que RE-ARRANCA el MCU:
+**Corrección (2026-10-01)**: NO hace falta boot con firmware para RX. El BBP
+responde sin firmware (directo `BBP_CSR_CFG` vivo en frío; la vía MCU-BBP sí
+da timeout sin firmware — por eso la sonda `bbp_probe_transport` la elige) y
+los 0 frames se debían al **port del canal equivocado**: sintonizábamos por
+RFCSR8 (path rf53xx) en vez de RFCSR2 (path rf3xxx de RT30xx) y RFCSR1
+tenía PLL_PD=1 → el PLL nunca sintonizó → ΔCCA=0 en todos los canales.
+Corregido → 524 frames/15 s (run9) y scan 247 frames/30 s, SIN ningún kick.
+
+El kick (DEVICE_MODE FIRMWARE=8) sigue MEDIDO como destructor — se mantiene
+prohibido bajo WinUSB (el único motivo por el que Linux «lo hacía fácil»
+algunas veces era la re-enum gestionada por kernel):
 
 - **Linux (rt2800usb, driver kernel)**: cuando el MCU re-arranca, el device
   USB desaparece y re-enumerar. El KERNEL gestiona todo automáticamente:
@@ -1710,9 +2159,12 @@ incluye un "kick" (DEVICE_MODE FIRMWARE=8) que RE-ARRANCA el MCU:
   sordo. **MEDIDO 5/5**: kick tras power-cycle ×2 modos, kick en frío vía
   UNPLUG ×1, power-cycle ×2 más.
 
-Además, el autoload de fábrica del chip (tras power-cycle sin driver) NO
+~~Además, el autoload de fábrica del chip (tras power-cycle sin driver) NO
 deja el BBP inicializado ni accesible — solo el boot completo con firmware
-lo despierta, y solo el vendor (netr28ux) y Linux logran ese boot.
+lo despierta, y solo el vendor (netr28ux) y Linux logran ese boot.~~
+**FALSADO 2026-10-01**: el autoload SÍ deja MCU+BBP vivos (runs 8/9: MCU_CURRENT
+consumido sin cargar rt2870.bin, bbp_dir[0]=0x60); lo que faltaba era la
+secuencia de canal rf3xxx + RFCSR1 sin PLL_PD — con eso, RX al aire sin firmware.
 
 ## 4. El vendor SÍ lo logra en Windows — la vía abierta
 
@@ -1722,11 +2174,11 @@ reales). Lo hace hablando por un **pipe bulk de comandos** dedicado
 confirmó: vendor requests por BULK OUT, wrapper @0xade0, nombres de funciones
 en .text.
 
-**La única vía abierta para RX-WinUSB** (anotada en §1, sesión
-2026-09-25): sniffer USBPcap (instalado, v1.5.4.0) capturando TODO lo que
-netr28ux manda al hacer scan/radio-on → analizar el formato del paquete de
-comando bulk → replicarlo por WinUSB → boot completo desde Windows → RX
-como Linux. Es trabajo de reversing real, no descartado.
+**~~La única vía abierta para RX-WinUSB~~ SUPERADA 2026-10-01**: RX funciona
+directa por control pipe + EP 0x81 bulk IN (path rf3xxx + RFCSR1 fix, §1 sesión
+2026-10-01 (cont.)) — no hizo falta replicar el bulk del vendor. El sniffer
+USBPcap (v1.5.4.0, instalado) queda como herramienta de COTEJO de valores
+contra el vendor (vendor.pcap), no como plan crítico.
 
 ## 5. Mapa funcional honesto (esta antena, RT3070)
 
@@ -1736,19 +2188,21 @@ como Linux. Es trabajo de reversing real, no descartado.
 | Monitor mode | ✅ (filtro por software) | ✅ (OID, canal fijado por parche) | ✅ completo |
 | TX beacons | ✅ **confirmado al aire** | ❌ (Npcap #85, err 31) | ✅ |
 | Deauth | ✅ (TX al aire) | ❌ (Npcap #85) | ✅ |
-| RX / captura | ❌ **BBP mudo, vía cerrada** | ✅ pasiva (sin inyectar) | ✅ completa |
-| Cambio de canal | ✅ (config_channel portado) | ✅ (driver parcheado 2026-09-21; el stock sí rechazaba, 3 vías OID) | ✅ |
-| PMKID / handshake | ❌ (necesita RX) | parcial (RX pasiva) | ✅ hcxdumptool |
+| RX / captura | ✅ **cruda: 524 frames/15 s, scan 247/30 s (2026-10-01)** | ✅ pasiva (sin inyectar) | ✅ completa |
+| Cambio de canal | ✅ (config_channel portado rf3xxx) | ✅ (driver parcheado 2026-09-21; el stock sí rechazaba, 3 vías OID) | ✅ |
+| PMKID / handshake | ✅ RX cruda lista (sniff.rs; pipeline conversor en desarrollo) | parcial (RX pasiva) | ✅ hcxdumptool |
 
 ## 6. Vías para "Linux en Windows" (orden práctico)
 
 1. **Kali live USB** — RX completa HOY con esta antena (rt2800usb hace el
    boot frío en kernel). La app genera el «Kit Kali para este objetivo» con
    los comandos listos. Es la vía probada.
-2. **USBPcap → replicar bulk commands del vendor** — la vía de investigación
-   abierta para RX-WinUSB nativo (ver §4). Requiere device con netr28ux sano.
-3. **Windows + TX crudo** — ya operativo: beacons/deauth al aire. Combinado
-   con RX por Kali cubre el pipeline completo hoy.
+2. ~~**USBPcap → replicar bulk commands del vendor** — la vía de investigación
+   abierta para RX-WinUSB nativo (ver §4). Requiere device con netr28ux sano.~~
+   SUPERADA 2026-10-01: RX-WinUSB nativa confirmada sin replicar el bulk
+   (path rf3xxx + RFCSR1 fix); USBPcap queda de cotejo.
+3. **Windows + TX crudo** — ya operativo: beacons/deauth al aire. Con RX cruda
+   nativa (2026-10-01) el pipeline completo cabe HOY en Windows.
 
 ## 7. Vías CERRADAS (no reintentar, todo medido)
 
@@ -1756,31 +2210,86 @@ como Linux. Es trabajo de reversing real, no descartado.
 - Re-enum tras kick con reapertura simple (device sordo).
 - Confiar en MAC_CSR0 como señal de firmware (es el ASIC ID, siempre vivo).
 - Ciclo MCU SLEEP→WAKEUP para despertar BBP (E2 descartado).
-- Acceso BBP por 0x11C vendor request (el firmware atiende otra puerta).
-- RX heredando estado del vendor (heredrx: 0 frames, el DMA no basta).
+- Acceso BBP solo por la vía MCU (`MCU_BBP_SIGNAL`) sin firmware → timeout
+  (medido 0/5). La vía **directa** `BBP_CSR_CFG` SÍ funciona — la elige
+  `bbp_probe_transport()` (2026-10-01); con el default MCU, `init_bbp`
+  fallaba en "BBP no responde".
+- RX heredando estado del vendor (heredrx: 0 frames — DMA+filtro solo, sin
+  config de canal rf3xxx; ya sabemos que esa config es lo que faltaba).
 - Npcap inyección en Windows (Npcap #85, err 31 — capa independiente).
 - usbipd→WSL2/Kali (RX muerta por el transporte, 0 pkts, 3 mediciones).
 - VirtualHere (licencia de pago, API Timeout).
-- Comprar más RT3070 para RX por WinUSB (el BBP mudo es del boot, no del chip).
+- ~~Comprar más RT3070 para RX por WinUSB (el BBP mudo es del boot, no del
+  chip)~~ → **la premisa era falsa**: RX funciona en Windows (2026-10-01);
+  el "BBP mudo" era el port del canal (rf53xx) + RFCSR1 PLL_PD.
 
-## 8. Estado del device (2026-09-29, tras el reinicio) y cómo llegar a TX operativo
+## 8. Estado del device (2026-09-30, RESUELTO) y cómo llegar a TX operativo
 
-El reinicio del 2026-09-29 aplicó `fix_hvci_off.ps1`: **HVCI DESACTIVADO
-confirmado** (SecurityServicesRunning={0}); Code Integrity ya no rechaza el
-netr28ux. PERO ese boot arrancó AÚN CON HVCI activo y el kernel colgó el
-post-install → device en ProblemCode 31 (FAILED_ADD) / 56 con ConfigFlags
-0x80000. Cadena de fixes ejecutada (fix_dev56/b/c, fix_netr28_min, fix_netsetup —
-detalle y logs en la bitácora §1 sesión 2026-09-29): servicio recreado, WlanSvc/
-nlasvc arrancados. El rebind a WinUSB falla con device no sano (err 2/259).
+~~PENDIENTE: ejecutar `fix_restart_dev.ps1` … reboot~~ → **RESUELTO
+2026-09-30** (ver §1 sesión 2026-09-30): la causa era `C:\Windows\INF\netr28ux.inf`
+borrado → `NetworkInterfaceInstallResult 0x80070002` → class config colgada
+(Code 56). Fix: restaurar INF+PNF desde DriverStore + `ConfigFlags 0x80000`→0 +
+remove+rescan → device Status OK, netsh ve la antena, scan real (10 redes).
+**Ojo**: corre el driver INBOX 5.1.22.0 (94734AEF) — el parcheado (d2c7cf43,
+canal en monitor) hay que redeployarlo.
 
-**PENDIENTE**: ejecutar `fix_restart_dev.ps1` en consola admin manual; si sigue
-en 56 con el stack WLAN sano → REINICIAR (próboot con CI ya sin HVCI + stack
-reparado debe levantar el device limpio). Verificación final: device Status OK +
-`netsh wlan show interfaces` muestra la antena.
-
-Una vez device OK:
+Una vez device OK (YA OK desde 2026-09-30):
 1. `hot_rebind.ps1 to-winusb` (consola admin) → WinUSB
 2. Power-cycle 15 s
 3. App → tab Ataque → paso A: Estado chip → Init → TX beacons → TX al aire
 
 Para RX: Kali live USB (vía 1) o el proyecto USBPcap (vía 2).
+
+## SESIÓN 2026-10-05 — UI ATAQUE: FLUJO ÚNICO VISUAL POR RED (sin jerga)
+Petición: tab Ataque no usable (mucho oculto/confuso) + el acceso directo a la
+antena debe ser LA forma de trabajar (sin llamarlo "USB crudo") + WPS y camino
+por defecto según la red elegida.
+- Héroe `#flow-hero` (index.html, tras los chips): título + descripción +
+  3 luces (Objetivo/Antena/Perfil) + botones primarios por veredicto
+  (`renderHero()` en app.js) + `#flow-result` único. Sin jerga: "Acceso directo
+  a la antena — recomendado" (detalle WinUSB solo en plegable); "Escanear
+  (directo)" en el tab Escanear.
+- Defaults por `profile_target`: open→conectar; wep→Kit Kali; wpa_legacy/
+  transition→handshake directo; wpa3_sae→wash primero (¿WPS abierto?→PIN);
+  enterprise→Kali/lab; wpa2_psk→keygen→handshake→crack+wash en paralelo;
+  unknown→reescanear. Wash integrado: `Lck=No`→PIN vía principal; PIN/PBC/Pixie
+  nativos colapsados (sin TX en Windows, Npcap #85 medido).
+- Estado: `window._usbAlive` (status/scan/init), checklist en héroe, `flowResult()`
+  refleja último resultado USB/wash/WPS; `renderHero()` en perfil/objetivo/showTab.
+- Verificación: lint ✅ vite ✅ (122.97 kB + 79.29 kB) · auditoría 0 huérfanos
+  (64 onclick, 58 invokes, 198 ids) ✅ · `cargo test --lib` 26/8 ✅ (Rust intacto).
+
+## SESIÓN 2026-10-06 — PUESTA EN ORDEN: docs coherentes + spec/ SDD + épica E0
+Petición: «quiero que pongas todo en orden; estábamos haciendo que funcionase
+en Windows como Kali Linux».
+- **Revisión integral de docs** (AGENTS.md / memory.md / README.md + git +
+  lint). Hallazgos corregidos:
+  · AGENTS.md: cabecera «revisión 2026-09-29» desactualizada → 2026-10-06;
+    «Límites hardware» decía *WinUSB RX NO (BBP lee 0x00)* contradiciendo el
+    hito RX CONFIRMADA 2026-10-01 → corregido; tests 23/5-7 → **26 passed /
+    8 ignored**; app «rev. 2026-09-18» → reinstalada 2026-10-01 (15,7 MB);
+    hito 09-25 «RX cerrada» marcado como superado el 10-01; Estado actual
+    ampliado con la sesión 10-05 (antes no constaba); Documentación + spec/.
+  · README.md: mapa «qué corre dónde» con fecha 2026-09-17 → **2026-10-06**
+    (canal con driver parcheado ✅, RX/TX USB crudo ✅, wash E2E ✅, inyección
+    Npcap ❌ err 31/203 Npcap #85, recetas Kali → Kali live USB); sección de
+    límites reescrita (incluye regla FIRMWARE(8) y restore_netr28ux);
+    referencia fantasma `tools/build/BUILD.md` eliminada (el build de reaver
+    se borró del repo); enlaces a docs repartidos entre AGENTS/memory/spec.
+  · memory.md: índice §1 actualizado a 2026-10-05 + esta entrada.
+- **`spec/` creado** (metodología SDD del AGENTS global, hasta ahora ausente):
+  `00-PRINCIPIOS.md` (5 reglas innegociables + Definición de Listo de 7
+  puntos), `01-ARQUITECTURA.md` (Tauri v2, contratos camelCase, módulos,
+  estados de la radio), `02-REQUISITOS.md` (**épica E0 «Windows ≡ Kali»** con
+  15 historias E0-01…E0-15 y criterios medibles; E0-01…E0-10 retrodocumentados
+  con su evidencia; E0-11 sniff sostenido, E0-12 PMKID/handshake por RX cruda,
+  E0-13 WPS sin Npcap, E0-14 efuse, E0-15 Fase 7 = abiertos), `03-PENDIENTES.md`
+  (deudas: trabajo 10-01/10-05 sin commitear, ficheros basura `1`/`yye` en la
+  raíz, Fase 7), `04-EJERCITO.md` (roles + flujo coordinator→editor→reviewer→
+  tester).
+- **Estado git leído**: último commit `a5fea89` (2026-09-30); 23 ficheros
+  modificados (+2 778/−622) y ~35 untracked de las sesiones 10-01/10-05
+  **sin commitear** (regla: no se commitea sin petición explícita) → anotado
+  en spec/03.
+- **Verificación**: `npm run lint` ✅ (`node -c src/app.js`). Solo toques de
+  documentación (sin cambios de código).
