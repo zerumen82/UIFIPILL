@@ -2304,6 +2304,7 @@ en Windows como Kali Linux».
   · **Basura borrada**: `1` (479 KB) y `yye` (697 KB, dump con SSID real) de
     la raíz; logs de runs (`*_run*.txt`, `vendor_timeline.txt`,
     `force_log2.txt`), `*.bak-arch` y `tools/*.nullbak` → `.gitignore`.
-  · **NO se hizo push** (sigue pendiente de petición explícita).
+  · **Push HECHO 2026-10-06** (aprobación «pushea»): `a5fea89..a1b5ba3
+    master -> origin/master`, `git status` en sincronía.
 - **Verificación**: `npm run lint` ✅ (`node -c src/app.js`). Solo toques de
   documentación (sin cambios de código).

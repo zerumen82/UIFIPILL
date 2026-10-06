@@ -7,7 +7,7 @@
 
 | # | Deuda | Riesgo | Siguiente paso |
 |---|---|---|---|
-| ~~D-01~~ | ~~23 ficheros modificados + ~35 untracked SIN COMMITEAR~~ | ~~pérdida de ~1 semana~~ | **CERRADA 2026-10-06** con aprobación del usuario: commits `64bb5d0` (docs+spec), `d193a30` (ui), `33b2b6b` (usb_tx+backend); `git status` limpio. Push aún pendiente de petición explícita. |
+| ~~D-01~~ | ~~23 ficheros modificados + ~35 untracked SIN COMMITEAR~~ | ~~pérdida de ~1 semana~~ | **CERRADA 2026-10-06** con aprobación del usuario: commits `64bb5d0` (docs+spec), `d193a30` (ui), `33b2b6b` (usb_tx+backend); `git status` limpio; **push hecho** `a5fea89..a1b5ba3`. |
 | ~~D-02~~ | ~~Basura `1` (479 KB) y `yye` (697 KB) en la raíz~~ | ~~suciedad + datos de captura~~ | **CERRADA 2026-10-06**: borrados; logs de run y backups → `.gitignore` |
 | D-03 | E0-11/E0-12 (sniff sostenido + PMKID/handshake por RX cruda) sin implementar | El pipeline Windows≡Kali no cierra captura→crack sin Npcap | Historia siguiente de la épica E0 |
 | D-04 | E0-13 WPS: reaver/bully no asocian en Windows (Npcap #85, err 203 medido) | WPS PIN real solo en Kali live USB | Decisión de usuario: documentar vía Kali en la app vs investigar TX cruda propia |
@@ -25,7 +25,7 @@
 - **Entorno**: shell NO admin (UAC) — scripts con log a ruta absoluta;
   `Start-Transcript`+pnputil = deadlock en PS 5.1.
 - **Repo**: «no commit sin petición explícita» — D-01 cerrada 2026-10-06
-  (3 commits aprobados); **push pendiente** de petición explícita.
+  (3 commits aprobados + push `a5fea89..a1b5ba3`).
 
 ## Cerradas (histórico reciente)
 

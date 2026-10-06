@@ -30,7 +30,7 @@
 | ID | Historia | CA | Estado |
 |---|---|---|---|
 | M-01 | Puesta en orden de docs + spec/ | Docs sin contradicciones; `spec/00..04` existen; sesión 2026-10-06 en memory | ✅ 2026-10-06 |
-| M-02 | Trabajo 10-01/10-05 commiteado | `git status` limpio (o solo ignorados) tras aprobación explícita del usuario | ✅ 2026-10-06 (`64bb5d0`, `d193a30`, `33b2b6b`; push pendiente) |
+| M-02 | Trabajo 10-01/10-05 commiteado | `git status` limpio (o solo ignorados) tras aprobación explícita del usuario | ✅ 2026-10-06 (`64bb5d0`, `d193a30`, `33b2b6b`, push `a1b5ba3`) |
 | M-03 | Basura de raíz eliminada | `1` y `yye` fuera del repo (eran dumps de captura, ~1,2 MB) | ✅ 2026-10-06 (borrados; logs → `.gitignore`) |
 | M-04 | Verificación completa post-docs | lint + vite + cargo build 0 warnings + cargo test 26/8 | ⬜ (hoy solo lint; docs no tocan código) |
 
