@@ -4,6 +4,17 @@ version = "1.0.0"
 description = "UIFIPILL - WiFi suite desktop for Windows"
 edition = "2021"
 rust-version = "1.77.2"
+# El paquete tiene 2 bins (uifipill + src/bin/send_assoc): sin default-run el
+# tauri-cli marcaba main no determinista y empaquetaba send_assoc (bug 2026-10-01).
+default-run = "uifipill"
+
+[[bin]]
+name = "uifipill"
+path = "src/main.rs"
+
+[[bin]]
+name = "send_assoc"
+path = "src/bin/send_assoc.rs"
 
 [lib]
 name = "uifipill_lib"

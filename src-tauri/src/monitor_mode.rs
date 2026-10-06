@@ -538,7 +538,108 @@ mod lab_tests {
     //! - `lab_detect_and_status`: solo lectura, corre en CI (no exige HW).
     //! - `lab_monitor_cycle`: IGNORADO por defecto; cambia el modo de la radio.
     //!   Ejecutar con HW: `cargo test --lib lab_monitor_cycle -- --ignored --nocapture`
+    //! - `lab_channel_rf`: IGNORADO; prueba RF dura del cambio de canal
+    //!   (captura + IE DS Parameter Set). `cargo test --lib lab_channel_rf -- --ignored --nocapture`
     use super::*;
+
+    /// Histograma de beacons por canal leído de un .pcap Npcap (DLT 105/127).
+    /// Devuelve (canal→nº beacons, total de beacons). Canal 0 = beacon sin IE DS.
+    fn beacon_channels(pcap: &str) -> (std::collections::BTreeMap<u8, usize>, usize) {
+        let mut hist = std::collections::BTreeMap::new();
+        let mut total = 0usize;
+        let buf = match std::fs::read(pcap) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("LEER PCAP fallo: {} ({})", pcap, e);
+                return (hist, total);
+            }
+        };
+        if buf.len() < 24 {
+            return (hist, total);
+        }
+        let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let swap = match magic {
+            0xa1b2c3d4 | 0xa1b23c4d => false,
+            0xd4c3b2a1 | 0x4d3cb2a1 => true,
+            _ => {
+                println!("PCAP magic desconocida: {:#010x}", magic);
+                return (hist, total);
+            }
+        };
+        let rd = |b: &[u8], o: usize| -> u32 {
+            if o + 4 > b.len() {
+                return 0;
+            }
+            let v = u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            if swap {
+                v.swap_bytes()
+            } else {
+                v
+            }
+        };
+        let linktype = rd(&buf, 20);
+        let mut off = 24usize;
+        while off + 16 <= buf.len() {
+            let incl = rd(&buf, off + 8) as usize;
+            off += 16;
+            if incl == 0 || off + incl > buf.len() {
+                break;
+            }
+            let pkt = &buf[off..off + incl];
+            off += incl;
+            let frame: &[u8] = match linktype {
+                127 => {
+                    // Radiotap: longitud del header en sus bytes 2..4 (LE)
+                    if pkt.len() < 4 {
+                        continue;
+                    }
+                    let rl = u16::from_le_bytes([pkt[2], pkt[3]]) as usize;
+                    if rl < 8 || rl > pkt.len() {
+                        continue;
+                    }
+                    &pkt[rl..]
+                }
+                105 => pkt,
+                _ => continue, // DLT 1 = Ethernet emulado (no monitor)
+            };
+            if frame.len() < 36 {
+                continue;
+            }
+            let fc = u16::from_le_bytes([frame[0], frame[1]]);
+            let ftype = ((fc >> 2) & 0x3) as u8;
+            let stype = ((fc >> 4) & 0xF) as u8;
+            if ftype != 0 || stype != 8 {
+                continue; // solo beacons (mgmt tipo 0, subtype 8)
+            }
+            let body = &frame[24..]; // timestamp(8)+interval(2)+capab(2) = 12
+            let mut p = 12usize;
+            let mut ssid: Option<String> = None;
+            let mut ch: Option<u8> = None;
+            while p + 2 <= body.len() {
+                let id = body[p];
+                let len = body[p + 1] as usize;
+                p += 2;
+                if p + len > body.len() {
+                    break;
+                }
+                if id == 0 && ssid.is_none() {
+                    ssid = Some(String::from_utf8_lossy(&body[p..p + len]).into_owned());
+                }
+                if id == 3 && len == 1 {
+                    ch = Some(body[p]);
+                }
+                p += len;
+            }
+            let c = ch.unwrap_or(0);
+            let n = hist.entry(c).or_insert(0);
+            if *n < 3 {
+                println!("  BEACON ch={} ssid={:?}", c, ssid);
+            }
+            *n += 1;
+            total += 1;
+        }
+        (hist, total)
+    }
 
     #[tokio::test]
     async fn lab_detect_and_status() {
@@ -628,5 +729,59 @@ mod lab_tests {
         let st2 = monitor_status(guid.clone()).await;
         println!("STATUS2 mode={} ch={:?}", st2.mode, st2.channel_set);
         assert_eq!(st2.mode, "managed");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lab_channel_rf() {
+        //! Prueba RF dura del parche de canal: pidiendo CH1 solo deben llegar
+        //! beacons del canal 1, pidiendo CH6 solo del 6 (hito 2026-09-21,
+        //! repetida tras el reboot del 2026-09-30). Verificación por el IE
+        //! DS Parameter Set (id 3) de los beacons: el GET del OID canal devuelve
+        //! siempre 11 (cacheado) y sirve de poco. Exige antena y entorno con APs.
+        let rep = crate::wifi_adapter::detect_adapters().await;
+        let target = rep.adapters.iter().find(|a| a.monitor_capable && !a.guid.is_empty());
+        let guid = match target {
+            Some(a) => {
+                println!("TARGET {} {}", a.name, a.guid);
+                a.guid.clone()
+            }
+            None => {
+                println!("SKIP: sin adaptador monitor-capable con GUID");
+                return;
+            }
+        };
+        let tmp = std::env::temp_dir();
+        let act = activate_monitor(guid.clone(), Some(1)).await;
+        println!("ACTIVATE ok={} mode={} ch_set={:?}", act.success, act.mode, act.channel_set);
+        assert!(act.success, "activate_monitor falló: {}", act.message);
+        for ch in [1u8, 6u8] {
+            if ch != 1 {
+                let r = set_monitor_channel(guid.clone(), ch).await;
+                println!("CHANNEL {} ok={} {}", ch, r.success, r.message.lines().next().unwrap_or(""));
+            }
+            let out = tmp.join(format!("lab_rf_ch{}.pcap", ch)).to_string_lossy().to_string();
+            let _ = std::fs::remove_file(&out);
+            let cap = crate::capture::native_capture(guid.clone(), Some(15), Some(out.clone())).await;
+            println!(
+                "CAPTURE ch={} ok={} pkts={} dlt={}({})",
+                ch, cap.success, cap.packets, cap.datalink, cap.datalink_name
+            );
+            assert!(cap.success, "native_capture falló en CH{}: {}", ch, cap.message);
+            let (hist, total) = beacon_channels(&out);
+            println!("CH{} histograma (canal->beacons): {:?}", ch, hist);
+            assert!(total >= 5, "CH{}: solo {} beacons capturados — ¿RF muerta?", ch, total);
+            let here = *hist.get(&ch).unwrap_or(&0);
+            let share = here as f64 / total as f64 * 100.0;
+            println!("CH{}: {}/{} beacons del canal pedido ({:.0}%)", ch, here, total, share);
+            assert!(
+                share >= 80.0,
+                "CH{}: solo {:.0}% de los beacons son del canal pedido (histograma {:?}) — la radio NO cambió de canal",
+                ch, share, hist
+            );
+        }
+        let rs = restore_managed(guid.clone()).await;
+        println!("RESTORE ok={} {}", rs.success, rs.message);
+        assert!(rs.success, "restore_managed falló: {}", rs.message);
     }
 }

@@ -97,25 +97,14 @@ fn main() {
 
     while std::time::Instant::now() < deadline {
         match h.read_bulk(0x81, &mut buf, std::time::Duration::from_millis(100)) {
-            Ok(n) if n >= 36 => {
-                let mut off = 0usize;
-                while off + 36 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 36 || dma > 4096 { break; }
-                    if off + dma > n { break; }
-                    let wi = off + 4;
-                    let fs = wi + 32;
-                    let w0 = u32::from_le_bytes(buf[wi..wi + 4].try_into().unwrap());
-                    let mpdu = ((w0 >> 16) & 0x0fff) as usize;
-                    if mpdu < 26 || fs + mpdu > n { break; }
-                    let frame = &buf[fs..fs + mpdu.saturating_sub(4)];
+            Ok(n) if n > 0 => {
+                // Layout MEDIDO (vendor.pcap): [4 len][RXWI 16][802.11 @20]
+                for f in walk_rx(&buf[..n]) {
                     frames += 1;
                     if !rx_only {
-                        // modo verbose: parsear beacons también
-                        let w2 = u32::from_le_bytes(buf[wi + 8..wi + 12].try_into().unwrap());
-                        parse_mgmt(frame, (w2 & 0xff) as u8, 11, &mut nets);
+                        let body = if f.data.len() > 4 { &f.data[..f.data.len() - 4] } else { f.data };
+                        parse_mgmt(body, f.rssi, 11, &mut nets);
                     }
-                    off += (dma + 3) & !3;
                 }
             }
             Ok(_) => {}

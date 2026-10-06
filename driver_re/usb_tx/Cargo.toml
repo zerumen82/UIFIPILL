@@ -91,5 +91,13 @@ path = "src/heredrx.rs"
 name = "rt3070_coldrx"
 path = "src/coldrx.rs"
 
+[[bin]]
+name = "usb_sniff_stats"
+path = "src/usb_sniff_stats.rs"
+
+[[bin]]
+name = "rt3070_bbpmcu"
+path = "src/bbpmcu.rs"
+
 [dependencies]
 rusb = "0.9"

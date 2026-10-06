@@ -159,17 +159,9 @@ fn after_radio_minimal(h: &rusb::DeviceHandle<rusb::Context>, chan: u8) {
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while std::time::Instant::now() < deadline {
         match h.read_bulk(0x81, &mut buf, Duration::from_millis(100)) {
-            Ok(n) if n >= 36 => {
-                let mut off = 0usize;
-                while off + 36 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 36 || dma > 4096 { break; }
-                    if off + dma > n { break; }
-                    let w0 = u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap());
-                    let mpdu = ((w0 >> 16) & 0x0fff) as usize;
-                    if mpdu >= 26 && off + 4 + 32 + mpdu <= n { frames += 1; }
-                    off += (dma + 3) & !3;
-                }
+            Ok(n) if n > 0 => {
+                // Layout MEDIDO (vendor.pcap): [4 len][RXWI 16][802.11 @20]
+                frames += walk_rx(&buf[..n]).len();
             }
             Ok(_) => {}
             Err(rusb::Error::Timeout) => {}

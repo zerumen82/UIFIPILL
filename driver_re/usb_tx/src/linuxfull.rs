@@ -125,35 +125,10 @@ fn after_csr_ready(h: rusb::DeviceHandle<rusb::Context>, chan: u8) {
     let _ = rx_filter_monitor(&h);
     println!("  canal {chan} + PA + RX monitor");
 
-    // ══ RX TEST ══
+    // ══ RX TEST (parser MEDIDO: RXWI 20B, FC@20 — el anterior asumía [4][32]
+    // y contaba 0 frames aunque el chip entregara datos) ══
     println!("\n== RX 15s EP 0x81 ==");
-    let mut frames = 0usize;
-    let mut buf = vec![0u8; 8192];
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        match h.read_bulk(0x81, &mut buf, Duration::from_millis(100)) {
-            Ok(n) if n >= 36 => {
-                let mut off = 0usize;
-                while off + 36 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 36 || dma > 4096 { break; }
-                    if off + dma > n { break; }
-                    let w0 = u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap());
-                    let mpdu = ((w0 >> 16) & 0x0fff) as usize;
-                    if mpdu >= 26 && off + 4 + 32 + mpdu <= n { frames += 1; }
-                    off += (dma + 3) & !3;
-                }
-            }
-            Ok(_) => {}
-            Err(rusb::Error::Timeout) => {}
-            Err(e) => { println!("  read err {e:?}"); break; }
-        }
-    }
-    println!("\n📡 {frames} frames en 15s — {}", if frames > 0 {
-        "🎉 RX FUNCIONA EN LA MISMA ANTENA (port Linux completo)"
-    } else {
-        "0 frames"
-    });
+    print_rx(&rx_monitor(&h, 15));
 }
 
 fn main() {

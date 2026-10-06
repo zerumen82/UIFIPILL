@@ -6,7 +6,9 @@
 // vendor del rt2800usb portado a Rust:
 //   rt3070_probe → identidad del chip (ASIC 0x30700201)
 //   rt3070_diag  → diagnóstico fino del protocolo vendor
-//   rt3070_init  → carga firmware (rt2870.bin) + radio ON + canal
+//   rt3070_init  → init_radio SIN kick FIRMWARE(8) (prohibido bajo WinUSB):
+//                  MCU vivo → radio ON + canal; MCU muerto → error accionable
+//                  (power-cycle físico), nunca el kick.
 //   rt3070_tx    → TX de beacons (TXINFO+TXWI+802.11 → EP 0x01)
 //
 // Los binarios viven en driver_re/usb_tx/target/release (dev) o
@@ -63,16 +65,6 @@ fn usb_tx_exe(name: &str) -> Result<String, String> {
     Err(format!("❌ {} no encontrado en {}", name, dir.display()))
 }
 
-/// Ruta del firmware rt2870.bin (junto a los exes o en driver_re/usb_tx).
-fn firmware_path() -> Option<String> {
-    let dir = usb_tx_dir()?;
-    let fw = dir.join("rt2870.bin");
-    if fw.exists() {
-        return Some(fw.to_string_lossy().into_owned());
-    }
-    None
-}
-
 /// Ejecuta un binario usb_tx de forma síncrona y captura salida.
 fn run_usb_tool(exe: &str, args: &[&str]) -> UsbRawResult {
     use std::process::Command;
@@ -116,7 +108,8 @@ pub async fn usb_raw_status() -> UsbRawResult {
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
 }
 
-/// Init completo: firmware + radio ON + canal (1-14).
+/// Init radio: MCU vivo → radio ON + canal (1-14). SIN kick FIRMWARE(8)
+/// (init_radio en common.rs lo tiene prohibido bajo WinUSB).
 #[command]
 pub async fn usb_raw_init(channel: u8) -> UsbRawResult {
     tauri::async_runtime::spawn_blocking(move || {
@@ -125,8 +118,7 @@ pub async fn usb_raw_init(channel: u8) -> UsbRawResult {
             Ok(e) => e,
             Err(e) => return UsbRawResult { success: false, message: e, output: String::new() },
         };
-        let fw = firmware_path().unwrap_or_else(|| "rt2870.bin".into());
-        run_usb_tool(&exe, &[&chan.to_string(), &fw])
+        run_usb_tool(&exe, &[&chan.to_string()])
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
 }
 
@@ -197,7 +189,8 @@ pub async fn usb_raw_deauth(bssid: String, channel: u8, count: u32) -> UsbRawRes
 #[command]
 pub async fn usb_raw_sniff(duration_secs: u32, channel: u8, output_path: Option<String>) -> UsbRawResult {
     tauri::async_runtime::spawn_blocking(move || {
-        let secs = duration_secs.clamp(5, 300).to_string();
+        let secs_n = duration_secs.clamp(5, 300);
+        let secs = secs_n.to_string();
         let exe = match usb_tx_exe("rt3070_sniff.exe") {
             Ok(e) => e,
             Err(e) => return UsbRawResult { success: false, message: e, output: String::new() },
@@ -205,16 +198,26 @@ pub async fn usb_raw_sniff(duration_secs: u32, channel: u8, output_path: Option<
         let out = output_path.unwrap_or_else(|| {
             let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs()).unwrap_or(0);
-            format!("%TEMP%\\uifipill_sniff_{t}.pcap")
+            // Command NO expande %TEMP% (medido: la ruta literal impedía crear
+            // el fichero) → resolver la ruta real del usuario.
+            std::env::temp_dir().join(format!("uifipill_sniff_{t}.pcap"))
+                .to_string_lossy().into_owned()
         });
         let _ = channel; // el canal lo fija usb_raw_init antes
         let r = run_usb_tool(&exe, &[&secs, &out]);
         let mut res = r;
-        // extraer ruta real del pcap del output
-        if let Some(line) = res.output.lines().find(|l| l.contains("→")) {
-            if let Some(p) = line.split("→").last() {
-                res.message = format!("{} (pcap: {})", res.message, p.trim());
-            }
+        // Evidencia: la línea "Capturados N frames → ruta" manda sobre "OK".
+        if let Some(line) = res.output.lines().find(|l| l.contains("Capturados")) {
+            res.message = line.trim().to_string();
+        }
+        // Éxito honesto (regla 2): 0 frames NO es éxito, aunque el bin salga 0.
+        if res.output.contains("Capturados 0 frames") {
+            res.success = false;
+            res.message = format!(
+                "0 frames en {secs}s: RX no armado o canal sin tráfico. \
+                 Ejecuta «Init radio» primero (init_radio sin kick) y usa el \
+                 canal del AP; si init_radio reporta MCU muerto → power-cycle 15 s."
+            );
         }
         res
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
@@ -239,6 +242,7 @@ pub struct UsbRawNet {
     pub bssid: String,
     pub channel: u8,
     pub signal: u8, // % estilo netsh
+    pub security: String, // detectada en el beacon: WPA3/WPA2/WPA/Abierta o WEP
 }
 
 #[derive(Serialize)]
@@ -249,8 +253,7 @@ pub struct UsbRawScanResult {
 }
 
 /// Escaneo de redes con el RT3070 en WinUSB (channel hopping 1-13 + parseo de
-/// beacons). Devuelve la lista lista para la tabla de la UI. Duración fija
-/// 20s (ronda completa de hopping con dwell 250ms/canal ~ 3 pasadas).
+/// beacons). Devuelve la lista lista para la tabla de la UI.
 #[command]
 pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
     tauri::async_runtime::spawn_blocking(move || {
@@ -259,20 +262,28 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
             Ok(e) => e,
             Err(e) => return UsbRawScanResult { success: false, message: e, networks: vec![] },
         };
-        let fw = firmware_path().unwrap_or_else(|| "rt2870.bin".into());
-        let r = run_usb_tool(&exe, &[&secs.to_string(), &fw]);
+        let r = run_usb_tool(&exe, &[&secs.to_string()]);
         let mut networks = Vec::new();
         for l in r.output.lines() {
             if let Some(rest) = l.strip_prefix("AP|") {
                 let p: Vec<&str> = rest.split('|').collect();
-                if p.len() == 4 {
+                if p.len() >= 4 {
                     let bssid = p[1].trim().to_uppercase();
                     if bssid.len() == 17 && bssid.chars().filter(|c| *c == ':').count() == 5 {
+                        // 6º campo (2026-10-01): seguridad del beacon; los bins
+                        // viejos de 5 campos → "Desconocida" (honesto, sin inventar).
+                        let security = if p.len() >= 5 {
+                            let s = p[4].trim().chars().take(16).filter(|c| c.is_ascii_alphanumeric() || " ?/-".contains(*c)).collect::<String>();
+                            if s.is_empty() { "Desconocida".into() } else { s }
+                        } else {
+                            "Desconocida".into()
+                        };
                         networks.push(UsbRawNet {
                             ssid: p[0].trim().to_string(),
                             bssid,
                             channel: p[2].trim().parse().unwrap_or(0),
                             signal: p[3].trim().parse().unwrap_or(0),
+                            security,
                         });
                     }
                 }
@@ -282,10 +293,14 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
         let msg = if !r.success {
             r.message.clone()
         } else if networks.is_empty() {
-            // 2026-09-23: 0 frames con chip vivo = BBP mudo (bloqueo conocido,
-            // ver memory.md §1 «TEST HARDWARE REAL 2026-09-23»). Mensaje honesto
-            // con las 2 causas medidas, no genérico.
-            "Sin redes: chip vivo pero 0 frames recibidos. Causas medidas: (1) BBP mudo — power-cycle (desenchufa 15s) y reintenta; (2) si persiste, mira rt3070_bbpdiag (efuse/EEPROM) — init BBP+RFCSR completo ya portado en common.rs".into()
+            // 0 beacons con chip vivo y radio inicializada = causa medida:
+            // MCU muerto tras power-cycle (init_radio lo reporta y exige
+            // power-cycle; el kick FIRMWARE(8) está prohibido bajo WinUSB).
+            format!(
+                "Sin redes en {secs}s: (1) radio sin init — pulsa «Init radio»/«Estado chip»; \
+                 (2) MCU muerto tras power-cycle — desenchufa 15 s (init_radio NO kickea: \
+                 FIRMWARE(8) mata el chip 5/5); (3) canal sin tráfico (raro)."
+            )
         } else {
             format!("{} redes por USB crudo", networks.len())
         };

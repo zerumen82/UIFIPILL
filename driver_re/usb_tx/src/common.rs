@@ -4,6 +4,7 @@
 // silenciar dead_code en vez de perseguir warnings por binario.
 #![allow(dead_code)]
 use rusb::UsbContext;
+use std::collections::HashMap;
 
 pub const VID_RALINK: u16 = 0x148f;
 pub const PID_RT3070: u16 = 0x3070;
@@ -64,7 +65,10 @@ pub const FW_LENGTH: usize = 4096;
 // y BSSID en 0x100C/10, pero el layout real es ADDR_DW0=0x1008, ADDR_DW1=0x100C,
 // BSSID_DW0=0x1010, BSSID_DW1=0x1014 — mismo desplazamiento que MAC_CSR0=0x1000
 // y MAC_SYS_CTRL=0x1004 ya usados con éxito).
-pub const MAC_SYS_CTRL: u16 = 0x0004;
+// BUG corregido 2026-10-01: la constante era 0x0004 = E2PROM_CSR (rt2800.h:129)
+// — cada "enable TX+RX" (0x04/0x0C) iba al registro de EEPROM y el MAC no se
+// activaba. Dirección real: rt2800.h:729.
+pub const MAC_SYS_CTRL: u16 = 0x1004;
 pub const MAC_CSR0: u16 = 0x1000;       // ASIC version (rt2800.h:722)
 pub const MAC_ADDR_DW0: u16 = 0x1008;
 pub const MAC_ADDR_DW1: u16 = 0x100C;
@@ -156,11 +160,25 @@ pub fn mcu_request_wait(h: &rusb::DeviceHandle<rusb::Context>, command: u8, toke
     Ok(false)
 }
 
-// Comandos MCU (rt2800.h:3024+)
+// Comandos MCU (rt2800.h:3005+)
+// FIX 2026-09-30: MCU_CURRENT era 0x30 = ¡MCU_SLEEP! (rt2800.h:3005 es
+// MCU_SLEEP=0x30; MCU_CURRENT=0x36 en rt2800.h:3008 y rt2800lib.c:10709).
+// Nuestro init_radio mandaba MCU_SLEEP con arg0=0/arg1=0 → el firmware se
+// metía en power-save justo al acabar el init (candidato a RX muda).
 pub const MCU_WAKEUP: u8 = 0x31;
 pub const MCU_BOOT_SIGNAL: u8 = 0x72;
-pub const MCU_CURRENT: u8 = 0x30;
+pub const MCU_CURRENT: u8 = 0x36;
+// MCU_BBP_SIGNAL (0x80): acceso a BBP a través del firmware. Es la ÚNICA vía
+// que usa el driver vendor netr28ux (captura USBPcap 2026-09-30: 19 ops BBP,
+// cero toques a BBP_CSR_CFG=0x101C).
+pub const MCU_BBP_SIGNAL: u8 = 0x80;
 pub const TX_STA_FIFO: u16 = 0x1718;
+
+// Contadores RX (rt2800.h:1850-1866) — evidencia de si el MAC recibe aunque
+// el bulk IN esté vacío: 0x1700 CRC/PHY, 0x1704 CCA/PLCP, 0x1708 dupli/overflow
+pub const RX_STA_CNT0: u16 = 0x1700;
+pub const RX_STA_CNT1: u16 = 0x1704;
+pub const RX_STA_CNT2: u16 = 0x1708;
 
 // TX_STA_FIFO (rt2800.h:1908) — FIFO de 16 entradas; cada read extrae la
 // siguiente entrada. VALID=0 → no hay más resultados.
@@ -193,8 +211,9 @@ pub const EFUSE_DATA1: u16 = 0x0594;
 pub const EFUSE_DATA2: u16 = 0x0598;
 pub const EFUSE_DATA3: u16 = 0x059C;
 
-// Tabla de canales 2.4GHz para RF3070 (rt2800lib.c rf_vals_3x[]):
-// { canal, N (RFCSR8), R (RFCSR11), K (RFCSR9) }
+// Tabla de canales 2.4GHz para RF3070 (rt2800lib.c rf_vals_3x[] = Ralink
+// FreqItems3020 — idéntica, verificado 2026-10-01):
+// { canal, N (→RFCSR2), R (→RFCSR6[1:0]), K (→RFCSR3[3:0]) }
 const RF_VALS_3X: [(u8, u8, u8, u8); 14] = [
     (1, 241, 2, 2), (2, 241, 2, 7), (3, 242, 2, 2), (4, 242, 2, 7),
     (5, 243, 2, 2), (6, 243, 2, 7), (7, 244, 2, 2), (8, 244, 2, 7),
@@ -278,6 +297,15 @@ pub fn reg_write(h: &rusb::DeviceHandle<rusb::Context>, addr: u16, val: u32) -> 
     Ok(())
 }
 
+/// Escritura de 16 bits con SINGLE_WRITE (bRequest 2, wValue=val, wIndex=addr,
+/// sin stage de datos). Es la ÚNICA forma de escribir que usa el driver vendor
+/// netr28ux: en la captura USBPcap las 258 escrituras OUT tienen setup de
+/// 8 bytes y 0 payload (2064/258 = 8). Reservado para el canal MCU/BBP.
+pub fn reg_write16(h: &rusb::DeviceHandle<rusb::Context>, addr: u16, val: u16) -> rusb::Result<()> {
+    h.write_control(REQ_OUT, USB_SINGLE_WRITE, val, addr, &[], REGISTER_TIMEOUT)?;
+    Ok(())
+}
+
 /// Espera a que un campo de un registro tome un valor (regbusy_read).
 pub fn wait_busy(
     h: &rusb::DeviceHandle<rusb::Context>,
@@ -328,8 +356,10 @@ pub fn drain_tx_status(h: &rusb::DeviceHandle<rusb::Context>, max: usize) -> Vec
     out
 }
 
-// ── Acceso indirecto RF (RFCSR) y BBP — port de rt2800_rfcsr_write/read y
-// rt2800_bbp_write de rt2800lib.c (mecánica RF_CSR_CFG/BBP_CSR_CFG). ──
+// ── Acceso indirecto RF (RFCSR) y BBP ──────────────────────────────────────
+// RFCSR: port de rt2800_rfcsr_write/read (RF_CSR_CFG, idéntico al vendor).
+// BBP: vía MCU del vendor netr28ux (MCU_BBP_SIGNAL); la vía directa
+// rt2800_bbp_write queda como *_direct solo para diagnóstico. ──
 
 /// Escritura RFCSR: espera BUSY=0, luego DATA|REGNUM<<8|WRITE|BUSY.
 pub fn rfcsr_write(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8) -> rusb::Result<()> {
@@ -352,8 +382,114 @@ pub fn rfcsr_read(h: &rusb::DeviceHandle<rusb::Context>, reg: u8) -> rusb::Resul
     Err(rusb::Error::Io)
 }
 
-/// Escritura BBP: VALUE|REGNUM<<8|BUSY (mecánica de rt2800_bbp_write).
+/// ── BBP vía MCU: el protocolo MEDIDO del driver vendor netr28ux ────────────
+/// Captura USBPcap 2026-09-30 (vendor.pcap): las 19 operaciones BBP del vendor
+/// van TODAS por H2M_BBP_AGENT (0x7028/0x702A) + H2M_MAILBOX_CSR (0x7010) con
+/// TOKEN=0xff/OWNER=1 + HOST_CMD_CSR=MCU_BBP_SIGNAL(0x80). Ni un solo toque a
+/// BBP_CSR_CFG (0x101C) en 380 vendor requests. La vía directa 0x101C bajo
+/// WinUSB devuelve 0x00 siempre (medido, memory §4); la vía MCU devuelve
+/// valores reales (BBP1=0x40, BBP49=0x8a vistos en la misma captura).
+///
+/// Word de H2M_BBP_AGENT (idéntico a BBP_CSR_CFG): VALUE[7:0] | REGNUM[15:8]
+/// | flags<<16 donde flag bit0=READ, bit1=BUSY, bit3=BBP_RW_MODE
+/// (0x0b = READ|BUSY|RW, 0x0a = WRITE|BUSY|RW; el MCU deja 0x09/0x08 al
+/// terminar, con BUSY=0 → ahí se recoge el resultado).
+const AGENT_BUSY: u32 = 0x0002_0000;
+const AGENT_FLAG_READ: u16 = 0x000b;
+const AGENT_FLAG_WRITE: u16 = 0x000a;
+
+/// Espera a que H2M_BBP_AGENT tenga BUSY=0 (y, si se pide, con REGNUM
+/// confirmado: el agente conserva el registro tras la operación, así que un
+/// BUSY=0 con el reg equivocado = el MCU aún no lo ha cogido).
+fn agent_wait(h: &rusb::DeviceHandle<rusb::Context>, want_reg: Option<u8>) -> rusb::Result<u32> {
+    for _ in 0..100 {
+        let w = reg_read(h, H2M_BBP_AGENT)?;
+        if w & AGENT_BUSY == 0
+            && want_reg.map_or(true, |r| ((w >> 8) & 0xff) as u8 == r)
+        {
+            return Ok(w);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    Err(rusb::Error::Timeout)
+}
+
+/// Operación BBP única a través del firmware (MCU_BBP_SIGNAL).
+fn mcu_bbp(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8, read: bool) -> rusb::Result<u8> {
+    // 1) agente libre (el vendor lee 0x7028 antes de cada operación)
+    let _ = agent_wait(h, None)?;
+    // 2) cargar el agente: [15:0] = VALUE|REGNUM<<8, [23:16] = flags
+    let flags = if read { AGENT_FLAG_READ } else { AGENT_FLAG_WRITE };
+    reg_write16(h, H2M_BBP_AGENT, (val as u16) | ((reg as u16) << 8))?;
+    reg_write16(h, H2M_BBP_AGENT + 2, flags)?;
+    // 3) mailbox: esperar OWNER=0 y escribir OWNER=1, TOKEN=0xff (sin status)
+    for _ in 0..50 {
+        let m = reg_read(h, H2M_MAILBOX_CSR)?;
+        if m & 0xff00_0000 == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    reg_write16(h, H2M_MAILBOX_CSR, 0)?;
+    reg_write16(h, H2M_MAILBOX_CSR + 2, 0x01ff)?;
+    // 4) disparar el comando al 8051
+    reg_write16(h, HOST_CMD_CSR, MCU_BBP_SIGNAL as u16)?;
+    reg_write16(h, HOST_CMD_CSR + 2, 0)?;
+    // 5) recoger: BUSY=0 + REGNUM confirmado → VALUE es el dato leído
+    let w = agent_wait(h, Some(reg))?;
+    Ok((w & 0xff) as u8)
+}
+
+/// Lectura BBP por la vía del vendor (MCU). Verifica REGNUM en la respuesta.
+/// Si el transporte está conmutado a directo (bbp_set_via_mcu(false)), lee por
+/// BBP_CSR_CFG — decisión tomada por sonda medida en bbpmcu.
 pub fn bbp_read(h: &rusb::DeviceHandle<rusb::Context>, reg: u8) -> rusb::Result<u8> {
+    if bbp_via_mcu() { mcu_bbp(h, reg, 0, true) } else { bbp_read_direct(h, reg) }
+}
+
+/// Escritura BBP por la vía del vendor (MCU). Devuelve el byte que había en
+/// el agente al terminar (0x00 en las escrituras: el MCU no lo conserva).
+/// Con transporte directo: BBP_CSR_CFG (rw_mode incluido, medido 2026-09-23).
+pub fn bbp_write(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8) -> rusb::Result<()> {
+    if bbp_via_mcu() { mcu_bbp(h, reg, val, false).map(|_| ()) } else { bbp_write_direct(h, reg, val) }
+}
+
+/// Transporte BBP efectivo. true = vía MCU (MCU_BBP_SIGNAL, la del vendor),
+/// false = vía directa BBP_CSR_CFG. Se decide con una SONDA MEDIDA (no por
+/// defecto): el bin bbpmcu compara ambas vías y llama a bbp_set_via_mcu().
+/// Mantener true por defecto: los bins que cargan firmware (init/vendorradio)
+/// siguen con la vía del vendor, que es la que el driver usa.
+use std::sync::atomic::{AtomicBool, Ordering};
+static BBP_VIA_MCU: AtomicBool = AtomicBool::new(true);
+
+pub fn bbp_set_via_mcu(v: bool) { BBP_VIA_MCU.store(v, Ordering::SeqCst); }
+pub fn bbp_via_mcu() -> bool { BBP_VIA_MCU.load(Ordering::SeqCst) }
+
+/// Elige la vía BBP que de verdad responda (MCU_BBP_SIGNAL vs BBP_CSR_CFG
+/// directo) — misma sonda que bbpmcu. Medido 2026-10-01 (runs 8/9): sin
+/// firmware la vía MCU da timeout 0/5 y la directa lee vivo 2/2; con el
+/// default MCU, init_bbp moría en "BBP no responde". Devuelve true=MCU.
+pub fn bbp_probe_transport(h: &rusb::DeviceHandle<rusb::Context>) -> bool {
+    let mut mcu_ok = 0;
+    let mut dir_ok = 0;
+    for r in [0u8, 1] {
+        if let Ok(v) = mcu_bbp(h, r, 0, true) {
+            if v != 0x00 && v != 0xff { mcu_ok += 1; }
+        }
+        if let Ok(v) = bbp_read_direct(h, r) {
+            if v != 0x00 && v != 0xff { dir_ok += 1; }
+        }
+    }
+    let via = mcu_ok > 0 && mcu_ok >= dir_ok;
+    bbp_set_via_mcu(via);
+    via
+}
+
+/// Vía DIRECTA por BBP_CSR_CFG (rt2800_bbp_read/write de rt2800lib.c).
+/// Medido 2026-09-23/25 bajo WinUSB: devolvía 0x00 siempre. Medido 2026-10-01
+/// (MCU corriendo, sin firmware): lee VIVO (BBP0=0x60, BBP1=0x40) mientras la
+/// vía MCU da timeout — por eso existe el conmutador bbp_set_via_mcu().
+pub fn bbp_read_direct(h: &rusb::DeviceHandle<rusb::Context>, reg: u8) -> rusb::Result<u8> {
     // Port exacto de rt2800_bbp_read: READ_CONTROL=1 (bit16), BUSY=1 (bit17),
     // BBP_RW_MODE=1 (bit19) — el driver lo pone SIEMPRE (rt2800lib.c:133).
     // REGISTER_USB_BUSY_COUNT=20 × 100us ≈ 2ms de espera BUSY (no 100ms).
@@ -365,7 +501,7 @@ pub fn bbp_read(h: &rusb::DeviceHandle<rusb::Context>, reg: u8) -> rusb::Result<
     Ok((v & 0xff) as u8)
 }
 
-pub fn bbp_write(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8) -> rusb::Result<()> {
+pub fn bbp_write_direct(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8) -> rusb::Result<()> {
     // Port exacto de rt2800_bbp_write: READ_CONTROL=0, BUSY=1, BBP_RW_MODE=1.
     // (Antes faltaba RW_MODE — las escrituras BBP se ignoraban y el BBP
     // quedaba sin inicializar: RX muda, 0 frames medido 2026-09-23.)
@@ -374,38 +510,95 @@ pub fn bbp_write(h: &rusb::DeviceHandle<rusb::Context>, reg: u8, val: u8) -> rus
     reg_write(h, BBP_CSR_CFG, word)
 }
 
-/// Configuración de canal RT3070 — port de rt2800_config_channel (vía
-/// rf53xx, la que usa RF3070) + pasos comunes del tramo 2.4GHz:
-///   RFCSR8=N, RFCSR9=K, RFCSR11.R=R, RFCSR1 (PDs), RFCSR30 (BW 20MHz),
-///   RFCSR3.VCOCAL_EN, BBP 62/63/64/82/75/86, TX_BAND_CFG (BG).
+// Calibración de filtro RX BW20 (retorno de rx_filter_calibration) — la usa
+// config_channel_rt3070 (RFCSR24/31 campo 0x7f). Default 0x09 = medido en
+// vendor.pcap (reg24=reg31=0x09 tras el init del vendor) por si un bin
+// llama a config sin init_rfcsr.
+static CALIB_BW20: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0x09);
+
+/// Valor calibrado BW20 para RFCSR24/31 (máx. 0x7f).
+pub fn calib_bw20() -> u8 {
+    CALIB_BW20.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Configuración de canal RT3070 — port de `RT30xx_ChipSwitchChannel`
+/// (driver Ralink vendor, chips/rt30xx.c:590) = `rt2800_config_channel_rf3xxx`
+/// (rt2800lib.c:2466). **Este chip usa el path 3xxx (N→RFCSR2), no rf53xx**:
+/// en vendor.pcap #184 el vendor escribe N=0xF6 (canal 11) a RFCSR2, y
+/// RFCSR8 resultó ser el ID de versión del RF (0x42 fijo en 1..14) — con el
+/// path rf53xx (N→RFCSR8) el PLL nunca sintonizó → ΔCCA=0 (medido 2026-10-01).
+///   RFCSR2=N, RFCSR3[3:0]=K, RFCSR6[1:0]=R, RFCSR12/13[4:0]=TX power,
+///   RFCSR1=streams 1T1R (0xf1), RFCSR24/31=calib BW20, RFCSR7.RF_TUNING=1,
+///   RFCSR30 bit7 pulso VCOCAL 1 ms, BBP 62/63/64/82/75/86, TX_BAND_CFG.
 /// Después de esto el llamador debe encender los PA con enable_tx_pa().
 pub fn config_channel_rt3070(h: &rusb::DeviceHandle<rusb::Context>, channel: u8) -> rusb::Result<()> {
     let idx = (channel.clamp(1, 14) - 1) as usize;
     let (_, n, r, k) = RF_VALS_3X[idx];
 
-    rfcsr_write(h, 8, n)?;                       // PLL N
-    rfcsr_write(h, 9, k)?;                       // PLL K
-    let r11 = rfcsr_read(h, 11).unwrap_or(0);
-    rfcsr_write(h, 11, (r11 & !0x03) | (r & 0x03))?; // R (read-modify-write como el driver)
+    // N del PLL → RFCSR2 (escritura directa, como el vendor #184)
+    rfcsr_write(h, 2, n)?;
 
-    // RFCSR1: encender bloques RF/PLL y ponds TX0/RX0 (1T1R)
-    let r1 = rfcsr_read(h, 1).unwrap_or(0);
-    rfcsr_write(h, 1, r1 | 0x0f)?;               // RF_BLOCK|PLL_PD|RX0_PD|TX0_PD
-
-    // RFCSR30: TX_H20M/RX_H20M = 0 (20 MHz)
-    let r30 = rfcsr_read(h, 30).unwrap_or(0);
-    rfcsr_write(h, 30, r30 & !0x06)?;
-
-    // VCO calibration
+    // K → RFCSR3[3:0] (RFCSR3_K=0x0f); alto nibble = bias PA, se conserva
+    // (vendor: lee 0x32, escribe 0x32 con K=2)
     let r3 = rfcsr_read(h, 3).unwrap_or(0);
-    rfcsr_write(h, 3, r3 | 0x80)?;               // RFCSR3_VCOCAL_EN
+    rfcsr_write(h, 3, (r3 & 0xF0) | (k & 0x0F))?;
 
-    // BBP (tramo 2.4 GHz, sin LNA externa — valores de rt2800_config_channel)
+    // R → RFCSR6[1:0] (RFCSR6_R1=0x03)
+    let r6 = rfcsr_read(h, 6).unwrap_or(0);
+    rfcsr_write(h, 6, (r6 & 0xFC) | (r & 0x03))?;
+
+    // TX power RFCSR12/13 (campo 0x1f): vendor ch11 = 6/5. Por canal lo da
+    // EEPROM (pendiente efuse_read); solo afecta a TX.
+    let r12 = rfcsr_read(h, 12).unwrap_or(0);
+    rfcsr_write(h, 12, (r12 & 0xE0) | 0x06)?;
+    let r13 = rfcsr_read(h, 13).unwrap_or(0);
+    rfcsr_write(h, 13, (r13 & 0xE0) | 0x05)?;
+
+    // Streams 1T1R: bits7:4 = PD de TX1/TX2/RX1/RX2 (0xA0|0x50), bit0 =
+    // RF_BLOCK_EN → 0xf1 como el vendor vivo. Bit1 (PLL_PD) se FUERZA a 0:
+    // runs viejos con `r1 | 0x0f` lo dejaron en 1 (medido 0xf3, run8) y un
+    // RMW que lo preserve mantiene el PLL en power-down.
+    let r1 = rfcsr_read(h, 1).unwrap_or(0);
+    rfcsr_write(h, 1, (r1 & 0x01) | 0xA0 | 0x50)?;
+
+    // Frec. offset RFCSR23 = 0x09: el valor MEDIDO en vendor.pcap de ESTA
+    // antena (vendor lee 0x09 = su RfFreqOffset desde EEPROM). Nuestro
+    // silicio arranca en 0x00; con 0 el RX ya funciona (run9/scan1), pero el
+    // LO queda exactamente donde lo pone el vendor. Bit7 (siempre 1 en el
+    // vendor) se preserva.
+    let r23 = rfcsr_read(h, 23).unwrap_or(0);
+    rfcsr_write(h, 23, (r23 & 0x80) | 0x09)?;
+
+    // Calibración filtro BW20 → RFCSR24 (TX_CALIB) y RFCSR31 (RX_CALIB),
+    // campos 0x7f medidos en init_rfcsr (vendor: 0x09 en ambos). ANTES no se
+    // tocaban en el cambio de canal → quedaban en estado BW40 del init.
+    let cal = calib_bw20();
+    let r24 = rfcsr_read(h, 24).unwrap_or(0);
+    rfcsr_write(h, 24, (r24 & 0x80) | (cal & 0x7f))?;
+    let r31 = rfcsr_read(h, 31).unwrap_or(0);
+    rfcsr_write(h, 31, (r31 & 0x80) | (cal & 0x7f))?; // bit5 RX_H20M va en cal (0 → BW20)
+
+    // RF tuning (RFCSR7 bit0) + pulso VCO calibration (RFCSR30 bit7, 1 ms)
+    // = final de RT30xx_ChipSwitchChannel. ANTES hacíamos VCOCAL_EN en el
+    // bit7 de RFCSR3 — ese bit es bias PA2 CCK, registro equivocado.
+    let r7 = rfcsr_read(h, 7).unwrap_or(0);
+    rfcsr_write(h, 7, r7 | 0x01)?;
+    let r30 = rfcsr_read(h, 30).unwrap_or(0);
+    rfcsr_write(h, 30, r30 | 0x80)?;
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    let r30 = rfcsr_read(h, 30).unwrap_or(0);
+    rfcsr_write(h, 30, r30 & 0x7F)?;
+
+    // BBP tramo 2.4 GHz — rama external_lna_bg de rt2800_config_channel
+    // (rt2800lib.c:4261-4264: 82=0x62, 75=0x46). ANTES llevábamos la rama
+    // else (84/50, sin LNA externa) y el vendor de ESTE dispositivo usa la
+    // de LNA externa (vendor.pcap §3b escribe 82=0x62 y 75=0x46): con 84/50
+    // ΔCCA=0 en 1/6/11 (RF sordo, medido 2026-10-01).
     let _ = bbp_write(h, 62, 0x37);
     let _ = bbp_write(h, 63, 0x37);
     let _ = bbp_write(h, 64, 0x37);
-    let _ = bbp_write(h, 82, 0x84);
-    let _ = bbp_write(h, 75, 0x50);
+    let _ = bbp_write(h, 82, 0x62);
+    let _ = bbp_write(h, 75, 0x46);
     let _ = bbp_write(h, 86, 0x00);
 
     // TX_BAND_CFG: BG=1 (2.4GHz), A=0, HT40minus=0
@@ -558,6 +751,153 @@ pub fn rx_filter_monitor(h: &rusb::DeviceHandle<rusb::Context>) -> rusb::Result<
     reg_write(h, RX_FILTER_CFG, 0x0000_0093)
 }
 
+// ── RX bulk IN — layout MEDIDO (captura vendor.pcap 2026-09-30, 111/111 URBs) ─
+//   [0..4]  longitud del registro ⇒ n = longitud + 8     (111/111 URBs)
+//   [4..20] RXWI (W0@4 MPDU_TOTAL_BYTE_COUNT bits16-27, W1@8 secuencia,
+//                 W2@12 RSSI0 bits0-7, W3@16 SNR)
+//   [20..n] 802.11 — FC de beacon EXACTO en el byte 20 (84/111 URBs con beacon)
+// El parser anterior asumía [4 dma][32 rxwi] → FC@36 → 0 frames CONTADOS
+// aunque el chip entregara datos (falso negativo medido; por eso "0 frames").
+
+/// Un frame 802.11 dentro de un URB bulk IN.
+pub struct RxFrameRef<'a> {
+    /// offset del FC dentro del buffer
+    pub off: usize,
+    /// fin del 802.11 (incluye FCS)
+    pub end: usize,
+    /// RSSI0 (RXWI_W2 bits 0-7)
+    pub rssi: u8,
+    /// 802.11 completo (sin radiotap), desde el FC
+    pub data: &'a [u8],
+}
+
+/// Recorre los registros de un URB bulk IN con el layout medido y devuelve
+/// sus frames. Tolera un URB truncado (entrega el frame parcial).
+pub fn walk_rx(buf: &[u8]) -> Vec<RxFrameRef<'_>> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    while off + 24 <= buf.len() {
+        let ln = u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]) as usize;
+        if ln < 24 || ln > 8192 {
+            break;
+        }
+        let full = off + ln + 8;
+        let end = full.min(buf.len());
+        let foff = off + 20;
+        if end.saturating_sub(foff) < 24 {
+            break;
+        }
+        let rssi = u32::from_le_bytes([
+            buf[off + 12], buf[off + 13], buf[off + 14], buf[off + 15],
+        ]) as u8;
+        out.push(RxFrameRef { off: foff, end, rssi, data: &buf[foff..end] });
+        if full > buf.len() {
+            break; // URB truncado
+        }
+        off = full;
+    }
+    out
+}
+
+/// ¿Es un beacon? (tipo mgmt + subtipo 8) con al menos la cabecera fija.
+pub fn is_beacon(frame: &[u8]) -> bool {
+    frame.len() > 36 && (frame[0] & 0x0c) == 0 && (frame[0] >> 4) == 8
+}
+
+/// Extrae (SSID, canal, BSSID) de un beacon. El SSID vacío se devuelve como "".
+pub fn parse_beacon(frame: &[u8]) -> Option<(String, u8, [u8; 6])> {
+    if !is_beacon(frame) {
+        return None;
+    }
+    // cabecera mgmt: FC(2) dur(2) addr1(6) addr2(6) addr3(6) seq(2) = 24 B
+    // BSSID = addr3 (frame[16..22]); en un beacon addr2==addr3. (Antes usaba
+    // addr1 = DA broadcast → salía FF:FF:FF:FF:FF:FF como BSSID.)
+    let bssid: [u8; 6] = frame[16..22].try_into().unwrap();
+    // la cabecera mgmt del beacon es 24 B + fixed params 12 B = 36
+    let mut i = 36usize;
+    let mut ssid = String::new();
+    let mut ch = 0u8;
+    // sin FCS (los IEs terminan antes de los últimos 4 bytes)
+    let end = frame.len().saturating_sub(4).max(36);
+    while i + 2 <= end {
+        let t = frame[i];
+        let l = frame[i + 1] as usize;
+        if i + 2 + l > end { break; }
+        if t == 0 && l > 0 && l <= 32 {
+            ssid = String::from_utf8_lossy(&frame[i + 2..i + 2 + l]).to_string();
+        }
+        if t == 3 && l >= 1 { ch = frame[i + 2]; }
+        i += 2 + l;
+    }
+    Some((ssid, ch, bssid))
+}
+
+#[derive(Default)]
+pub struct RxStats {
+    pub urbs: usize,
+    pub bytes: usize,
+    pub frames: usize,
+    /// histograma (offset del FC → nº de frames)
+    pub offsets: Vec<(usize, usize)>,
+    /// (SSID, BSSID, canal) de los beacons vistos
+    pub aps: Vec<(String, [u8; 6], u8)>,
+}
+
+/// Lee el EP 0x81 durante `secs` segundos con el parser del layout medido.
+pub fn rx_monitor(h: &rusb::DeviceHandle<rusb::Context>, secs: u64) -> RxStats {
+    let mut st = RxStats::default();
+    let mut hist: HashMap<usize, usize> = HashMap::new();
+    let mut nets: HashMap<[u8; 6], (String, u8)> = HashMap::new();
+    let mut buf = vec![0u8; 8192];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while std::time::Instant::now() < deadline {
+        match h.read_bulk(0x81, &mut buf, std::time::Duration::from_millis(200)) {
+            Ok(n) if n > 0 => {
+                st.urbs += 1;
+                st.bytes += n;
+                for f in walk_rx(&buf[..n]) {
+                    st.frames += 1;
+                    *hist.entry(f.off).or_insert(0) += 1;
+                    if let Some((ssid, ch, bssid)) = parse_beacon(f.data) {
+                        nets.entry(bssid).or_insert((ssid, ch));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(rusb::Error::Timeout) => {}
+            Err(_) => break,
+        }
+    }
+    let mut offs: Vec<(usize, usize)> = hist.into_iter().collect();
+    offs.sort();
+    st.offsets = offs;
+    let mut aps: Vec<(String, [u8; 6], u8)> = nets
+        .into_iter()
+        .map(|(b, (s, c))| (s, b, c))
+        .collect();
+    aps.sort_by(|a, b| a.1.cmp(&b.1));
+    st.aps = aps;
+    st
+}
+
+/// Imprime el resumen de una ventana RX (evidencia comparable con vendor.pcap).
+pub fn print_rx(st: &RxStats) {
+    println!("\n  URBs={} bytes={} frames={}", st.urbs, st.bytes, st.frames);
+    println!("  histograma offset FC: {:?}", st.offsets);
+    if !st.aps.is_empty() {
+        println!("  APs (beacons):");
+        for (ssid, bssid, ch) in st.aps.iter().take(20) {
+            let mac = bssid.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":");
+            println!("    AP|{ssid}|{mac}|ch{ch}");
+        }
+    }
+    println!(
+        "\n📡 {} frames en la ventana — {}",
+        st.frames,
+        if st.frames > 0 { "🎉 RX EN LA MISMA ANTENA" } else { "0 frames" }
+    );
+}
+
 // ── Init BBP+RF — port de rt2800_init_bbp_30xx + rt2800_init_rfcsr_30xx ────
 // (rt2800lib.c). SIN ESTO LA RADIO NO DEMODULA: el firmware sube el MCU pero
 // los registros BBP quedan por defecto (RX muda). Medido 2026-09-23: 0 frames
@@ -590,6 +930,17 @@ pub fn init_bbp_rt3070(h: &rusb::DeviceHandle<rusb::Context>) -> Result<(), Stri
     ] {
         bbp_write(h, reg, val).map_err(|e| format!("bbp{reg}: {e}"))?;
     }
+    // Overrides BBP de EEPROM de ESTE dispositivo: el vendor netr28ux los
+    // lee del array EEPROM_BBP_START al final de rt2800_init_bbp y escribe
+    // reg1=0x40, reg3=0x00 y reg66=0x1c (vendor.pcap §3b: ventana de 19 ops
+    // BBP = write1×4 + write3×2 + write66 + config 62/63/64/82/75 + read49).
+    // BBP66=0x1c = 0x1c + 2*lna_gain con lna_gain=0 (mismo valor que el AGC
+    // init de rt2800lib.c para 2.4GHz); sin esto la radio queda con 66=0x38.
+    // Vía raíz pendiente: parsear el EFUSE (efuse_read_block) y aplicar el
+    // array real; aquí van los valores MEDIDOS del propio vendor.
+    for (reg, val) in [(1u8, 0x40u8), (3, 0x00), (66, 0x1c)] {
+        bbp_write(h, reg, val).map_err(|e| format!("bbp{reg}(eeprom): {e}"))?;
+    }
     Ok(())
 }
 
@@ -620,6 +971,8 @@ pub fn init_rfcsr_rt3070(h: &rusb::DeviceHandle<rusb::Context>) -> Result<(), St
     // loopback BBP y tono de test. filter_target BW20=0x16, BW40=0x19 (RT3070).
     // ANTES: solo rfcsr24=0x07 — sin calibración el filtro RX queda sin ajustar.
     let _f20 = rx_filter_calibration(h, false, 0x16)?;
+    // El valor BW20 manda en RFCSR24/31 al cambiar de canal (config_channel)
+    CALIB_BW20.store(_f20, std::sync::atomic::Ordering::Relaxed);
     let _f40 = rx_filter_calibration(h, true, 0x19)?;
     // Estado inicial de vuelta (final de rx_filter_calibration)
     bbp_write(h, 24, 0).map_err(|e| e.to_string())?;
@@ -635,10 +988,12 @@ pub fn init_rfcsr_rt3070(h: &rusb::DeviceHandle<rusb::Context>) -> Result<(), St
     let _ = reg_write(h, 0x0114, reg_read(h, 0x0114).unwrap_or(0) | 1);
 
     // normal_mode_setup_3xxx (rt2800lib.c:7427) — parte RT3070:
-    // RFCSR17: TX_LO1_EN=0 (bit3), R=1 (bit5 0x20 — ANTES poníamos bit2 ¡MAL!)
+    // RFCSR17: TX_LO1_EN=0 (bit3). RFCSR1_R (bit5) SOLO si NO hay LNA
+    // externo (rt2800lib.c:7440-7447: if (!external_lna_bg) set R=1);
+    // este dispositivo SÍ tiene LNA externo (vendor.pcap: rama 82=0x62/75=0x46)
+    // → NO setear bit5 (antes lo forzábamos siempre: 0x92→0xb2, ¡MAL!).
     let r17 = rfcsr_read(h, 17).unwrap_or(0);
-    let r17 = (r17 & !0x08) | 0x20;
-    rfcsr_write(h, 17, r17).map_err(|e| e.to_string())?;
+    rfcsr_write(h, 17, r17 & !0x08).map_err(|e| e.to_string())?;
     // RFCSR27 (RT3070 rev>=F): R1=0,R2=0,R3=0,R4=0 (limpiar bits de ganancia)
     let r27 = rfcsr_read(h, 27).unwrap_or(0);
     rfcsr_write(h, 27, r27 & !0x77).map_err(|e| e.to_string())?;
@@ -695,7 +1050,8 @@ fn rx_filter_calibration(h: &rusb::DeviceHandle<rusb::Context>, bw40: bool, filt
 // ── Init completo reutilizable (port del main de rt3070_init) ──────────────
 // Usado por rt3070_init y rt3070_scan (el scan necesita chip vivo y radio ON
 // antes de saltar canales). Devuelve mensajes de progreso como líneas.
-pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &str) -> Result<Vec<String>, String> {
+// SIN kick FIRMWARE(8): exigido por AGENTS.md (mata el chip 5/5 bajo WinUSB).
+pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, _fw_path: &str) -> Result<Vec<String>, String> {
     let mut log: Vec<String> = Vec::new();
 
     // 1. Reset MAC+BBP (tolerante). NOTA: el modo va en wValue (rt2x00usb
@@ -707,55 +1063,37 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
     let _ = reg_write(h, MAC_SYS_CTRL, 0x0);
     log.push("reset MAC/BBP ok".into());
 
-    // 2. Firmware
-    let fw = std::fs::read(fw_path).map_err(|e| format!("leer {fw_path}: {e}"))?;
-    // rt2800_load_firmware: AUTOWAKEUP_CFG=0 ANTES del firmware (evita que el
-    // MCU duerma el BBP durante el boot — nos faltaba, FIX 2026-09-24)
-    reg_write(h, AUTOWAKEUP_CFG, 0).map_err(|e| e.to_string())?;
+    // 2. Firmware — PROHIBIDO el kick USB_DEVICE_MODE FIRMWARE(8) bajo WinUSB
+    // (AGENTS.md: mata el chip 5/5; solo el power-cycle físico lo recupera).
+    // Si el MCU ya está vivo (autoload/arranque previo — medido en runs 8/9:
+    // MCU_CURRENT consumido SIN cargar rt2870.bin) se salta la carga, como
+    // hace Linux con autorun_detect. Si NO está vivo: error accionable, kick NUNCA.
     let mut buf4 = [0u8; 4];
-    // rt2800usb_autorun_detect: USB_DEVICE_MODE IN con value=USB_MODE_AUTORUN(17)
     let autorun = h.read_control(REQ_IN, USB_DEVICE_MODE, USB_MODE_AUTORUN, 0, &mut buf4, FIRMWARE_TIMEOUT)
         .map(|_| u32::from_le_bytes(buf4) & 3 == 2)
         .unwrap_or(false);
-    if autorun {
-        log.push("NIC en AutoRun: firmware no requerido".into());
+    let mcu_alive = mcu_request_wait(h, MCU_CURRENT, 0xff, 0, 0, 800).unwrap_or(false);
+    if mcu_alive {
+        log.push(format!(
+            "MCU vivo{} — sin kick FIRMWARE(8) (prohibido bajo WinUSB)",
+            if autorun { " (AutoRun)" } else { "" }
+        ));
     } else {
-        let mut fw_ok = 0;
-        for (i, chunk) in fw[FW_OFFSET..FW_OFFSET + FW_LENGTH].chunks(64).enumerate() {
-            let addr = FIRMWARE_IMAGE_BASE + (i * 64) as u16;
-            let (v, idx) = encode_reg_addr(addr);
-            match h.write_control(REQ_OUT, USB_MULTI_WRITE, v, idx, chunk, std::time::Duration::from_millis(500)) {
-                Ok(_) => fw_ok += 1,
-                Err(_) if i == 0 => return Err("primer chunk de firmware rechazado: chip muerto o no-RT3070".into()),
-                Err(_) => {}
-            }
-        }
-        log.push(format!("firmware {fw_ok}/64 chunks"));
-        reg_write(h, H2M_MAILBOX_CID, !0u32).map_err(|e| e.to_string())?;
-        reg_write(h, H2M_MAILBOX_STATUS, !0u32).map_err(|e| e.to_string())?;
-        // KICK DEL FIRMWARE: USB_DEVICE_MODE OUT con value=USB_MODE_FIRMWARE(8).
-        // (Antes: value=0, index=2 → UNPLUG en el campo equivocado. El MCU
-        // NUNCA arrancó de verdad y el BBP, que habilita el firmware al boot,
-        // se quedaba muerto: bbp0=0x00 para siempre.)
-        h.write_control(REQ_OUT, USB_DEVICE_MODE, USB_MODE_FIRMWARE, 0, &[], FIRMWARE_TIMEOUT)
-            .map_err(|e| format!("DEVICE_MODE FIRMWARE: {e}"))?;
-        let mut mcu_up = false;
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            if reg_read(h, MAC_SYS_CTRL).is_ok() { mcu_up = true; break; }
-        }
-        if !mcu_up { return Err("MCU no arrancó tras firmware".into()); }
-        reg_write(h, H2M_MAILBOX_CSR, 0).map_err(|e| e.to_string())?;
-        // MCU_BOOT_SIGNAL — señal de arranque inicial del firmware (rt2800.c).
-        // Con verificación real de consumo (OWNER→0): antes el MCU ignoraba el
-        // comando (bug OWNER=0x80) y seguíamos como si nada.
-        match mcu_request_wait(h, MCU_BOOT_SIGNAL, 0, 0, 0, 500) {
-            Ok(true) => log.push("MCU arriba + BOOT_SIGNAL consumido".into()),
-            Ok(false) => log.push("⚠️ BOOT_SIGNAL NO consumido por el MCU (OWNER no volvió a 0)".into()),
-            Err(e) => return Err(format!("BOOT_SIGNAL: {e}")),
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        return Err(
+            "MCU muerto: cargar firmware exigiría kick FIRMWARE(8) = chip muerto \
+             (5/5 medido bajo WinUSB). Power-cycle físico (desenchufar 15 s) y reintentar."
+                .into(),
+        );
     }
+
+    // 2b. Transporte BBP: elegir la vía viva (MCU_BBP_SIGNAL vs directa).
+    // Medido runs 8/9: sin firmware la MCU-BBP da timeout y la directa vive;
+    // con el default MCU, init_bbp fallaba con "BBP no responde".
+    let via = bbp_probe_transport(h);
+    log.push(format!(
+        "transporte BBP: {}",
+        if via { "MCU (MCU_BBP_SIGNAL)" } else { "directo (BBP_CSR_CFG)" }
+    ));
 
     // 3. USB DMA (rt2800usb_enable_radio) — el DMA se configura ANTES de la
     // radio; la activación RX/TX real va al final (rt2800_enable_radio tail).
@@ -808,4 +1146,67 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, fw_path: &
     log.push(format!("canal {channel} + PA"));
 
     Ok(log)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// URB sintético con el layout MEDIDO en vendor.pcap:
+    /// [4 len][RXWI 16][802.11 @20] y len+8 == n (111/111 URBs reales).
+    fn synthetic_beacon() -> Vec<u8> {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&0x0080u16.to_le_bytes());      // FC beacon
+        frame.extend_from_slice(&0u16.to_le_bytes());           // duration
+        frame.extend_from_slice(&[0xff; 6]);                    // addr1 = DA
+        frame.extend_from_slice(&[0x48, 0x22, 0x54, 0x88, 0x29, 0xd6]); // addr2
+        frame.extend_from_slice(&[0x48, 0x22, 0x54, 0x88, 0x29, 0xd6]); // addr3 = BSSID
+        frame.extend_from_slice(&0u16.to_le_bytes());           // seq ctl
+        frame.extend_from_slice(&[0u8; 8]);                     // timestamp
+        frame.extend_from_slice(&100u16.to_le_bytes());         // beacon interval
+        frame.extend_from_slice(&0x0411u16.to_le_bytes());      // capabilities
+        frame.extend_from_slice(&[0x00, 0x07]);                 // IE SSID
+        frame.extend_from_slice(b"LabSSID");
+        frame.extend_from_slice(&[0x03, 0x01, 0x06]);           // IE DS: canal 6
+        frame.extend_from_slice(&[0u8; 4]);                     // FCS
+        let n = 20 + frame.len();
+        let ln = n - 8;                                         // len = n - 8
+        let mut urb = Vec::new();
+        urb.extend_from_slice(&(ln as u32).to_le_bytes());      // [0..4]
+        urb.extend_from_slice(&0u32.to_le_bytes());             // RXWI W0
+        urb.extend_from_slice(&0u32.to_le_bytes());             // RXWI W1
+        urb.extend_from_slice(&0x3au32.to_le_bytes());          // RXWI W2 RSSI0
+        urb.extend_from_slice(&0u32.to_le_bytes());             // RXWI W3
+        urb.extend_from_slice(&frame);                          // 802.11 @20
+        assert_eq!(urb.len(), ln + 8);
+        urb
+    }
+
+    #[test]
+    fn walk_rx_measured_layout() {
+        let urb = synthetic_beacon();
+        let fr = walk_rx(&urb);
+        assert_eq!(fr.len(), 1, "un frame por URB (111/111 en la captura)");
+        assert_eq!(fr[0].off, 20, "el 802.11 arranca en el byte 20");
+        assert_eq!(fr[0].rssi, 0x3a, "RSSI = RXWI_W2 bits 0-7");
+        let (ssid, ch, bssid) = parse_beacon(fr[0].data).expect("parse beacon");
+        assert_eq!(ssid, "LabSSID");
+        assert_eq!(ch, 6);
+        assert_eq!(bssid, [0x48, 0x22, 0x54, 0x88, 0x29, 0xd6], "BSSID = addr3");
+    }
+
+    #[test]
+    fn walk_rx_rejects_garbage() {
+        let junk = vec![0u8; 64];
+        assert!(walk_rx(&junk).is_empty(), "len<24 → sin frames");
+    }
+
+    #[test]
+    fn mcu_constants_regression() {
+        // Regresión del bug medido 2026-09-30: 0x30 es MCU_SLEEP, no CURRENT.
+        assert_eq!(MCU_CURRENT, 0x36);
+        assert_eq!(MCU_WAKEUP, 0x31);
+        assert_eq!(MCU_BOOT_SIGNAL, 0x72);
+        assert_eq!(MCU_BBP_SIGNAL, 0x80);
+    }
 }

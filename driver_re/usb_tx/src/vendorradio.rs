@@ -70,33 +70,8 @@ fn main() {
     let _ = rx_filter_monitor(&h);
     println!("  canal {chan} + PA + RX monitor ON");
 
-    // ── RX TEST ──
+    // ── RX TEST (parser MEDIDO: RXWI 20B, FC@20 — el anterior asumía FC@36
+    //    y contaba 0 frames aunque llegaran datos) ──
     println!("\n== RX {secs}s EP 0x81 ==");
-    let mut frames = 0usize;
-    let mut buf = vec![0u8; 8192];
-    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
-    while std::time::Instant::now() < deadline {
-        match h.read_bulk(0x81, &mut buf, Duration::from_millis(100)) {
-            Ok(n) if n >= 36 => {
-                let mut off = 0usize;
-                while off + 36 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 36 || dma > 4096 { break; }
-                    if off + dma > n { break; }
-                    let w0 = u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap());
-                    let mpdu = ((w0 >> 16) & 0x0fff) as usize;
-                    if mpdu >= 26 && off + 4 + 32 + mpdu <= n { frames += 1; }
-                    off += (dma + 3) & !3;
-                }
-            }
-            Ok(_) => {}
-            Err(rusb::Error::Timeout) => {}
-            Err(e) => { println!("  read err {e:?}"); break; }
-        }
-    }
-    println!("\n📡 {frames} frames — {}", if frames > 0 {
-        "🎉 ¡RX FUNCIONA sobre el MCU del vendor!"
-    } else {
-        "0 frames"
-    });
+    print_rx(&rx_monitor(&h, secs));
 }

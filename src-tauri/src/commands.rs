@@ -266,6 +266,46 @@ fn with_iface_warn(mut body: String, warn: &Option<String>) -> String {
     }
     body
 }
+
+/// Normaliza la interfaz para wash/reaver (pcap en Windows). La ÚNICA forma que
+/// entrega DLT 127 (radiotap) es `\Device\NPF_WIFI_{GUID}`; `NPF_{GUID}` (sin
+/// WIFI_) da DLT 1 (Ethernet) y wash no ve WPS. Formas no-Npcap (wlan0…) → se
+/// detecta el primer adaptador y se devuelve aviso accionable.
+async fn normalize_wps_iface(iface: &str) -> (String, Option<String>) {
+    let t = iface.trim();
+    if let (Some(a), Some(b)) = (t.find('{'), t.find('}')) {
+        if b > a {
+            let g = t[a + 1..b].trim();
+            if g.len() == 36 && g.matches('-').count() == 4 {
+                return (format!(r"\Device\NPF_WIFI_{{{}}}", g.to_uppercase()), None);
+            }
+        }
+    }
+    let rep = crate::wifi_adapter::detect_adapters().await;
+    if let Some(ad) = rep.adapters.iter().find(|a| !a.guid.trim().is_empty()) {
+        let g = ad
+            .guid
+            .trim()
+            .trim_matches(|c: char| c == '{' || c == '}')
+            .to_uppercase();
+        let dev = format!(r"\Device\NPF_WIFI_{{{}}}", g);
+        (
+            dev.clone(),
+            Some(format!(
+                "⚠️ Interfaz '{}' no es un nombre Npcap Windows. Usando {} ({}).",
+                t, dev, ad.name
+            )),
+        )
+    } else {
+        (
+            t.to_string(),
+            Some(format!(
+                "⚠️ Interfaz '{}' sin normalizar (sin adaptador detectado); wash/reaver necesitan \\Device\\NPF_WIFI_{{GUID}}.",
+                t
+            )),
+        )
+    }
+}
 fn wrap(title: &str, body: &str, ok: bool) -> String {
     let icon = if ok { "\u{2705}" } else { "\u{274C}" };
     format!("{} {}\n{}", icon, title, body)
@@ -501,6 +541,7 @@ fn parse_wpa_psk(out: &str) -> Option<String> {
 #[command]
 pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String) -> CmdResponse {
     // Opción C: dispatcher — bully solo si existe, si no reaver (mismo objetivo).
+    let (interface, iface_warn) = normalize_wps_iface(&interface).await;
     if has_bully() {
         let prog = bully_bin();
         let args = vec!["-b".into(), bssid.clone(), interface.clone()];
@@ -512,6 +553,7 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
             (Some(p), None) => format!("✅ PIN encontrado: {}\n{}", p, r.output.lines().filter(|l| l.to_lowercase().contains("pin:")).collect::<Vec<_>>().join("\n")),
             _ => format!("bully ejecutado (BSSID {}). Revisa la salida para el progreso del PIN.\n\n{}", bssid, r.output.lines().take(40).collect::<Vec<_>>().join("\n")),
         };
+        let summary = with_opt_warn(summary, &iface_warn);
         let ok = pin.is_some();
         return CmdResponse {
             success: ok || r.success,
@@ -527,7 +569,7 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
+    let args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into(), "-F".into()];
     let r = run_bin(&app, &prog, &args).await;
     let pin = parse_wps_pin(&r.output);
     let psk = parse_wpa_psk(&r.output);
@@ -536,6 +578,7 @@ pub async fn wps_pin_bruteforce(app: AppHandle, bssid: String, interface: String
         (Some(p), None) => format!("✅ WPS PIN: {}", p),
         _ => format!("reaver ejecutado (bully.exe no encontrado → fallback automático).\nRevisa la salida para el progreso del PIN.\n\n{}", r.output.lines().take(40).collect::<Vec<_>>().join("\n")),
     };
+    if let Some(w) = iface_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = pin_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
@@ -744,14 +787,16 @@ pub async fn beacon_flood(app: AppHandle, essid: String, bssid: Option<String>, 
 pub async fn wps_pbc_attack(app: AppHandle, bssid: String, iface: Option<String>, channel: Option<u8>) -> CmdResponse {
     let prog = reaver_bin();
     let prog_s = reaver_cmd();
-    let iface_in  = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin(&app, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
     let psk = parse_wpa_psk(&r.output);
     let mut body = format!("Binario: {}\nBSSID: {}\nInterface: {}\nCanal: {}\nModo: WPS PBC (-S)\n\n{}", prog.display(), bssid, iface_in, channel.map(|c| c.to_string()).unwrap_or("auto".into()), r.output);
+    if let Some(w) = iface_warn { body = format!("{}\n\n{}", w, body); }
     if let Some(w) = ch_warn { body = format!("{}\n\n{}", w, body); }
     let ok = pin.is_some();
     let mut summary = match (&pin, &psk) {
@@ -837,13 +882,14 @@ pub async fn fakeauth_inject(app: AppHandle, bssid: String, source_mac: Option<S
 pub async fn wps_pixiedust(app: AppHandle, bssid: String, iface: Option<String>, channel: Option<u8>) -> CmdResponse {
     let prog = reaver_bin();
     let prog_s = reaver_cmd();
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin(&app, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
@@ -854,6 +900,7 @@ pub async fn wps_pixiedust(app: AppHandle, bssid: String, iface: Option<String>,
         (Some(p), None) => format!("OK PIN:{} | {}", p, body),
         _ => body.clone(),
     };
+    if let Some(w) = iface_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
@@ -873,22 +920,80 @@ pub struct WashEntry {
 }
 
 fn parse_wash(out: &str) -> Vec<WashEntry> {
-    let mut v = vec![];
+    // Formato real medido (wash v…, sin tabs):
+    //   BSSID               Ch  dBm  WPS  Lck  Vendor    ESSID
+    //   E4:C0:E2:9C:34:D4  11  00  2.0  Yes  Broadcom  Livebox6-34D0
+    //   94:FC:01:C1:67:CE   1  00  (null)              ← AP sin WPS (-a)
+    const KNOWN_VENDORS: &[&str] = &[
+        "broadcom", "ralink", "realtek", "intel", "atheros", "qualcomm", "mediatek",
+        "samsung", "sagemcom", "arcadyan", "sercomm", "netgear", "d-link", "dlink",
+        "tp-link", "tplink", "cisco", "ubiquiti", "motorola", "huawei", "zyxel",
+        "technicolor", "thomson", "comtrend", "actiontec", "2wire", "belkin", "asus",
+    ];
+    let mut v: Vec<WashEntry> = vec![];
     for line in out.lines() {
         let t = line.trim();
-        if t.is_empty() { continue; }
+        if t.is_empty() {
+            continue;
+        }
         let ll = t.to_lowercase();
-        if ll.starts_with("bssid") || ll.starts_with("---") || ll.starts_with("wash") { continue; }
+        if ll.starts_with("bssid") || ll.starts_with("---") || ll.starts_with("wash") {
+            continue;
+        }
         let parts: Vec<&str> = t.split_whitespace().collect();
-        if parts.len() < 4 { continue; }
-        if parts[0].len() != 17 || !parts[0].contains(':') { continue; }
+        if parts.len() < 4 {
+            continue;
+        }
+        if parts[0].len() != 17 || !parts[0].contains(':') {
+            continue;
+        }
         let bssid = parts[0].to_uppercase();
         let channel = parts.get(1).and_then(|s| s.parse().ok());
         let rssi = parts.get(2).and_then(|s| s.parse().ok());
-        let locked = t.to_lowercase().contains("locked") && !t.to_lowercase().contains("unlocked");
-        let essid = if parts.len() > 5 { parts[5..].join(" ") } else { String::new() };
-        let wps_version = parts.get(3).unwrap_or(&"").to_string();
-        v.push(WashEntry { bssid, channel, rssi, wps_version, wps_locked: locked, essid });
+        let wps_ver = parts.get(3).copied().unwrap_or("");
+        let is_wps = !wps_ver.is_empty()
+            && wps_ver.chars().all(|c| c.is_ascii_digit() || c == '.');
+        let (wps_version, wps_locked, essid) = if is_wps {
+            let lock_col = parts.get(4).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+            let locked = lock_col == "yes" || lock_col == "locked" || lock_col == "true";
+            // Tras Lck puede venir la columna Vendor (una sola palabra conocida) y
+            // después el ESSID; sin vendor, el ESSID empieza en parts[5].
+            // wash TRUNCA el vendor a 8 chars ("RalinkTe"): match por prefijo, y
+            // solo si queda ESSID detrás (un token solo es el ESSID, no un vendor).
+            let mut rest: Vec<&str> = if parts.len() > 5 { parts[5..].to_vec() } else { vec![] };
+            let lower0 = rest.first().map(|s| s.to_lowercase()).unwrap_or_default();
+            let vendor_is_first = rest.len() >= 2
+                && lower0 != "(null)"
+                && KNOWN_VENDORS.iter().any(|v| lower0.starts_with(v));
+            if vendor_is_first {
+                rest.remove(0);
+            }
+            let e = rest.join(" ");
+            (
+                wps_ver.to_string(),
+                locked,
+                if e == "(null)" { String::new() } else { e },
+            )
+        } else {
+            let e = parts[3..].join(" ");
+            (
+                String::new(),
+                false,
+                if e == "(null)" { String::new() } else { e },
+            )
+        };
+        // wash repite filas (updates del mismo AP en el survey): una por BSSID.
+        if v.iter().any(|e| e.bssid == bssid) {
+            continue;
+        }
+        v.push(WashEntry {
+            bssid,
+            channel,
+            rssi,
+            wps_version,
+            wps_locked,
+            essid,
+        });
     }
     v
 }
@@ -903,18 +1008,60 @@ pub struct WashResult {
 }
 
 #[command]
-pub async fn wash_scan(app: AppHandle, iface: Option<String>, channel: Option<u8>) -> WashResult {
+pub async fn wash_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    iface: Option<String>,
+    channel: Option<u8>,
+) -> Result<WashResult, String> {
     let prog = tool_path("WASH_PATH", "wash.exe");
     let prog_s = prog.to_str().unwrap_or("wash.exe").to_string();
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let mut args = vec!["-i".into(), iface_in.clone()];
-    if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
-    let r = run_bin(&app, &prog_s, &args).await;
+    if let Some(ch) = channel {
+        args.push("-c".into());
+        args.push(ch.to_string());
+    }
+    // -F: el RT3070 añade FCS a los radiotap y wash descarta TODO lo demás
+    // ("Found packet with bad FCS, skipping" → 0 filas). Medido 2026-10-01.
+    args.push("-F".into());
+    // wash en modo survey nunca termina solo: acotado (fijo 30 s / auto 60 s).
+    // El child queda registrado en AppState → «Cancelar» (cancel_attack) funciona.
+    let timeout = if channel.is_some() { 30 } else { 60 };
+    let r = run_bin_bg_opts(&app, &state, "wash_scan", &prog_s, &args, Some(timeout)).await;
     let entries = parse_wash(&r.output);
-    let mut body = format!("Binario: {}\nInterface: {}\nCanal: {}\nRedes WPS: {}\n\n{}", prog.display(), iface_in, channel.map(|c| c.to_string()).unwrap_or("todos".into()), entries.len(), r.output);
-    if let Some(w) = ch_warn { body = format!("{}\n\n{}", w, body); }
-    WashResult { success: r.success, output: wrap("Wash Scan WPS", &body, r.success), stderr: r.stderr, exit_code: r.exit_code, entries }
+    let mut body = format!(
+        "Binario: {}\nInterface: {}\nCanal: {}\nDuración: {}s (survey acotado)\nRedes WPS: {}\n\n{}",
+        prog.display(),
+        iface_in,
+        channel.map(|c| c.to_string()).unwrap_or("todos".into()),
+        timeout,
+        entries.len(),
+        r.output
+    );
+    if let Some(w) = iface_warn {
+        body = format!("{}\n\n{}", w, body);
+    }
+    if let Some(w) = ch_warn {
+        body = format!("{}\n\n{}", w, body);
+    }
+    if entries.is_empty() {
+        body = format!(
+            "{}\n⚠️ 0 redes: ¿hay APs con WPS en este canal? ¿Interfaz/monitor activos?",
+            body
+        );
+    }
+    // Éxito honesto = filas WPS parseadas de salida real (el kill del timeout es
+    // esperado, no un fallo; exit_code llega de un proceso terminado a la fuerza).
+    Ok(WashResult {
+        success: !entries.is_empty(),
+        output: wrap("Wash Scan WPS", &body, !entries.is_empty()),
+        stderr: r.stderr,
+        exit_code: r.exit_code,
+        entries,
+    })
 }
 
 // COMANDO 21c — WPS BRUTEFORCE REAVER (ruta por defecto Windows)
@@ -922,13 +1069,14 @@ pub async fn wash_scan(app: AppHandle, iface: Option<String>, channel: Option<u8
 pub async fn wps_bruteforce_reaver(app: AppHandle, bssid: String, iface: Option<String>, channel: Option<u8>, start_pin: Option<String>, delay_secs: Option<u64>) -> CmdResponse {
     let prog = reaver_bin();
     let prog_s = reaver_cmd();
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     if let Some(p) = start_pin { let p = p.trim().to_string(); if !p.is_empty() { args.push("-p".into()); args.push(p); } }
     if let Some(d) = delay_secs { args.push("-d".into()); args.push(d.to_string()); }
@@ -941,6 +1089,7 @@ pub async fn wps_bruteforce_reaver(app: AppHandle, bssid: String, iface: Option<
         (Some(p), None) => format!("OK PIN:{} | {}", p, body),
         _ => body.clone(),
     };
+    if let Some(w) = iface_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = ch_warn { summary = format!("{}\n{}", w, summary); }
     if let Some(w) = inj_warn { summary = format!("{}\n{}", w, summary); }
     let ok = pin.is_some();
@@ -999,11 +1148,18 @@ pub async fn fragment_inject(app: AppHandle, bssid: String, source_mac: Option<S
 // ═══════════════════════════════════════════════════════════════════════════════
 
 use crate::AppState;
-use tauri::{State, Emitter as _};
+use tauri::{State, Emitter as _, Manager as _};
 use tauri_plugin_shell::process::CommandEvent;
 
 /// Helper: lanza un binario en background y guarda el child en el mapa de ataques
 async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &str, exe: &str, args: &[String]) -> CmdResponse {
+    run_bin_bg_opts(app, state, attack_id, exe, args, None).await
+}
+
+/// Igual que `run_bin_bg` pero con watchdog opcional: a los `timeout_secs` se
+/// mata el child (mismo camino que cancel_attack). Necesario para binarios que
+/// nunca terminan solos (wash en modo survey = bucle infinito).
+async fn run_bin_bg_opts(app: &AppHandle, state: &State<'_, AppState>, attack_id: &str, exe: &str, args: &[String], timeout_secs: Option<u64>) -> CmdResponse {
     if let Err(hint) = require_bin(exe) {
         return CmdResponse {
             success: false, output: String::new(),
@@ -1036,6 +1192,22 @@ async fn run_bin_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &st
     {
         let mut map = state.running_attacks.lock().unwrap();
         map.insert(attack_id.to_string(), child);
+    }
+    if let Some(t) = timeout_secs {
+        let app2 = app.clone();
+        let id2 = attack_id.to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(t)).await;
+            let child = app2
+                .state::<AppState>()
+                .running_attacks
+                .lock()
+                .unwrap()
+                .remove(&id2);
+            if let Some(ch) = child {
+                let _ = ch.kill();
+            }
+        });
     }
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -1206,6 +1378,7 @@ pub async fn scan_airodump_bg(app: AppHandle, state: State<'_, AppState>, bssid_
 #[command]
 pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, interface: String, channel: Option<u8>) -> Result<CmdResponse, String> {
     let attack_id = format!("wps_{}", bssid.replace(':', ""));
+    let (interface, iface_warn) = normalize_wps_iface(&interface).await;
     let ch_warn = pin_channel_best_effort(&interface, channel).await;
     if has_bully() {
         let prog = bully_bin();
@@ -1217,6 +1390,7 @@ pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, b
             Some(p) => format!("OK PIN:{} | {}", p, r.output.lines().filter(|l| l.to_lowercase().contains("pin:")).collect::<Vec<_>>().join("\n")),
             None => format!("bully BG ejecutado. {}", r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         };
+        let summary = with_opt_warn(summary, &iface_warn);
         let summary = with_opt_warn(summary, &ch_warn);
         return Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Bruteforce BG bully {} {}", bssid, interface), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code });
     }
@@ -1225,7 +1399,7 @@ pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, b
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let mut args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), interface.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
@@ -1233,6 +1407,7 @@ pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, b
         Some(p) => format!("OK PIN:{} (reaver fallback BG) | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => "reaver BG ejecutado (bully.exe no encontrado, fallback).".into(),
     };
+    summary = with_opt_warn(summary, &iface_warn);
     summary = with_opt_warn(summary, &ch_warn);
     summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Bruteforce BG reaver {} {}", bssid, interface), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
@@ -1242,17 +1417,19 @@ pub async fn wps_pin_bruteforce_bg(app: AppHandle, state: State<'_, AppState>, b
 #[command]
 pub async fn wps_bruteforce_reaver_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, iface: Option<String>, channel: Option<u8>) -> Result<CmdResponse, String> {
     let attack_id = format!("wpsr_{}", bssid.replace(':', ""));
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa la opción 'wsl (Kali-WSL2)' en la UI para ejecutar reaver en Kali.", inj.message))
     };
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
-    let mut out = with_opt_warn(r.output, &ch_warn);
+    let mut out = with_opt_warn(r.output, &iface_warn);
+    out = with_opt_warn(out, &ch_warn);
     out = with_opt_warn(out, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS reaver BG {}", bssid), &out, r.success), stderr: r.stderr, exit_code: r.exit_code })
 }
@@ -1261,31 +1438,39 @@ pub async fn wps_bruteforce_reaver_bg(app: AppHandle, state: State<'_, AppState>
 #[command]
 pub async fn wash_scan_bg(app: AppHandle, state: State<'_, AppState>, iface: Option<String>, channel: Option<u8>) -> Result<CmdResponse, String> {
     let attack_id = "wash_scan".to_string();
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let prog = tool_path("WASH_PATH", "wash.exe");
     let prog_s = prog.to_str().unwrap_or("wash.exe").to_string();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let mut args = vec!["-i".into(), iface_in.clone()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
-    let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
+    args.push("-F".into());
+    // survey nunca termina solo → watchdog (ver run_bin_bg_opts).
+    let timeout = if channel.is_some() { 30 } else { 60 };
+    let r = run_bin_bg_opts(&app, &state, &attack_id, &prog_s, &args, Some(timeout)).await;
     let entries = parse_wash(&r.output);
     let body = format!("Redes WPS: {}\n\n{}", entries.len(), r.output);
+    let body = with_opt_warn(body, &iface_warn);
     let body = with_opt_warn(body, &ch_warn);
-    Ok(CmdResponse { success: r.success, output: wrap("Wash Scan BG", &body, r.success), stderr: r.stderr, exit_code: r.exit_code })
+    // Éxito honesto = filas reales parseadas (el kill del timeout es esperado).
+    let ok = !entries.is_empty();
+    Ok(CmdResponse { success: ok, output: wrap("Wash Scan BG", &body, ok), stderr: r.stderr, exit_code: r.exit_code })
 }
 
 /// WPS PBC en background (reaver.exe -S)
 #[command]
 pub async fn wps_pbc_attack_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, iface: Option<String>, channel: Option<u8>) -> Result<CmdResponse, String> {
     let attack_id = format!("wpspbc_{}", bssid.replace(':', ""));
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-S".into(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
@@ -1293,6 +1478,7 @@ pub async fn wps_pbc_attack_bg(app: AppHandle, state: State<'_, AppState>, bssid
         Some(p) => format!("OK PIN:{} | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => format!("PBC BG ejecutado. {}", r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
     };
+    summary = with_opt_warn(summary, &iface_warn);
     summary = with_opt_warn(summary, &ch_warn);
     summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS PBC BG {}", bssid), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
@@ -1302,14 +1488,15 @@ pub async fn wps_pbc_attack_bg(app: AppHandle, state: State<'_, AppState>, bssid
 #[command]
 pub async fn wps_pixiedust_bg(app: AppHandle, state: State<'_, AppState>, bssid: String, iface: Option<String>, channel: Option<u8>) -> Result<CmdResponse, String> {
     let attack_id = format!("wpspix_{}", bssid.replace(':', ""));
-    let iface_in = iface.unwrap_or_else(|| "wlan0".into());
+    let raw = iface.unwrap_or_else(|| "wlan0".into());
+    let (iface_in, iface_warn) = normalize_wps_iface(&raw).await;
     let prog_s = reaver_cmd();
     let ch_warn = pin_channel_best_effort(&iface_in, channel).await;
     let inj = crate::capture::check_injection_capability(iface_in.clone()).await;
     let inj_warn = if inj.supported { None } else {
         Some(format!("⚠️ Inyección no disponible en esta interfaz.\n{}\nSugerencia: usa 'wsl (Kali-WSL2)' en la UI.", inj.message))
     };
-    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into()];
+    let mut args = vec!["-i".into(), iface_in.clone(), "-b".into(), bssid.clone(), "-K".into(), "1".into(), "-vv".into(), "-L".into(), "-F".into()];
     if let Some(ch) = channel { args.push("-c".into()); args.push(ch.to_string()); }
     let r = run_bin_bg(&app, &state, &attack_id, &prog_s, &args).await;
     let pin = parse_wps_pin(&r.output);
@@ -1317,6 +1504,7 @@ pub async fn wps_pixiedust_bg(app: AppHandle, state: State<'_, AppState>, bssid:
         Some(p) => format!("OK PIN:{} | {}", p, r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
         None => format!("Pixie BG ejecutado. {}", r.output.lines().take(20).collect::<Vec<_>>().join("\n")),
     };
+    summary = with_opt_warn(summary, &iface_warn);
     summary = with_opt_warn(summary, &ch_warn);
     summary = with_opt_warn(summary, &inj_warn);
     Ok(CmdResponse { success: r.success, output: wrap(&format!("WPS Pixie BG {}", bssid), &summary, r.success), stderr: r.stderr, exit_code: r.exit_code })
@@ -1384,6 +1572,81 @@ pub async fn cleanup_temp_files(_app: AppHandle, bssid: Option<String>, keep_res
     }
 
     CleanupResult { deleted, kept, errors }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Salida REAL de wash.exe medida el 2026-10-01 (sin tabs; columnas
+    // BSSID Ch dBm WPS Lck Vendor ESSID; Lck=Yes/No; "(null)"=sin dato).
+    const WASH_SAMPLE: &str = "\
+BSSID               Ch  dBm  WPS  Lck  Vendor    ESSID
+--------------------------------------------------------------------------------
+E4:C0:E2:9C:34:D4   11  00  2.0  Yes  Broadcom  Livebox6-34D0
+E4:C0:E2:1C:46:00   11  00  2.0  Yes            Libre
+94:FC:01:C1:67:CE    1  00  (null)
+AA:BB:CC:DD:EE:FF    6  -40  (null)
+9C:3C:1B:00:11:22    3  -55  Mi Casa WiFi
+CC:D8:43:9F:BC:61   11  00  2.0  No   RalinkTe  sagemcomDEF0_Plus
+88:0F:A2:49:39:A4   11  00  2.0  Yes  Broadcom  MIWIFI_APUM
+88:0F:A2:49:39:A4   11  00  2.0  Yes  Broadcom  MIWIFI_APUM
+";
+
+    #[test]
+    fn parse_wash_real_sample() {
+        let e = parse_wash(WASH_SAMPLE);
+        assert_eq!(e.len(), 7, "dup por BSSID debe colapsar: {:?}", e);
+        assert_eq!(e[0].bssid, "E4:C0:E2:9C:34:D4");
+        assert_eq!(e[0].channel, Some(11));
+        assert_eq!(e[0].rssi, Some(0));
+        assert_eq!(e[0].wps_version, "2.0");
+        assert!(e[0].wps_locked, "Lck=Yes debe parsear como locked");
+        assert_eq!(e[0].essid, "Livebox6-34D0", "vendor no debe colar al ESSID");
+        assert_eq!(e[1].wps_version, "2.0");
+        assert!(e[1].wps_locked);
+        assert_eq!(e[1].essid, "Libre", "sin vendor el ESSID empieza en parts[5]");
+        assert_eq!(e[2].wps_version, "");
+        assert!(!e[2].wps_locked);
+        assert_eq!(e[2].essid, "", "(null) debe mapear a vacío");
+        assert_eq!(e[3].essid, "");
+        assert_eq!(e[3].channel, Some(6));
+        assert_eq!(e[4].essid, "Mi Casa WiFi");
+        assert!(!e[4].wps_locked);
+        // Vendor truncado por wash a 8 chars ("RalinkTe") → match por prefijo.
+        assert_eq!(e[5].bssid, "CC:D8:43:9F:BC:61");
+        assert_eq!(e[5].wps_version, "2.0");
+        assert!(!e[5].wps_locked, "Lck=No NO debe ser locked");
+        assert_eq!(e[5].essid, "sagemcomDEF0_Plus");
+        assert_eq!(e[6].bssid, "88:0F:A2:49:39:A4");
+        assert!(e[6].wps_locked);
+        assert_eq!(e[6].essid, "MIWIFI_APUM");
+    }
+
+    #[test]
+    fn parse_wash_ignores_header_and_short_lines() {
+        assert!(parse_wash("").is_empty());
+        assert!(parse_wash("no basura suficiente").is_empty());
+        assert!(parse_wash("wash: otra cosa").is_empty());
+    }
+
+    #[tokio::test]
+    async fn normalize_wps_iface_guid_forms() {
+        let g = "{B2449CCC-38E7-4229-9658-A2EFB3C966B6}";
+        let want = r"\Device\NPF_WIFI_{B2449CCC-38E7-4229-9658-A2EFB3C966B6}";
+        let inputs = [
+            g.to_string(),
+            format!("NPF_{}", g),
+            format!(r"\Device\NPF_{}", g),
+            format!(r"\Device\NPF_WIFI_{}", g),
+            g.to_lowercase(),
+        ];
+        for input in &inputs {
+            let (dev, warn) = normalize_wps_iface(input).await;
+            assert_eq!(dev, want, "input={}", input);
+            assert!(warn.is_none(), "input={} warn={:?}", input, warn);
+        }
+    }
 }
 
 

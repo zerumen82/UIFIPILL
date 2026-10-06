@@ -58,41 +58,16 @@ fn main() {
     let deadline = std::time::Instant::now() + Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
         match h.read_bulk(0x81, &mut buf, Duration::from_millis(100)) {
-            Ok(n) if n >= 36 => {
-                let mut off = 0usize;
-                while off + 36 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 36 || dma > 4096 { break; }
-                    if off + dma > n { break; }
-                    let wi = off + 4;
-                    let fs = wi + 32;
-                    let w0 = u32::from_le_bytes(buf[wi..wi + 4].try_into().unwrap());
-                    let mpdu = ((w0 >> 16) & 0x0fff) as usize;
-                    if mpdu >= 26 && fs + mpdu <= n {
-                        frames += 1;
-                        // parse SSID/CH/RSSI de beacons
-                        let frame = &buf[fs..fs + mpdu.saturating_sub(4)];
-                        if frame.len() > 24 && (frame[0] & 0x0f) == 0x80 {
-                            // beacon: parsear IEs
-                            let mut i = 24usize;
-                            let mut ssid = String::new();
-                            let mut ch = 0u8;
-                            while i + 2 <= frame.len() {
-                                let t = frame[i]; let l = frame[i+1] as usize;
-                                if i + 2 + l > frame.len() { break; }
-                                if t == 0 && l > 0 && l <= 32 {
-                                    ssid = frame[i+2..i+2+l].iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '?' }).collect();
-                                }
-                                if t == 3 && l >= 1 { ch = frame[i+2]; }
-                                i += 2 + l;
-                            }
-                            let bssid: [u8; 6] = frame[4..10].try_into().unwrap();
-                            let w2 = u32::from_le_bytes(buf[wi+8..wi+12].try_into().unwrap());
-                            let rssi = ((w2 & 0xff) as i32) - 110;
-                            nets.insert(bssid, (ssid, ch, rssi.clamp(0, 100) as u8));
-                        }
+            Ok(n) if n > 0 => {
+                // Layout MEDIDO (vendor.pcap): [4 len][RXWI 16][802.11 @20],
+                // stride = len+8. El parser anterior ([4][32 rxwi]) no
+                // encontraba nunca el frame → "0 frames" era un falso negativo.
+                for f in walk_rx(&buf[..n]) {
+                    frames += 1;
+                    if let Some((ssid, ch, bssid)) = parse_beacon(f.data) {
+                        let rssi = (f.rssi as i32) - 110;
+                        nets.insert(bssid, (ssid, ch, rssi.clamp(0, 100) as u8));
                     }
-                    off += (dma + 3) & !3;
                 }
             }
             Ok(_) => {}

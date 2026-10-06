@@ -60,13 +60,11 @@ fn main() {
 
     let h = open_rt3070().expect("abrir RT3070 (usa rt3070_init antes)");
 
-    // RX DMA enable (USB_DMA_CFG: RX bulk + agg). Valor de rt2800usb: 0x9C | TXEN|RXEN
-    reg_write(&h, USB_DMA_CFG, 0x0000_009C | (1 << 29) | (1 << 28)).unwrap();
-    // MAC_SYS_CTRL: enable RX (0x08) con TX también (0x0C) — radio ya ON tras init
-    reg_write(&h, MAC_SYS_CTRL, 0x0C).unwrap();
-    // BCN_TIME_CFG=0 (sin beacons propios)
-    reg_write(&h, BCN_TIME_CFG, 0).unwrap();
-    println!("✅ RX activado (USB_DMA_CFG + MAC_SYS_CTRL=0x0C) — escuchando {secs}s en EP 0x81…");
+    // RX: la MISMA secuencia probada por rt3070_scan. init_radio ya configuró
+    // USB_DMA_CFG (AGG_LIMIT=301) y MAC enable TX+RX — NO pisarlos aquí (el
+    // overwrite previo con 0x9C|(1<<29)|(1<<28) daba ~3 beacons/10s; medido).
+    let _ = rx_filter_monitor(&h);
+    println!("✅ RX armado por init_radio + filtro monitor — escuchando {secs}s en EP 0x81…");
 
     let mut file = std::fs::File::create(&out_path).expect("crear pcap");
     file.write_all(&pcap_header()).unwrap();
@@ -80,27 +78,26 @@ fn main() {
         match h.read_bulk(0x81, &mut buf, std::time::Duration::from_millis(300)) {
             Ok(n) if n >= 4 => {
                 let ts = now_ts();
-                let mut off = 0usize;
-                // Aggregación: múltiples paquetes por URB, cada uno alineado a 4 B
-                while off + 8 <= n {
-                    let dma = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
-                    if dma < 32 || dma > 4096 { break; } // sanidad (RXWI mín + frame)
-                    // El paquete: RXWI(32) + 802.11(len = dma - 32 - 4crc)
-                    if off + dma > n { break; }
-                    let frame_start = off + 4 + 32;
-                    let frame_len = dma.saturating_sub(4 + 32 + 4); // sin USB dma hdr, sin RXWI, sin FCS
-                    if frame_len >= 24 && off + 4 + 32 + frame_len <= n {
+                // Layout MEDIDO (vendor.pcap): [4 len][RXWI 16][802.11 @20],
+                // stride = len+8, FCS = últimos 4 bytes. El parser anterior
+                // ([4][32 rxwi]) escribía basura en el pcap.
+                for f in walk_rx(&buf[..n]) {
+                    let frame_len = f.data.len().saturating_sub(4); // sin FCS
+                    if frame_len >= 24 {
                         let mut rec = rt.clone();
-                        rec.extend_from_slice(&buf[frame_start..frame_start + frame_len]);
+                        rec.extend_from_slice(&f.data[..frame_len]);
                         file.write_all(&pcap_packet(ts, &rec)).unwrap();
                         pkt_count += 1;
                         if pkt_count <= 5 {
-                            let fc = u16::from_le_bytes(buf[frame_start..frame_start + 2].try_into().unwrap());
-                            println!("  [{pkt_count}] {n} B urb, dma={dma}, FC={fc:#06x} type={} sub={}", fc & 3, (fc >> 4) & 0xF);
+                            let fc = u16::from_le_bytes([f.data[0], f.data[1]]);
+                            println!(
+                                "  [{pkt_count}] {n} B urb, FC={fc:#06x} type={} sub={} rssi={}",
+                                fc & 3,
+                                (fc >> 4) & 0xF,
+                                f.rssi
+                            );
                         }
                     }
-                    // cada paquete USB aggr va alineado a 4 bytes
-                    off += (dma + 3) & !3;
                 }
             }
             Ok(_) => {} // corto: ruido
@@ -114,5 +111,11 @@ fn main() {
 
     file.flush().ok();
     println!("\n✅ Capturados {pkt_count} frames → {out_path}");
+    if pkt_count == 0 {
+        // Éxito = evidencia real (AGENTS.md regla 2): 0 frames NO es éxito.
+        // Causas medidas: radio sin init (rt3070_init previo) o canal sin tráfico.
+        eprintln!("⚠️ 0 frames en {secs}s: RX no armado (¿rt3070_init previo?) o canal sin tráfico");
+        std::process::exit(2);
+    }
     println!("   Convertir: pcap_to_22000 (nativo) o hcxpcapngtool");
 }
