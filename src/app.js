@@ -10,6 +10,9 @@ const $  = id => document.getElementById(id);
 const esc = s => String(s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 window.esc = esc;
+// esc para atributos HTML (esc comillas: SSIDs con " o ' no rompen data-*)
+const escAttr = s => esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+window.escAttr = escAttr;
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -28,8 +31,8 @@ function el(tag, cls, html) {
 //     historial y se reconstruye al abrir el tab. Antes cada evento de un ataque
 //     en marcha pintaba en un panel invisible y el hilo de UI se saturaba, así
 //     que los clics del sidebar dejaban de responder (no se podía volver).
-const LOG_MAX_LINES = 500;   // historial y nodos máximos en #cv
-const LOG_PAINT_MAX = 200;   // entradas incrementales máximas por frame
+const LOG_MAX_LINES = 5000;   // historial y nodos máximos en #cv (verbose real: sin recorte)
+const LOG_PAINT_MAX = 1000;   // entradas incrementales máximas por frame
 const LOG_COLORS = { error: '#f07178', warn: '#e6b455', ok: '#7dcf8e' };
 
 let _logHist = [];           // [{ line, level }] — historial (fuente del redibujado)
@@ -70,8 +73,9 @@ function _renderConsoleTail() {
 function _paintConsole() {
   const cv = $('cv');
   if (!cv) { _logPending.length = 0; return; }
-  if (!$('tab-console')?.classList.contains('active')) {
-    // Consola oculta: cero trabajo de layout; se redibuja al abrir el tab.
+  if (!$('tab-attack')?.classList.contains('active')) {
+    // Historial vive en el tab Atacar: si no está visible, cero trabajo de
+    // layout; se redibuja al abrir el tab.
     if (_logPending.length) { _logPending.length = 0; _cvDirty = true; }
     return;
   }
@@ -171,7 +175,7 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   const sabMeta = document.getElementById('sab-meta');
   if (bar) bar.style.display = 'flex';
   if (sabSsid) sabSsid.textContent = `${ssid || 'Red oculta'}`;
-  if (sabMeta) sabMeta.textContent = `${bssid} · ${signal}% · CH ${channel} · ${security}`;
+  if (sabMeta) sabMeta.textContent = `${bssid} · ${signal ? signal + '%' : 'señal n/d'} · CH ${channel} · ${security}`;
 
   const attackBssid = document.getElementById('attack-bssid');
   if (attackBssid) {
@@ -194,6 +198,7 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
 
   syncTargetEverywhere(bssid, ssid, channel);
   profileTarget(bssid);
+  renderTargetBar();
 
   window.showTab('attack');
 };
@@ -219,18 +224,30 @@ window.syncTargetEverywhere = function (bssid, ssid, channel) {
   // BSSID en todas las tarjetas que lo piden
   ['fakeauth-bssid','deauth-bssid','arpreply-bssid','chopchop-bssid','frag-bssid',
    'latte-bssid','wpspbc-bssid','pixie-bssid','rogue-bssid','airodump-bssid',
-   'wsl-bssid','keygen-bssid','wpa3-bssid',
+   'wsl-bssid','keygen-bssid','wpa3-bssid','usbraw-bssid',
   ].forEach(setB);
 
   // SSID donde aplica (solo si la red no está oculta)
   if (ssid) {
-    ['keygen-ssid','conn-ssid','et-ssid','wpa3-ssid','handshake-essid','rogue-essid'].forEach(setS);
+    ['keygen-ssid','conn-ssid','et-ssid','wpa3-ssid','handshake-essid','rogue-essid',
+     'usbraw-ssid',
+    ].forEach(setS);
   }
 
   // Canal del AP objetivo (la radio Windows no salta de canal: operar en el suyo)
   ['pmkid-chan','handshake-chan','wps-chan','wpspbc-chan','pixie-chan','wash-chan',
    'et-chan','wpa3-chan','rogue-chan','beacon-chan','wsl-chan','airodump-chan',
+   'usbraw-chan',
   ].forEach(setCh);
+
+  // Objetivo visible en la tarjeta WPS PIN (siempre sincronizado aquí).
+  const wtxt = $('wps-target-txt');
+  if (wtxt) {
+    wtxt.textContent = bssid
+      ? `${ssid || '(sin ESSID)'} · ${bssid}${ch >= 1 ? ' · CH ' + ch : ''}`
+      : '— sin seleccionar —';
+    wtxt.style.color = bssid ? 'var(--text)' : 'var(--muted)';
+  }
 
   log(`Objetivo sincronizado en ${filled} campos de ataque (BSSID${ssid ? ' + SSID' : ''}${ch >= 1 ? ' + CH' + ch : ''}).`, 'info');
 };
@@ -238,10 +255,11 @@ window.syncTargetEverywhere = function (bssid, ssid, channel) {
 // Cambio en el dropdown de objetivo del tab de ataque: sincroniza todo + perfila.
 window.onTargetChange = function () {
   const v = $('attack-bssid')?.value;
-  if (!v) return;
+  if (!v) { renderTargetBar(); return; }
   const n = lastNets.find(x => (x.bssid || '').toUpperCase() === v.toUpperCase());
   syncTargetEverywhere(v, n?.ssid, n?.channel);
   profileTarget(v);
+  renderTargetBar();
 };
 
 // ── Perfilador de objetivo (solo lectura) ─────────────────────────────────
@@ -258,7 +276,20 @@ const BADGE_LABELS = {
 
 async function profileTarget(bssid) {
   const box = document.getElementById('target-verdict');
-  if (!bssid) { if (box) box.style.display = 'none'; return; }
+  if (!bssid) {
+    if (box) box.style.display = 'none';
+    clearRecommendations();
+    return;
+  }
+  // Al cambiar de objetivo se ocultan las recomendaciones/veredicto del anterior
+  // hasta que llegue el perfil nuevo (evita recs de otra red a mitad de cambio).
+  const stale = !window._profile ||
+    (window._profile.bssid || '').toUpperCase() !== bssid.toUpperCase();
+  if (stale) {
+    window._profile = null;
+    clearRecommendations();
+    if (box) box.style.display = 'none';
+  }
   try {
     const p = await window.__invoke('profile_target', { bssid });
     window._profile = p;
@@ -266,6 +297,7 @@ async function profileTarget(bssid) {
   } catch (e) {
     log(`Perfilador: ${e}`, 'warn');
     if (box) box.style.display = 'none';
+    clearRecommendations();
   }
 }
 window.profileTarget = profileTarget;
@@ -273,6 +305,10 @@ window.profileTarget = profileTarget;
 function renderProfile(p) {
   const box = document.getElementById('target-verdict');
   if (!box || !p) return;
+  // Carrera de perfiles: si mientras cargaba el usuario cambió de objetivo,
+  // la respuesta corresponde a otra red → se descarta (no pintar nada viejo).
+  const cur = valOrEmpty($('attack-bssid')?.value);
+  if (cur && (p.bssid || '').toUpperCase() !== cur.toUpperCase()) return;
   const color = VERDICT_COLORS[p.verdict] || 'var(--gray)';
   box.style.display = 'block';
   box.style.borderColor = color;
@@ -285,7 +321,323 @@ function renderProfile(p) {
   badges.innerHTML = (p.badges || []).map(b =>
     `<span style="font-size:10.5px;font-weight:600;border:1px solid ${color}55;color:${color};border-radius:99px;padding:2px 10px">${esc(BADGE_LABELS[b] || b)}</span>`
   ).join('');
+  renderTargetBar(); // el veredicto compacto de la barra sticky se actualiza
+  renderRecommendations(p);
+  renderSectionNA(p);
+  renderHero();
 }
+
+// ── Barra de objetivo fija (sticky) del tab Ataque ─────────────────────
+// Primer hijo de .attack-body: SSID·BSSID·CH·seguridad·señal + veredicto
+// compacto + acciones directas, SIEMPRE visibles al hacer scroll. Se repinta
+// en cada cambio de objetivo (fila del scan, dropdown, wash) y cuando llega
+// el perfil (renderProfile). Sin objetivo → oculta.
+function renderTargetBar() {
+  const bar = $('atk-target-bar');
+  if (!bar) return;
+  const bssid = valOrEmpty($('attack-bssid')?.value);
+  if (!bssid) { bar.style.display = 'none'; return; }
+  const n = (typeof lastNets !== 'undefined' ? lastNets : []).find(
+    x => (x.bssid || '').toUpperCase() === bssid.toUpperCase());
+  const p = window._profile;
+  const prof = (p && (p.bssid || '').toUpperCase() === bssid.toUpperCase()) ? p : null;
+  const ssid = n?.ssid || prof?.ssid || 'Red oculta';
+  const ch   = n?.channel ?? prof?.channel ?? '?';
+  const sig  = n?.signal != null ? `${n.signal}%`
+             : (prof?.signal != null ? `${prof.signal}%` : 'señal n/d');
+  const sec  = n?.security || (prof ? `${prof.auth}/${prof.cipher}` : 'seguridad n/d');
+  bar.style.display = 'flex';
+  const sEl = $('atb-ssid');
+  if (sEl) { sEl.textContent = ssid; sEl.title = ssid; }
+  const mEl = $('atb-meta');
+  if (mEl) {
+    const meta = `${bssid} · CH ${ch} · ${sec} · ${sig}`;
+    mEl.textContent = meta;
+    mEl.title = meta;
+  }
+  const vEl = $('atb-verdict');
+  if (vEl) {
+    if (prof) {
+      vEl.textContent = prof.title;
+      vEl.title = prof.detail || prof.title;
+      vEl.style.color = VERDICT_COLORS[prof.verdict] || 'var(--gray)';
+      vEl.style.display = '';
+    } else {
+      vEl.textContent = '';
+      vEl.style.display = 'none';
+    }
+  }
+  renderHero();
+}
+window.renderTargetBar = renderTargetBar;
+
+// «✖ Cambiar red» de la barra sticky: quita el objetivo y vuelve al escaneo
+// para elegir otra (el flujo natural de selección es scan → clic → Ataque).
+window.changeTarget = function () {
+  window.clearSelection();
+  window.showTab('scan');
+};
+
+// ── Recomendaciones automáticas según el perfil de la red ──────────────
+// Traduce el veredicto del perfilador a pasos CONCRETOS en lenguaje llano,
+// con botones que ejecutan la acción (o saltan a la sección que toca).
+// Sin nada inventado: si la vía requiere Linux, se dice claramente.
+function clearRecommendations() {
+  const box = $('target-recs');
+  if (box) box.style.display = 'none';
+  const list = $('rec-list');
+  if (list) list.innerHTML = '';
+  renderSectionNA(null); // sin perfil → sin etiquetas «no aplica»
+  renderHero();
+}
+window.clearRecommendations = clearRecommendations;
+
+function recBtn(label, onclick, title) {
+  return `<button class="atk-btn" style="padding:3px 11px;font-size:11px;margin:0 4px 2px 0" ` +
+    `onclick="${onclick}"${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
+}
+const REC_WASH = () => recBtn('&#x1F9FC; Comprobar si tiene WPS', 'recWash()',
+  'wash escanea APs con WPS; netsh no expone WPS. Requiere modo medido (monitor) para ver frames.');
+const REC_KALI = () => recBtn('&#x1F5A5;&#xFE0F; Generar Kit Kali', 'genKaliKit()',
+  'Lista de comandos listos para copiar en Kali live USB (este Windows no puede inyectar con la RT3070).');
+const REC_AUTO = () => recBtn('&#x26A1; Ataque completo', 'autoAttack()',
+  'Pipeline automático: perfil → modo monitor → captura → convertir → crack → keygen (solo pasos que apliquen).');
+const REC_PMKID = () => recBtn('&#x1F4F7; Capturar contrase&ntilde;a', "quickAttack('pmkid')",
+  'Captura PMKID 60 s (la evidencia que crackea hashcat).');
+
+function buildRecItems(p) {
+  const k = [];
+  switch (p.verdict) {
+    case 'open':
+      k.push('Esta red <b>no está cifrada: no hay contraseña que descifrar</b>. El tráfico se lee tal cual (solo tu red / lab).');
+      k.push('Para usarla, conecta el equipo desde el propio Windows (Ajustes de red) — aquí no hace falta crackear nada.');
+      break;
+    case 'wep':
+      k.push('WEP es roto: con suficientes IVs la clave sale en minutos, <b>pero hace falta inyección → solo Linux</b> (Kali live USB).');
+      k.push(REC_KALI() + ' y sigue el paso «Kit Kali» de ahí.');
+      k.push('En Windows la sección 5 (inyección) está <b>bloqueada por el driver/Npcap (medido: err 31)</b>: no pierdas tiempo ahí.');
+      break;
+    case 'wpa_legacy':
+      k.push('WPA-TKIP: el PMKID no es fiable en la mayoría de APs → hace falta el <b>handshake completo</b>: desconectar clientes y capturar la reconexión.');
+      k.push(REC_AUTO() + ' o manual: ' + REC_PMKID() + ' y si sale vacía, &#x1F6AB; Desconectar (barra de arriba).');
+      k.push('La desconexión (deauth) <b>requiere inyección → Linux</b>; en Windows solo funciona la captura pasiva. ' + REC_KALI());
+      break;
+    case 'transition':
+      k.push('<b>Primero confirma MFP en Linux</b> (tshark: MFPR=0). Si MFP está activo, el deauth no hará absolutamente nada (netsh no expone MFP: no lo intentes a ciegas).');
+      k.push('Si MFP lo permite: deauth + rogue AP solo-WPA2 (sección 7) → handshake clásico → crack.');
+      k.push('Alternativa sin deauth: PMKID de la pata WPA2. ' + REC_PMKID());
+      k.push(REC_WASH());
+      break;
+    case 'wpa3_sae':
+      k.push('<b>WPA3-SAE puro no se descifra offline</b>: no existe hash que atacar con hashcat. Sé honesto contigo: aquí no hay «crack rápido».');
+      k.push('Comprueba si escribe WPS o si hay pata WPA2 oculta: ' + REC_WASH() + ' y la sección 3 (Auditoría WPA3).');
+      k.push('Si tiene WPS abierto → PIN WPS (sección 4) es la vía real.');
+      k.push('Vías largas: Wacker online (sección 3, lento y ruidoso, solo claves débiles) o portal cautivo (sección 7). Ambas requieren Linux. ' + REC_KALI());
+      break;
+    case 'enterprise':
+      k.push('802.1X (Enterprise) <b>no tiene PSK que crackear</b>: PMKID y handshake no aplican.');
+      k.push('Vías reales: validar el certificado del RADIUS o relay EAP (hostapd-mana) — requiere lab con RADIUS propio y Linux.');
+      break;
+    case 'unknown':
+      k.push('netsh no devolvió datos reconocibles para este BSSID. <b>Reescanea</b> y vuelve a seleccionar la red.');
+      k.push(recBtn('&#x1F50D; Reescanear ahora', 'recRescan()'));
+      break;
+    case 'wpa2_psk':
+    default:
+      k.push('Si tu SSID es de los típicos (Jazztel_, WLAN_, Thomsón/WiFi…), prueba <b>primero las claves de fábrica</b>: segundos, sin antena ni captura. ' +
+        recBtn('&#x1F511; Probar claves de fábrica', 'recKeygen()'));
+      k.push('Captura la evidencia de la contraseña y, si sale vacía, desconecta clientes para forzar el handshake: ' + REC_AUTO());
+      k.push('¿Tiene WPS? netsh no lo ve (lo dice el perfilador): ' + REC_WASH());
+      k.push('Con el hash en mano (.22000) ve a la <b>sección 2 (Estrategia de crack)</b>: hashcat corre aquí con tu GPU.');
+      k.push('Ojo con el deauth: si el AP tiene MFP activo no desconectará (netsh no expone MFP; confírmalo en Linux antes de insistir).');
+      break;
+  }
+  return k;
+}
+
+function renderRecommendations(p) {
+  const box = $('target-recs');
+  const list = $('rec-list');
+  if (!box || !list) return;
+  if (!p) { clearRecommendations(); return; }
+  const items = buildRecItems(p);
+  if (!items.length) { clearRecommendations(); return; }
+  list.innerHTML = items.map(it => `<li style="margin-bottom:5px">${it}</li>`).join('');
+  box.style.display = 'block';
+}
+window.renderRecommendations = renderRecommendations;
+
+// Acciones de los botones de recomendaciones (definidas aquí para que ningún
+// onclick inline quede huérfano). Abren antes la sección que toca: si está
+// plegada, el scrollIntoView no la mostraría.
+window.recKeygen = function () {
+  window.useTargetForKeygen();
+  const r = window.keygenRun();
+  jumpSection('sec-access');
+  setTimeout(() => $('keygen-out')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+  return r;
+};
+window.recWash = function () {
+  const r = window.doCmd('wash_scan', window.doWashScan);
+  jumpSection('sec-wps');
+  setTimeout(() => $('wash-results')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 400);
+  return r;
+};
+window.recRescan = function () {
+  window.showTab('scan');
+  return window.doScan();
+};
+
+// ── Chips de salto + acordeón de secciones (2-8 plegables) ─────────────
+// La sección 1 (Flujo principal) es un div siempre visible; las demás son
+// <details> con acordeón: al abrir una se cierran las demás.
+window.jumpSection = function (id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.tagName === 'DETAILS') el.open = true;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+document.querySelectorAll('details.atk-section').forEach(d => {
+  d.addEventListener('toggle', () => {
+    if (!d.open) return;
+    document.querySelectorAll('details.atk-section').forEach(o => {
+      if (o !== d) o.open = false;
+    });
+  });
+});
+
+// Etiqueta «no aplica a esta red» en los chips, según el veredicto del
+// perfilador. SOLO informativa: nada se bloquea (regla de gating del proyecto).
+const SECTION_NA = {
+  open:       ['sec-crack', 'sec-wpa3', 'sec-inject'], // sin cifrado: nada que crackear ni deauth
+  enterprise: ['sec-crack', 'sec-wpa3', 'sec-inject'], // sin PSK: crack/deauth no aplican
+  wep:        ['sec-wpa3'],
+  wpa_legacy: ['sec-wpa3'],
+  wpa2_psk:   ['sec-wpa3'],
+  transition: [],
+  wpa3_sae:   [],
+  unknown:    [],
+};
+function renderSectionNA(p) {
+  const na = (p && SECTION_NA[p.verdict]) || [];
+  ['sec-crack', 'sec-wpa3', 'sec-inject'].forEach(id => {
+    const tag = $('na-' + id);
+    if (tag) tag.classList.toggle('on', na.includes(id));
+  });
+}
+window.renderSectionNA = renderSectionNA;
+
+// ── Héroe "Para esta red": flujo único visual por veredicto ────────────
+// Sin jerga técnica: la red elegida manda. Los botones llaman SOLO a flujos
+// ya existentes y verificados (handshake directo, wash, crack, Kit Kali…).
+function flowResult(msg) {
+  const el = $('flow-result');
+  if (!el) return;
+  if (!msg) { el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+window.flowResult = flowResult;
+
+function heroBtn(label, onclick, cls, title) {
+  return `<button class="atk-btn ${cls || ''}" onclick="${onclick}"` +
+    (title ? ` title="${title}"` : '') + `>${label}</button>`;
+}
+
+function renderHero() {
+  const title = $('hero-title'), desc = $('hero-desc'), btns = $('hero-btns');
+  if (!title || !desc || !btns) return;
+  const bssid = valOrEmpty($('attack-bssid')?.value);
+  const n = (typeof lastNets !== 'undefined' ? lastNets : []).find(
+    x => bssid && (x.bssid || '').toUpperCase() === bssid.toUpperCase());
+  const p = (window._profile &&
+    (window._profile.bssid || '').toUpperCase() === (bssid || '').toUpperCase())
+    ? window._profile : null;
+  // Luces 1-2-3: objetivo · antena · perfil
+  const lt = $('hero-l-target'), la = $('hero-l-ant'), lp = $('hero-l-prof');
+  if (lt) {
+    lt.textContent = bssid
+      ? `1 · Objetivo: ${(n?.ssid || p?.ssid || 'red')} · ${bssid}${(n?.channel ?? p?.channel) ? ' · CH ' + (n?.channel ?? p?.channel) : ''}`
+      : '1 · Objetivo: — elige una red';
+    lt.className = 'hero-light' + (bssid ? ' ok' : '');
+  }
+  const antOk = window._usbAlive === true;
+  if (la) {
+    la.textContent = antOk ? '2 · Antena: lista' : '2 · Antena: sin verificar';
+    la.className = 'hero-light' + (antOk ? ' ok' : ' warn');
+  }
+  if (lp) {
+    lp.textContent = p ? `3 · Perfil: ${p.title}` : '3 · Perfil: —';
+    lp.className = 'hero-light' + (p ? ' ok' : '');
+  }
+  if (!bssid) {
+    title.innerHTML = '&#x1F3AF; Para esta red';
+    desc.textContent = 'Elige una red del escaneo y aquí verás el camino recomendado para ella, paso a paso.';
+    btns.innerHTML =
+      heroBtn('&#x1F50D; Escanear redes', "showTab('scan')", 'atk-btn--green') +
+      heroBtn('&#x1F50D; Verificar antena', 'usbRawStatus()', '');
+    return;
+  }
+  const v = p?.verdict || 'unknown';
+  const ssid = n?.ssid || p?.ssid || 'esta red';
+  const B = [];
+  const handshakeBtn = heroBtn('&#x1F3AF; Capturar handshake', 'usbRawHandshake()',
+    'atk-btn--green', 'Deauth + captura con la misma antena y conversión a .22000');
+  const crackBtn = heroBtn('&#x1F512; Crackear', "doCmd('pmkid_crack', crackPmkid)",
+    'atk-btn--red', 'hashcat contra el .22000 capturado');
+  const washBtn = heroBtn('&#x1F9FC; Comprobar WPS', 'recWash()',
+    'atk-btn--blue', 'wash necesita modo monitor; si sale abierto, el PIN es la vía');
+  const kaliBtn = heroBtn('&#x1F5A5;&#xFE0F; Kit Kali', 'genKaliKit()', '',
+    'Comandos listos para Kali live USB con BSSID y canal ya puestos');
+  const verifyBtn = antOk ? '' :
+    heroBtn('&#x1F50D; Verificar antena', 'usbRawStatus()', '');
+  switch (v) {
+    case 'open':
+      title.innerHTML = '&#x1F310; Red abierta — sin contraseña';
+      desc.textContent = `${ssid}: no hay nada que descifrar. Conéctate desde Windows; solo audita tu propia red.`;
+      btns.innerHTML = heroBtn('&#x1F517; Conectar', 'wifiConnect()', 'atk-btn--green') + verifyBtn;
+      break;
+    case 'wep':
+      title.innerHTML = '&#x1F511; WEP — solo con Kali';
+      desc.textContent = `${ssid}: WEP se rompe con inyección y este equipo solo la hace en Linux. Genera el kit y sigue en Kali.`;
+      btns.innerHTML = kaliBtn + washBtn + verifyBtn;
+      break;
+    case 'wpa_legacy':
+      title.innerHTML = '&#x1F511; WPA clásico — handshake completo';
+      desc.textContent = `${ssid}: el PMKID no es fiable aquí; hay que forzar la reconexión y capturar el handshake.`;
+      btns.innerHTML = handshakeBtn + crackBtn + kaliBtn + verifyBtn;
+      break;
+    case 'transition':
+      title.innerHTML = '&#x21C4; Transición WPA2+WPA3 — confirma MFP';
+      desc.textContent = `${ssid}: antes de atacar confirma MFP en Linux. Si lo permite: handshake clásico; si no: PMKID de la pata WPA2.`;
+      btns.innerHTML = handshakeBtn + washBtn + kaliBtn + verifyBtn;
+      break;
+    case 'wpa3_sae':
+      title.innerHTML = '&#x1F409; WPA3 puro — sin crack offline';
+      desc.textContent = `${ssid}: SAE no deja hash. Comprueba WPS: si está abierto, el PIN es la vía real.`;
+      btns.innerHTML = washBtn + heroBtn('&#x1F409; Auditar WPA3', 'wpa3Audit()', 'atk-btn--orange') + kaliBtn + verifyBtn;
+      break;
+    case 'enterprise':
+      title.innerHTML = '&#x1F3E2; Enterprise — sin PSK';
+      desc.textContent = `${ssid}: 802.1X no tiene contraseña compartida que crackear. Requiere lab RADIUS en Linux.`;
+      btns.innerHTML = kaliBtn + verifyBtn;
+      break;
+    case 'wpa2_psk':
+    default:
+      title.innerHTML = `&#x1F3AF; ${ssid} — camino recomendado`;
+      desc.textContent = '1º prueba claves de fábrica (segundos), 2º captura el handshake, 3º crackéalo. ¿WPS? compruébalo en paralelo.';
+      btns.innerHTML =
+        heroBtn('&#x1F511; Probar claves de fábrica', 'recKeygen()', 'atk-btn--blue') +
+        handshakeBtn + crackBtn + washBtn + verifyBtn;
+      break;
+  }
+  if (v === 'unknown') {
+    desc.textContent = 'Reescanea y vuelve a elegir la red para perfilarla.';
+    btns.innerHTML = heroBtn('&#x1F50D; Reescanear', 'recRescan()', 'atk-btn--green') + verifyBtn;
+  }
+}
+window.renderHero = renderHero;
 
 // ── Tabs ─────────────────────────────────────────────────────────────────
 // Delegación en el sidebar: un único listener para todos los nav-btn, a prueba
@@ -299,6 +651,9 @@ document.querySelector('.sidebar')?.addEventListener('click', (ev) => {
 });
 
 window.showTab = function (id) {
+  // Fusión Ataque+Consola: el tab Consola redirige a Atacar (el verbose vive
+  // allí). Se conserva el id por compatibilidad con llamadas antiguas.
+  if (id === 'console') id = 'attack';
   try {
     const tab = $(`tab-${id}`);
     const nav = $(`nav-${id}`);
@@ -310,11 +665,15 @@ window.showTab = function (id) {
     nav.classList.add('active');
     activeTab = id;
     // Un único refresco por cambio de tab (no por evento de ataque):
-    //  · Consola → redibuja el historial acumulado mientras estaba oculta.
+    //  · Atacar → redibuja historial + vuelca la salida viva acumulada.
     //  · Escanear → refresca la salida rápida y su scroll.
-    //  · Ataque  → vuelca la salida viva acumulada mientras no se veía.
-    if (id === 'console') {
+    if (id === 'attack') {
       _renderConsoleTail();
+      _flushLive();
+      // Héroe "Para esta red": repinta el camino recomendado al entrar.
+      renderHero();
+      // Veredicto de hardware informativo (sin gating: nada se bloquea).
+      if (window.applyHardwareGates) window.applyHardwareGates();
     } else if (id === 'scan') {
       const mini = $('mini-cv');
       if (mini) { mini.textContent = logLines.slice(-3).join('\n'); queueScroll(mini); }
@@ -333,10 +692,6 @@ window.showTab = function (id) {
           }
         }).catch(() => {});
       }
-    } else if (id === 'attack') {
-      _flushLive();
-      // Veredicto de hardware informativo (sin gating: nada se bloquea).
-      if (window.applyHardwareGates) window.applyHardwareGates();
     }
     _flushLog();
   } catch (e) {
@@ -419,6 +774,12 @@ window.doScan = async function () {
       renderHeader(`Error · ${result.error}`);
       renderRows([]);
       $('status-txt').textContent = 'Error';
+      // Sin límites: si netsh no ve nada (antena rebindeada a WinUSB — no es
+      // «WiFi» para netsh), intenta el scan USB crudo antes de rendirse.
+      log('Intentando escaneo USB crudo como alternativa…', 'info');
+      const okUsb = await window.usbRawScan();
+      $('status-txt').textContent = okUsb ? 'Listo · USB crudo' : 'Error';
+      $('count-pill').style.display = 'inline';
       return;
     }
 
@@ -428,6 +789,14 @@ window.doScan = async function () {
     log(`Escaneo completado en ${ms} ms · ${nets.length} redes encontradas`, 'info');
     renderHeader(`${ms} ms · ${nets.length} red${nets.length === 1 ? '' : 'es'} encontrada${nets.length === 1 ? '' : 's'}`);
     renderRows(nets);
+    if (nets.length === 0) {
+      // Sin límites: netsh ve 0 redes → scan USB crudo automático (hopping 1-13).
+      log('netsh ve 0 redes — lanzando escaneo USB crudo automáticamente…', 'info');
+      const okUsb = await window.usbRawScan();
+      $('status-txt').textContent = okUsb ? 'Listo · USB crudo' : 'Sin redes';
+      $('count-pill').style.display = 'inline';
+      return;
+    }
     $('status-txt').textContent = 'Listo';
     $('count-pill').style.display = 'inline';
   } catch (err) {
@@ -475,6 +844,10 @@ let lastNets = []; // last scan result — feeds attack BSSID dropdown
 window.syncTargetList = function () {
   const sel = $('attack-bssid');
   if (!sel) return;
+  // Conserva el objetivo activo al refrescar el dropdown: antes un re-scan
+  // (o el scan automático) vaciaba la selección y perdías el objetivo a mitad
+  // de un ataque. Si el AP dejó de verse se añade una opción honesta.
+  const prev = valOrEmpty(sel.value);
   sel.innerHTML = '<option value="">-- Selecciona una red de la lista --</option>';
   lastNets.forEach(n => {
     const opt   = document.createElement('option');
@@ -482,6 +855,22 @@ window.syncTargetList = function () {
     opt.textContent = `${n.ssid}  ·  ${n.bssid || 'sin bssid'}  ·  ${n.security}`;
     sel.appendChild(opt);
   });
+  if (prev) {
+    const still = lastNets.some(n => (n.bssid || '').toUpperCase() === prev.toUpperCase());
+    if (still) {
+      sel.value = prev;
+    } else {
+      const prof = window._profile;
+      const ssid = (prof && (prof.bssid || '').toUpperCase() === prev.toUpperCase() && prof.ssid)
+        ? prof.ssid : prev;
+      const opt = document.createElement('option');
+      opt.value = prev;
+      opt.textContent = `${ssid}  ·  ${prev}  ·  fuera del último scan`;
+      sel.appendChild(opt);
+      sel.value = prev;
+    }
+  }
+  renderTargetBar();
 };
 
 function getSelectedBssid() {
@@ -533,6 +922,7 @@ function autoSelectStrongest() {
     sel.value = strongest.bssid || '';
     log(`Objetivo auto-seleccionado: ${strongest.ssid || 'Red oculta'} (${strongest.bssid}) · ${strongest.signal}% · CH${strongest.channel || '?'} · ${strongest.security}`, 'ok');
     window.syncTargetEverywhere(strongest.bssid, strongest.ssid, strongest.channel);
+    renderTargetBar();
   }
   return strongest.bssid || null;
 }
@@ -549,8 +939,13 @@ window.scanAndAutoAttack = async function () {
     renderHeader(`${nets.length} redes encontradas`);
     renderRows(nets);
     if (!nets.length) {
-      log('No se encontraron redes. No se puede iniciar auto-ataque.', 'warn');
-      return;
+      // Sin límites: fallback al scan USB crudo antes de rendirse.
+      log('netsh sin redes — probando escaneo USB crudo para el auto-ataque…', 'info');
+      await window.usbRawScan();
+      if (!lastNets.length) {
+        log('No se encontraron redes (netsh ni USB crudo). No se puede iniciar auto-ataque.', 'warn');
+        return;
+      }
     }
     const bssid = autoSelectStrongest();
     if (!bssid) return;
@@ -590,6 +985,18 @@ function setAttackRunning(on, label) {
 }
 function attackIsBusy() { return _attackBusy; }
 
+// Reclama el id ANTES de lanzar el ataque. Si ya hay otro en curso NO se pisa
+// currentAttackId: si se pisara, el attack-completed del ataque real no haría
+// match (id distinto) y el lock de UI quedaría pegado hasta recargar (bug F5).
+function claimAttack(id) {
+  if (attackIsBusy()) {
+    log('⚠️ Ya hay un ataque en curso; deténlo antes de lanzar otro.', 'warn');
+    return false;
+  }
+  currentAttackId = id;
+  return true;
+}
+
 // ── Attack invocations ──────────────────────────────────────────────────────
 window.capturePmkid = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
@@ -597,7 +1004,7 @@ window.capturePmkid = async function () {
   const ch    = chRaw ? parseInt(chRaw) : selectedChannel();
   const iface = valOrEmpty($('pmkid-iface').value) || undefined;
   const dur   = $('pmkid-dur').value ? parseInt($('pmkid-dur').value) : 120;
-  currentAttackId = `pmkid_${bssid.replace(/:/g,'')}`;
+  if (!claimAttack(`pmkid_${bssid.replace(/:/g,'')}`)) return false;
   showProgress(true);
   updateProgress(10, 'Iniciando PMKID capture...');
   return invokeAttack('pmkid_capture_bg', { bssid, channel: ch, durationSeconds: dur, iface });
@@ -646,7 +1053,7 @@ window.crackPmkid = async function () {
 };
 
 window.wpsBrute = async function () {
-  const bssid = getSelectedBssid(); if (!bssid) return;
+  const bssid = getSelectedBssid(); if (!bssid) return false;
   const iface = valOrEmpty($('wps-iface').value) || 'wlan0';
   const toolEl = $('wps-tool');
   const tool = (toolEl && valOrEmpty(toolEl.value)) || 'auto';
@@ -659,45 +1066,220 @@ window.wpsBrute = async function () {
       if (!c.success) { log('bully.exe no encontrado (opcional). Fallback a reaver.exe.', 'warn'); }
     } catch (e) { log('check bully: ' + e, 'warn'); }
   }
+  // Resultado de la corrida anterior: oculto hasta que el stdout traiga PIN/PSK.
+  const wbox = $('wps-result');
+  if (wbox) wbox.style.display = 'none';
+  const atkId = tool === 'wsl' ? `wpswsl_${bssid.replace(/:/g,'')}`
+    : (tool === 'reaver' || tool === 'auto') ? `wpsr_${bssid.replace(/:/g,'')}`
+    : `wps_${bssid.replace(/:/g,'')}`;
+  if (!claimAttack(atkId)) return false;
   showProgress(true);
   if (tool === 'wsl') {
     updateProgress(10, 'Iniciando WPS bruteforce en Kali-WSL2 (reaver)...');
-    currentAttackId = `wpswsl_${bssid.replace(/:/g,'')}`;
+    setAttackRunning(true, 'Kali: reaver en curso…');
     try {
       const r = await window.__invoke('wsl_reaver', { iface: 'wlan0', bssid, channel: ch || 11, durationSecs: 60, pixie: false });
       if (r.stdout) log(r.stdout, 'ok');
       if (r.stderr) log(r.stderr, r.success ? 'info' : 'warn');
       log(`[Kali reaver ${r.success ? 'OK' : 'ERROR'}] ${r.message}`, r.success ? 'ok' : 'error');
+      renderWpsResult((r.stdout || '') + '\n' + (r.stderr || ''));
     } catch (e) { log('[Kali reaver] FATAL: ' + e, 'error'); }
+    currentAttackId = null;
     showProgress(false);
+    setAttackRunning(false);
     return;
   }
   updateProgress(10, 'Iniciando WPS bruteforce (reaver por defecto, bully opcional)...');
   if (tool === 'reaver' || tool === 'auto') {
-    currentAttackId = `wpsr_${bssid.replace(/:/g,'')}`;
     return invokeAttack('wps_bruteforce_reaver_bg', { bssid, iface, channel: ch });
   }
-  currentAttackId = `wps_${bssid.replace(/:/g,'')}`;
   return invokeAttack('wps_pin_bruteforce_bg', { bssid, interface: iface, channel: ch });
 };
 
+// ── Wash: tabla visual + clic → objetivo ─────────────────────────────────
+// Pinta SOLO las entradas reales de parse_wash (nada inventado). Clic en fila
+// fusiona el AP en lastNets (si netsh no lo vio) y lo selecciona como objetivo
+// de TODO el tab Ataque (BSSID/SSID/canal sincronizados — regla del canal).
+function renderWashRows(entries) {
+  const tb = $('wash-tbody');
+  const cnt = $('wash-count');
+  if (!tb) return;
+  if (cnt) cnt.style.display = 'none';
+  if (!entries) {
+    tb.innerHTML = '<tr class="empty-row"><td colspan="5"><div class="empty-state">' +
+      '<span class="ei">&#129534;</span><p>Encuestando… wash tarda hasta 60 s</p>' +
+      '</div></td></tr>';
+    return;
+  }
+  if (!entries.length) {
+    tb.innerHTML = '<tr class="empty-row"><td colspan="5"><div class="empty-state">' +
+      '<span class="ei">&#128533;</span><p>Sin APs con WPS en el canal escaneado (¿canal equivocado?)</p>' +
+      '</div></td></tr>';
+    if (cnt) { cnt.textContent = '0 APs WPS'; cnt.style.display = 'inline'; }
+    return;
+  }
+  tb.innerHTML = entries.map(e => {
+    const locked = !!e.wps_locked;
+    return '<tr data-bssid="' + escAttr(e.bssid || '') + '"' +
+      ' data-ssid="' + escAttr(e.essid || '') + '"' +
+      ' data-channel="' + (parseInt(e.channel) || 0) + '"' +
+      ' data-wps="' + escAttr(e.wps_version || '') + '"' +
+      ' data-locked="' + (locked ? '1' : '0') + '"' +
+      ' style="cursor:pointer" title="Clic: usar como objetivo">' +
+      '<td class="td-bssid">' + esc(e.bssid || '') + '</td>' +
+      '<td class="td-num">' + (parseInt(e.channel) || '?') + '</td>' +
+      '<td>' + (e.wps_version ? 'WPS ' + esc(e.wps_version) : '—') + '</td>' +
+      '<td>' + (locked
+        ? '<b style="color:var(--red)">LOCKED</b>'
+        : '<span style="color:var(--green)">abierta</span>') + '</td>' +
+      '<td class="td-ssid">' + esc(e.essid || '(sin ESSID)') + '</td>' +
+      '</tr>';
+  }).join('');
+  if (cnt) {
+    cnt.textContent = `${entries.length} AP${entries.length === 1 ? '' : 's'} WPS`;
+    cnt.style.display = 'inline';
+  }
+}
+
+function selectWashTarget(d) {
+  const bssid = d.bssid;
+  if (!bssid) return;
+  const ssid = d.ssid || 'Red WPS sin ESSID';
+  const channel = parseInt(d.channel) || 0;
+  const wps = d.wps || '';
+  const locked = d.locked === '1';
+  // Si el AP no salió en el scan netsh, el dropdown no tendría opción: se añade.
+  if (!lastNets.some(n => (n.bssid || '').toUpperCase() === bssid.toUpperCase())) {
+    lastNets.push({ ssid, bssid, channel, signal: 0, security: 'WPS' + (wps ? ' ' + wps : '') });
+    syncTargetList();
+  }
+  const sel = $('attack-bssid');
+  if (sel) sel.value = bssid;
+  document.querySelectorAll('#wash-tbody tr.selected').forEach(r => r.classList.remove('selected'));
+  try {
+    const row = document.querySelector(`#wash-tbody tr[data-bssid="${CSS.escape(bssid)}"]`);
+    if (row) row.classList.add('selected');
+  } catch (e) { /* CSS.escape no disponible: sin highlight */ }
+  log(`Objetivo WPS: ${ssid} (${bssid}) CH${channel || '?'}${locked ? ' · LOCKED' : ' · WPS abierta'}`, 'ok');
+  selectNetwork(bssid, ssid, 0, channel, 'WPS' + (wps ? ' ' + wps : '') + (locked ? ' LOCKED' : ''));
+}
+
+document.getElementById('wash-tbody')?.addEventListener('click', (e) => {
+  try {
+    const tr = e.target.closest('tr');
+    if (!tr || !tr.dataset.bssid) return;
+    selectWashTarget(tr.dataset);
+  } catch (err) { log(`Error al seleccionar fila wash: ${err}`, 'error'); }
+});
+
 window.doWashScan = async function () {
+  if (!claimAttack('wash_scan')) return false;
   const ifaceEl = $('wash-iface') || $('wps-iface');
   const iface = (ifaceEl && valOrEmpty(ifaceEl.value)) || 'wlan0';
   const chEl = $('wash-chan');
   const chRaw = (chEl && valOrEmpty(chEl.value)) || '';
   const ch = chRaw ? parseInt(chRaw) : undefined;
-  currentAttackId = 'wash_scan';
   showProgress(true);
-  updateProgress(10, 'Wash scan WPS...');
+  updateProgress(10, 'Wash scan WPS…');
+  renderWashRows(null);
+  // Feedback visual durante el survey (30-60 s): el % avanza y marca los segundos.
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    if (currentAttackId !== 'wash_scan') return;
+    const s = Math.round((Date.now() - t0) / 1000);
+    updateProgress(Math.min(60, 10 + s * 2), `Encuestando… ${s} s`);
+  }, 1000);
   try {
     const r = await window.__invoke('wash_scan', { iface, channel: ch });
-    const n = (r.entries && r.entries.length) || 0;
-    log('Wash: ' + n + ' redes WPS.', 'ok');
-    (r.entries || []).forEach(function(e) { log(' ' + e.bssid + ' CH' + (e.channel || '?') + ' ' + (e.wpsLocked ? 'LOCKED' : 'open') + ' ' + (e.essid || ''), e.wpsLocked ? 'warn' : 'info'); });
-    log(r.output, 'output');
-  } catch (e) { log('Wash ERROR: ' + e, 'error'); }
+    const entries = r.entries || [];
+    const n = entries.length;
+    renderWashRows(entries);
+    log('Wash: ' + n + ' red' + (n === 1 ? '' : 'es') + ' WPS.' + (n ? ' Clic en una fila para usarla como objetivo.' : ''), n ? 'ok' : 'warn');
+    entries.forEach(function(e) {
+      const wps = e.wps_version ? ('WPS ' + e.wps_version + (e.wps_locked ? ' LOCKED' : '')) : 'sin WPS';
+      log(' ' + e.bssid + ' CH' + (e.channel || '?') + ' ' + wps + ' ' + (e.essid || ''), e.wps_locked ? 'warn' : 'info');
+    });
+    updateProgress(100, n ? `${n} APs WPS encontrados` : 'Sin resultados WPS');
+    const unlocked = entries.filter(e => e.wps_version && !e.wps_locked).length;
+    flowResult(n ? `WPS: ${n} red(es)${unlocked ? ` · ${unlocked} ABIERTA(S) — el PIN es la vía` : ' · todas con bloqueo'}. Clic en una fila para usarla como objetivo.`
+      : 'WPS: sin redes. Revisa canal y modo monitor.');
+    renderHero();
+    // La salida ya llega streameada por attack-progress (id='wash_scan');
+    // repetirla aquí duplicaba la tabla en consola. Solo si no se parseó nada.
+    if (!n) { log(r.output, 'output'); await washModeHint(); }
+  } catch (e) {
+    log('Wash ERROR: ' + e, 'error');
+    renderWashRows([]);
+  } finally {
+    clearInterval(tick);
+    // Limpieza defensiva si falló el invoke (sin evento attack-completed).
+    if (currentAttackId === 'wash_scan') {
+      currentAttackId = null;
+      showProgress(false);
+      setAttackRunning(false);
+    }
+  }
 };
+
+// Diagnóstico cuando wash devuelve 0 filas: medido 2026-10-01, en modo managed
+// la radio no entrega frames 802.11 a wash (0 filas) y en monitor sí (27 filas
+// ch11). Si el modo no es monitor, se añade un hint accionable en la tabla.
+async function washModeHint() {
+  try {
+    let guid = '';
+    const miEl = $('wash-iface') || $('wps-iface');
+    const mi = miEl ? valOrEmpty(miEl.value) : '';
+    const m = mi.match(/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
+    if (m) guid = m[1];
+    if (!guid) {
+      const rep = await window.__invoke('detect_adapters');
+      const ads = rep?.adapters || [];
+      const cap = ads.find(a => a.monitor_capable) || ads[0];
+      guid = (cap && cap.guid) || '';
+    }
+    if (!guid) return;
+    const st = await window.__invoke('monitor_status', { ifaceGuid: guid });
+    if (st?.success && st.mode === 'managed') {
+      const msg = 'La radio está en modo managed → wash NO recibe frames 802.11 ' +
+        '(medido 2026-10-01: managed 0 filas, monitor 27 filas ch11). ' +
+        'Pulsa «📡 Activar modo monitor» (pestaña Escanear) y repite el wash.';
+      log('Wash: ' + msg, 'warn');
+      const tb = $('wash-tbody');
+      if (tb) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.style.cssText = 'color:var(--orange);font-size:12px;padding:10px';
+        td.textContent = '⚠ ' + msg;
+        tr.appendChild(td);
+        tb.insertBefore(tr, tb.firstChild);
+      }
+    }
+  } catch (e) { /* diagnóstico best-effort: no tapa el resultado */ }
+}
+
+// Resultado WPS: parsea SOLO líneas reales del stdout de reaver/bully.
+// reaver → `[+] WPS PIN: '12345670'` / `[+] WPA PSK: 'x'`;
+// bully  → `[+] Pin is 12345670` / `[+] Key is 'x'`. Si no hay match, el
+// panel queda oculto (nunca se muestra un PIN/PSK inventado).
+function renderWpsResult(text) {
+  const box = $('wps-result');
+  if (!box) return;
+  const pinM = String(text || '').match(/WPS\s*PIN:\s*['"]?([0-9]{8})/i)
+    || String(text || '').match(/\bPin\s+is\s*['"]?([0-9]{8})/i);
+  const pskM = String(text || '').match(/(?:WPA|WPS)\s*PSK:\s*['"]?([^'"\s]+)/i)
+    || String(text || '').match(/\bKey\s+is\s*['"]?([^'"\s]+)/i);
+  const pin = pinM ? pinM[1] : null;
+  const psk = pskM ? pskM[1] : null;
+  if (!pin && !psk) { box.style.display = 'none'; return; }
+  const pe = $('wps-result-pin'), se = $('wps-result-psk');
+  if (pe) pe.textContent = pin ? 'WPS PIN: ' + pin : '';
+  if (se) se.textContent = psk ? 'WPS PSK: ' + psk : '';
+  box.style.display = 'block';
+  if (pin) log(`🔑 WPS PIN (stdout real): ${pin}`, 'ok');
+  if (psk) log(`🔑 WPS PSK (stdout real): ${psk}`, 'ok');
+  flowResult(`WPS: PIN ${pin || '—'} · PSK ${psk || '—'}`);
+}
 
 window.captureHandshake = async function () {
   const bssid = getSelectedBssid(); if (!bssid) return;
@@ -706,7 +1288,7 @@ window.captureHandshake = async function () {
   const ch    = chRaw ? parseInt(chRaw) : selectedChannel();
   const iface = valOrEmpty($('handshake-iface').value) || undefined;
   const dur   = $('handshake-dur').value ? parseInt($('handshake-dur').value) : 60;
-  currentAttackId = `handshake_${bssid.replace(/:/g,'')}`;
+  if (!claimAttack(`handshake_${bssid.replace(/:/g,'')}`)) return false;
   showProgress(true);
   updateProgress(10, 'Iniciando handshake capture...');
   return invokeAttack('capture_handshake_bg', { bssid, essid, channel: ch, durationSeconds: dur, iface });
@@ -768,7 +1350,7 @@ window.doAirodumpScan = async function () {
   const bssid   = valOrEmpty($('airodump-bssid').value) || undefined;
   const iface   = valOrEmpty($('airodump-iface').value) || undefined;
   log(`airodump: ch=${ch || 'todos'} dur=${dur}s bssid=${bssid || 'ninguno'} iface=${iface || 'auto'}`, 'info');
-  currentAttackId = 'airodump_scan';
+  if (!claimAttack('airodump_scan')) return false;
   showProgress(true);
   updateProgress(10, 'Iniciando escaneo airodump...');
   return invokeAttack('scan_airodump_bg', { bssidFilter: bssid, channelFilter: ch || undefined, durationSecs: dur, iface });
@@ -792,7 +1374,7 @@ window.doWpsPbc = async function () {
   const channel = chRaw ? parseInt(chRaw) : selectedChannel();
   if (!bssid) { log('Especifica el BSSID del AP objetivo.', 'warn'); return; }
   log(`WPS PBC: BSSID=${bssid} iface=${iface}`, 'warn');
-  currentAttackId = `wpspbc_${bssid.replace(/:/g,'')}`;
+  if (!claimAttack(`wpspbc_${bssid.replace(/:/g,'')}`)) return false;
   showProgress(true);
   return invokeAttack('wps_pbc_attack_bg', { bssid, iface, channel });
 };
@@ -850,6 +1432,8 @@ async function invokeAttack(cmd, args) {
     // ya son agrupados por frame, así que no satura). Sin recortes de 80 líneas.
     if (out) log(`[${cmd}]:\n${out}`, 'output');
     if (result?.stderr) log(`[${cmd}] stderr:\n${result.stderr}`, 'warn');
+    // Panel de resultado WPS: solo si el stdout real trae PIN/PSK.
+    if (cmd.startsWith('wps_')) renderWpsResult(out + '\n' + (result?.stderr || ''));
     if (result?.success) {
       log(`✅ ${cmd} completado en ${ms} ms`, 'ok');
       return true;
@@ -983,6 +1567,7 @@ window.autoAttack = async function () {
 
 // QUICK ATTACK - ataque rapido directo
 window.quickAttack = function (type) {
+  if (attackIsBusy()) { log('⚠️ Ya hay un ataque en curso; deténlo antes de lanzar otro.', 'warn'); return false; }
   const bssid = getSelectedBssid();
   if (!bssid) return;
   if (type === 'pmkid') {
@@ -1005,6 +1590,17 @@ window.clearSelection = function () {
   if (sel) sel.value = '';
   const auto = document.getElementById('auto-bssid');
   if (auto) auto.value = '';
+  const wtxt = $('wps-target-txt');
+  if (wtxt) { wtxt.textContent = '— sin seleccionar —'; wtxt.style.color = 'var(--muted)'; }
+  // Sin objetivo: se ocultan las dos barras (la del scan dejaba SSID obsoleto)
+  // y el veredicto + recomendaciones del perfil (pertenecían a la red quitada).
+  const sab = document.getElementById('scan-attack-bar');
+  if (sab) sab.style.display = 'none';
+  const tv = document.getElementById('target-verdict');
+  if (tv) tv.style.display = 'none';
+  window._profile = null;
+  clearRecommendations();
+  renderTargetBar(); // oculta la barra sticky: ya no hay objetivo
   log('Seleccion limpiada', 'info');
 };
 
@@ -1016,7 +1612,7 @@ window.doWpsPixieDust = async function () {
   const chRaw = chEl ? valOrEmpty(chEl.value) : '';
   const channel = chRaw ? parseInt(chRaw) : selectedChannel();
   if (!bssid) { log('Especifica el BSSID del AP.', 'warn'); return; }
-  currentAttackId = `wpspix_${bssid.replace(/:/g,'')}`;
+  if (!claimAttack(`wpspix_${bssid.replace(/:/g,'')}`)) return false;
   showProgress(true);
   return invokeAttack('wps_pixiedust_bg', { bssid, iface, channel });
 };
@@ -1330,6 +1926,7 @@ window.inspectHash = async function () {
     const out = `total=${s.total} · PMKID=${s.pmkid} · challenge=${s.challenge} · authorized=${s.authorized}\nESSID: ${(s.essids || []).join(', ') || '?'}`;
     const pre = $('insp-out');
     if (pre) pre.textContent = out;
+    flowResult(out);
     log(`[inspect] ${f}: ${out.replace('\n', ' | ')}`, 'info');
   } catch (e) {
     log(`[inspect] ERROR: ${e}`, 'error');
@@ -1387,6 +1984,7 @@ window.wpa3Audit = async function () {
     const pre = $('wpa3-out');
     const txt = `${a.title}\n${a.detail}\nMFP: ${a.mfp}\nConfirmar: ${a.confirm_cmd_linux}\n${(a.next_steps || []).join('\n')}`;
     if (pre) pre.textContent = txt;
+    flowResult(txt);
     log(`[wpa3] ${a.ssid} (${a.bssid}): ${a.title}`, 'info');
   } catch (e) {
     log(`[wpa3] ERROR: ${e}`, 'error');
@@ -1403,6 +2001,7 @@ window.genRogueConf = async function () {
     const r = await window.__invoke('gen_rogue_conf', { ssid, channel: ch, iface, outputPath: out });
     const pre = $('rogue-out');
     if (pre) pre.textContent = r.output;
+    flowResult(r.output);
     log(`[rogue] .conf generado para "${ssid}" CH${ch}. Úsalo con hostapd-mana en Kali.`, 'ok');
   } catch (e) {
     log(`[rogue] ERROR: ${e}`, 'error');
@@ -1416,13 +2015,13 @@ window.fillWacker = function () {
   const wl = valOrEmpty($('wpa3-wl').value) || '<wordlist>';
   const iface = valOrEmpty($('wpa3-miface').value) || '<iface-managed>';
   const pre = $('wacker-out');
-  if (pre) {
-    pre.textContent =
+  const wtxt =
       '# En Kali (adaptador en MANAGED mode, no monitor):\n' +
       '# git clone <repo-wacker> && revisa --help (los flags varían por versión)\n' +
       `python3 wacker.py --ssid "${ssid}" --bssid ${bssid} --wordlist ${wl} --interface ${iface}\n` +
       '# Lento (~1 intento/s, con rate-limit del AP) y ruidoso. Solo vs claves débiles.';
-  }
+  if (pre) pre.textContent = wtxt;
+  flowResult(wtxt);
 };
 
 // ── Evil Twin ───────────────────────────────────────────────────────────
@@ -1448,6 +2047,7 @@ window.genEvilTwinKit = async function () {
     });
     const pre = $('et-out');
     if (pre) pre.textContent = r.output;
+    flowResult(r.output);
     log(`[eviltwin] kit generado para "${ssid}". Coloca el .22000 y sigue README.txt en Kali.`, 'ok');
   } catch (e) {
     log(`[eviltwin] ERROR: ${e}`, 'error');
@@ -1520,6 +2120,7 @@ window.keygenDetect = async function () {
     const r = await window.__invoke('keygen_detect', { ssid });
     const pre = $('keygen-out');
     if (pre) pre.textContent = r.output || r.stderr;
+    flowResult(r.output || r.stderr);
   } catch (e) {
     log(`[keygen] ERROR: ${e}`, 'error');
   }
@@ -1541,6 +2142,7 @@ window.keygenRun = async function () {
     const r = await window.__invoke('keygen_run', { ssid, bssid });
     const pre = $('keygen-out');
     if (pre) pre.textContent = r.success ? r.output : r.stderr;
+    flowResult(r.success ? r.output : r.stderr);
     log(r.success ? '[keygen] candidatos generados.' : `[keygen] ${r.stderr}`, r.success ? 'ok' : 'warn');
   } catch (e) {
     log(`[keygen] ERROR: ${e}`, 'error');
@@ -1590,7 +2192,10 @@ const progressBar = document.getElementById('progress-bar');
 let liveVisible = true;
 
 function showProgress(show = true) {
-  if (progressContainer) progressContainer.style.display = show ? 'block' : 'none';
+  // El panel verbose vive SIEMPRE visible en el tab Atacar (fusión con
+  // Consola): show() resetea barra+live; hide() solo deja la barra a 0.
+  // Nunca se oculta el contenedor: ocultar la salida era el "no verbose".
+  if (show && progressContainer) progressContainer.style.display = 'block';
   if (show) {
     // Reset del panel verbose al iniciar un ataque, respetando si el usuario lo
     // plegó. Antes nadie mostraba #live-cv (tenía display:none inline), así que
@@ -1601,6 +2206,9 @@ function showProgress(show = true) {
       cv.style.display = liveVisible ? 'block' : 'none';
       cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
     }
+  } else if (progressBar) {
+    progressBar.style.width = '0%';
+    progressBar.textContent = 'listo';
   }
 }
 
@@ -1651,8 +2259,8 @@ function _flushLive() {
   span.textContent = _liveBuf;
   _liveBuf = '';
   cv.appendChild(span);
-  // Cap de contenido: conserva los últimos ~400 nodos para no crecer sin fin.
-  while (cv.childNodes.length > 400) cv.removeChild(cv.firstChild);
+  // Cap de contenido: conserva los últimos ~2000 nodos para no crecer sin fin.
+  while (cv.childNodes.length > 2000) cv.removeChild(cv.firstChild);
   queueScroll(cv);
 }
 function liveAppend(txt, level) {
@@ -1680,7 +2288,11 @@ function liveAppend(txt, level) {
 // includes) saturaba el hilo de UI justo cuando el ataque está en marcha —síntoma
 // real: «voy a Consola y ya no vuelvo»—. Ahora se encolan y se vuelcan UNA vez
 // por frame, con techo de eventos por frame y de cola.
-const EVT_MAX_PER_FRAME = 300;
+// VERBOSE REAL: los eventos se encolan y se vuelcan por frame sin descartar
+// nada (antes se tiraban con "omitidos en la consola"). Techo alto por frame
+// para no congelar el hilo UI en ráfagas; el resto espera su frame.
+const EVT_MAX_PER_FRAME = 2000;
+const EVT_QUEUE_CAP = 20000;
 const _evtQueue = [];
 let _evtFlushQueued = false;
 
@@ -1688,8 +2300,6 @@ function _flushEvents() {
   _evtFlushQueued = false;
   if (!_evtQueue.length) return;
   const batch = _evtQueue.splice(0, EVT_MAX_PER_FRAME);
-  const skipped = _evtQueue.length;   // resto de la ráfaga: se resume en 1 línea
-  if (skipped) _evtQueue.length = 0;
   let last = '';
   for (const p of batch) {
     log(p.data, p.type === 'stderr' ? 'warn' : 'output');
@@ -1700,7 +2310,6 @@ function _flushEvents() {
   if (low.includes('received')) updateProgress(25, 'Recibiendo... 25%');
   if (low.includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
   if (low.includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');
-  if (skipped) log(`… ${skipped} eventos de salida omitidos en la consola (ataque muy verbose; la vista en vivo sigue activa)`, 'warn');
 }
 
 listen('attack-progress', (event) => {
@@ -1714,10 +2323,10 @@ listen('attack-progress', (event) => {
     if (pc && pc.style.display === 'none') showProgress(true);
   }
   _evtQueue.push({ type, data });
-  // Techo de cola: si el ataque inunda, se conserva lo último (lo anterior ya
-  // está en el historial de la consola) — nunca crecer sin límite.
-  if (_evtQueue.length > EVT_MAX_PER_FRAME * 4) {
-    _evtQueue.splice(0, _evtQueue.length - EVT_MAX_PER_FRAME * 4);
+  // Techo de seguridad: si el ataque inunda más allá de lo razonable se
+  // conserva lo último (el historial completo ya quedó en #cv vía log()).
+  if (_evtQueue.length > EVT_QUEUE_CAP) {
+    _evtQueue.splice(0, _evtQueue.length - EVT_QUEUE_CAP);
   }
   if (!_evtFlushQueued) {
     _evtFlushQueued = true;
@@ -1983,6 +2592,7 @@ window.genKaliKit = function () {
     out.textContent = kit;
     out.style.display = 'block';
   }
+  flowResult(kit);
   log('Kit Kali generado para ' + ssid + ' (' + bssid + ', CH' + ch + '). Copia los comandos a la terminal de Kali live USB.', 'ok');
 };
 
@@ -2008,16 +2618,19 @@ window.usbRawScan = async function () {
       return false;
     }
     log('[usb-scan] ' + r.message + ': ' + r.networks.map(n => (n.ssid || '?') + ' (CH' + n.channel + ')').join(', '), 'ok');
-    // fusionar con lastNets: USB sobrescribe canal/señal de BSSIDs conocidos, añade nuevos
+    // fusionar con lastNets: USB sobrescribe canal/señal de BSSIDs conocidos,
+    // añade nuevos. Seguridad: la de netsh si existe; si no, la del beacon
+    // (WPA3/WPA2/WPA/Abierta o WEP detectada por rt3070_scan) — nunca inventar.
     const byBssid = {};
     (typeof lastNets !== 'undefined' ? lastNets : []).forEach(n => { byBssid[(n.bssid || '').toUpperCase()] = n; });
     r.networks.forEach(n => {
+      const prev = byBssid[n.bssid.toUpperCase()] || {};
       byBssid[n.bssid.toUpperCase()] = {
         bssid: n.bssid,
         ssid: n.ssid || '(oculta)',
         channel: n.channel,
         signal: n.signal,
-        security: (byBssid[n.bssid.toUpperCase()] || {}).security || 'WPA2',
+        security: prev.security || n.security || 'Desconocida',
         usbScan: true,
       };
     });
@@ -2026,6 +2639,8 @@ window.usbRawScan = async function () {
     if (typeof renderRows === 'function') renderRows(lastNets);
     if (typeof renderHeader === 'function') renderHeader(lastNets.length + ' red(es) · scan USB crudo');
     log('[usb-scan] ' + lastNets.length + ' redes en la tabla — clic para elegir objetivo (canal auto para ataques TX).', 'ok');
+    window._usbAlive = true;
+    renderHero();
     return true;
   } catch (e) {
     log('[usb-scan] FALLO: ' + e, 'error');
@@ -2039,6 +2654,8 @@ window.usbRawShow = function (r) {
     out.textContent = (r.output || r.message || '(sin salida)');
     out.style.display = 'block';
   }
+  // Panel único "Para esta red": mensaje + salida completa, sin duplicar.
+  if (r && (r.message || r.output)) flowResult(((r.message || '') + '\n' + (r.output || '')).trim());
   return r;
 };
 
@@ -2052,6 +2669,8 @@ window.usbRawStatus = async function () {
       line.className = 'wiz-status' + (r.success ? ' ok' : ' warn');
     }
     log('[usbraw] ' + r.message, r.success ? 'ok' : 'warn');
+    window._usbAlive = !!r.success;
+    renderHero();
     window.usbRawShow(r);
     return r.success;
   } catch (e) {
@@ -2072,6 +2691,8 @@ window.usbRawInit = async function () {
       line.textContent = 'Chip USB: ' + (r.success ? '✅ radio ON canal ' + chan : '⚠️ init falló — revisa salida');
       line.className = 'wiz-status' + (r.success ? ' ok' : ' warn');
     }
+    if (r.success) window._usbAlive = true;
+    renderHero();
     return r.success;
   } catch (e) {
     log('[usbraw] init: ' + e, 'error');
@@ -2157,7 +2778,7 @@ window.usbRawAttackCycle = async function () {
       setSt('❌ ' + st.message, false);
       return false;
     }
-    log('[ciclo] 2/4 Init firmware + canal ' + chan + '…', 'info');
+    log('[ciclo] 2/4 Init radio (sin kick) + canal ' + chan + '…', 'info');
     const ini = await window.__invoke('usb_raw_init', { channel: chan });
     if (!ini.success) { log('[ciclo] Init falló: ' + ini.message, 'error'); setSt('❌ init', false); return false; }
     log('[ciclo] 3/4 Deauth x' + count + ' → ' + bssid, 'warn');
@@ -2184,11 +2805,20 @@ window.usbRawAttackCycle = async function () {
 // Igual que en Kali: deauth y captura con el MISMO chip, sin rebinds.
 window.usbRawSniff = async function (secs) {
   const s = secs || parseInt(($('usbraw-sniff-secs') || {}).value, 10) || 30;
-  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || 11;
+  // Regla 8: hereda el canal del AP escaneado (input manual > AP seleccionado).
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || selectedChannel() || 11;
   log('[sniff] Escuchando ' + s + 's en canal ' + chan + ' (RX por USB crudo)…', 'info');
   const line = $('usbraw-status');
-  if (line) { line.textContent = 'Chip USB: 🎧 escuchando ' + s + 's…'; }
+  if (line) { line.textContent = 'Chip USB: 🎧 init radio (sin kick) + escuchando ' + s + 's…'; }
   try {
+    // El sniff exige radio ON + canal: init previo SIEMPRE. init_radio no
+    // kickea FIRMWARE(8); si el MCU está muerto devuelve error accionable.
+    const ini = await window.__invoke('usb_raw_init', { channel: chan });
+    if (!ini.success) {
+      log('[sniff] init: ' + ini.message, 'error');
+      if (line) { line.textContent = 'Chip USB: ❌ ' + ini.message; line.className = 'wiz-status warn'; }
+      return null;
+    }
     const r = await window.usbRawShow(await window.__invoke('usb_raw_sniff', { durationSecs: s, channel: chan }));
     log('[sniff] ' + r.message, r.success ? 'ok' : 'warn');
     return r;
@@ -2214,9 +2844,9 @@ window.usbRawHandshake = async function () {
     const st = await window.__invoke('usb_raw_status');
     if (!st.success) { log('[handshake] ' + st.message, 'error'); setSt('❌ ' + st.message, false); return false; }
 
-    setSt('init firmware…', false);
+    setSt('init radio (sin kick)…', false);
     const ini = await window.__invoke('usb_raw_init', { channel: chan });
-    if (!ini.success) { log('[handshake] init: ' + ini.message, 'error'); return false; }
+    if (!ini.success) { log('[handshake] init: ' + ini.message, 'error'); setSt('❌ ' + ini.message, false); return false; }
 
     // Lanzar sniff EN PARALELO (hilo del binario), luego deauth, luego esperar
     setSt('lanzando RX en paralelo…', false);
@@ -2232,13 +2862,32 @@ window.usbRawHandshake = async function () {
     const sn = await sniffPromise;
     window.usbRawShow(sn);
     if (sn && sn.success) {
-      setSt('✅ captura completada — convierte con pcap_to_22000', true);
-      log('[handshake] Captura lista. Siguiente: convertir (pcap_to_22000) y crackear.', 'ok');
-      // prefill del convertidor nativo si la ruta es accesible
-      const m = (sn.message || '').match(/(pcap: )(.+\.pcap)/);
-      if (m) {
-        const conv = $('convert-native-pcap'); if (conv) conv.value = m[2];
-        const cx = $('crack-hash'); if (cx) cx.value = m[2] + '.22000';
+      // Auto-conversión (decisión 2026-10-01): pcap → .22000 en el mismo flujo,
+      // con el hash prellenado en el crackeador. Sin EAPOL = fallo honesto.
+      const m = (sn.message || '').match(/(?:pcap: |→\s*)(.+\.pcap)/);
+      if (!m) {
+        setSt('⚠️ captura sin ruta de pcap', false);
+        return false;
+      }
+      const pcapPath = m[1];
+      const conv = $('convert-native-pcap'); if (conv) conv.value = pcapPath;
+      setSt('captura OK — convirtiendo a .22000…', true);
+      log('[handshake] Captura lista. Auto-conversión pcap → .22000…', 'ok');
+      try {
+        const c = await window.__invoke('pcap_to_22000', { pcapPath });
+        (c.messages || []).forEach(mm => log('[convert] ' + mm, 'info'));
+        if (c.success && c.hash_count > 0) {
+          const cx = $('crack-hash'); if (cx) cx.value = c.output_file;
+          const ih = $('insp-hash'); if (ih) ih.value = c.output_file;
+          setSt('✅ .22000 listo: ' + c.hash_count + ' hash(es) — pulsa Crackear', true);
+          log('[handshake] Hash listo: ' + c.output_file + ' · siguiente paso: «Crackear» (o Inspeccionar).', 'ok');
+        } else {
+          setSt('⚠️ captura sin PMKID/EAPOL', false);
+          log('[handshake] Sin PMKID/EAPOL: repite — el cliente debe reconectar (deauth) en el canal del AP.', 'warn');
+        }
+      } catch (e) {
+        setSt('⚠️ conversión falló', false);
+        log('[handshake] conversión: ' + e, 'error');
       }
       return true;
     }

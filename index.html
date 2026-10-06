@@ -314,6 +314,29 @@
       font-family: ui-monospace, monospace;
     }
     .wiz-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    /* ── Héroe "Para esta red": flujo único visual por veredicto ─────── */
+    .flow-hero {
+      background: linear-gradient(180deg, rgba(124,109,250,.10), rgba(124,109,250,.02)),
+                  var(--surface);
+      border: 1px solid var(--accent); border-radius: var(--r);
+      padding: 16px 18px; margin-bottom: 16px;
+    }
+    .flow-hero h2 { font-size: 15px; font-weight: 800; }
+    .flow-hero .wiz-desc { font-size: 12.5px; }
+    .hero-lights { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+    .hero-light {
+      font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 3px 12px;
+      border: 1px solid var(--border); color: var(--muted); background: var(--surface2);
+    }
+    .hero-light.ok { color: var(--green); border-color: var(--green); }
+    .hero-light.warn { color: var(--orange); border-color: var(--orange); }
+    .hero-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .hero-btns .atk-btn { padding: 11px 20px; font-size: 13.5px; font-weight: 700; }
+    #flow-result {
+      display: none; margin-top: 12px; padding: 10px 12px; font-size: 11.5px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--r); white-space: pre-wrap; max-height: 180px; overflow-y: auto;
+    }
     .wiz-btns .atk-btn { flex: 0 1 auto; padding: 9px 16px; font-size: 12.5px; }
     .wiz-more { margin-top: 10px; }
     .wiz-more > summary {
@@ -404,6 +427,38 @@
 
     /* ── Attack section (grouped cards) ─────────────────────────────── */
     .atk-section { margin-bottom: 24px; }
+    /* Secciones 2-8 plegables (acordeón): summary = mismo aspecto que el
+       h2 anterior + caret. La sección 1 (Flujo principal) sigue abierta. */
+    details.atk-section > summary.section-title {
+      cursor: pointer; list-style: none;
+      display: block; user-select: none;
+      border-radius: 8px;
+    }
+    details.atk-section > summary.section-title::-webkit-details-marker { display: none; }
+    details.atk-section > summary.section-title::before {
+      content: '\25B8\00a0'; color: var(--accent);
+    }
+    details.atk-section[open] > summary.section-title::before {
+      content: '\25BE\00a0';
+    }
+    details.atk-section > summary.section-title:hover { background: var(--accent-glow); }
+
+    /* ── Chips de salto entre secciones ─────────────────────────────── */
+    .atk-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+    .atk-chip {
+      background: var(--surface2); color: var(--muted);
+      border: 1px solid var(--border); border-radius: 99px;
+      padding: 5px 12px; font-family: inherit; font-size: 11.5px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+    }
+    .atk-chip:hover { background: var(--accent-glow); color: var(--text); border-color: var(--accent); }
+    .atk-chip .na-tag {
+      display: none; margin-left: 6px; font-size: 9.5px; font-weight: 700;
+      letter-spacing: .3px; color: var(--orange);
+      border: 1px solid var(--orange); border-radius: 99px; padding: 1px 7px;
+    }
+    .atk-chip .na-tag.on { display: inline-block; }
     /* Línea de veredicto de hardware (informativa; sin bloqueos: todos los
        botones siguen lanzables). */
     .hw-cap-line { margin:-4px 0 16px; padding:10px 16px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); font-size:12px; line-height:1.55 }
@@ -436,6 +491,46 @@
       border: 1px solid var(--border); border-radius: 8px;
       padding: 7px 14px; cursor: pointer; font-family: inherit; font-size: 12px;
     }
+
+    /* ── Barra de objetivo fija (sticky) del tab Ataque ─────────────────
+       Vive como primer hijo de .attack-body (el contenedor de scroll): al
+       hacer scroll se queda pegada arriba con SSID·BSSID·CH·seguridad·señal,
+       el veredicto compacto del perfilador y las acciones directas.
+       --ab-x/--ab-t = paddings laterales/superior de .attack-body (también
+       cambian en ventanas bajas, ver @media abajo). */
+    .atk-target-bar {
+      --ab-x: 26px; --ab-t: 18px;
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin: calc(-1 * var(--ab-t)) calc(-1 * var(--ab-x)) 14px;
+      padding: 10px var(--ab-x);
+      background: var(--surface);
+      border-bottom: 1px solid var(--accent);
+      box-shadow: 0 6px 18px rgba(0,0,0,.35);
+      animation: scan-fade-in .2s ease;
+    }
+    .atk-target-bar .atb-info { flex: 1 1 240px; min-width: 0; }
+    .atk-target-bar .atb-ssid {
+      display: block; font-size: 14px; font-weight: 700; color: var(--accent);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .atk-target-bar .atb-meta {
+      display: block; font-family: monospace; font-size: 11px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .atk-target-bar .atb-verdict {
+      display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+    .atk-target-bar .atb-btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+    .atk-target-bar .atk-btn { padding: 7px 13px; font-size: 11.5px; }
+
+    /* Variantes de color de las tarjetas (.atk-btn--*): se usaban por todo el
+       HTML pero no estaban definidas — todas caían al morado por defecto. */
+    .atk-btn.atk-btn--green  { background: var(--green); color: #0b140e; }
+    .atk-btn.atk-btn--blue   { background: var(--blue);  color: #0b121c; }
+    .atk-btn.atk-btn--red    { background: var(--red);   color: #1b0c0e; }
+    .atk-btn.atk-btn--orange { background: var(--orange); color: #1a1406; }
 
     /* ── Info box ───────────────────────────────────────────────────── */
     .info-box {
@@ -530,6 +625,8 @@
       .mini-hint { display: none; }
       #mini-cv { height: 44px; }
       .attack-body { padding: 12px 18px 16px !important; }
+      /* La barra sticky compensa el padding reducido de .attack-body */
+      .atk-target-bar { --ab-x: 18px; --ab-t: 12px; padding: 8px var(--ab-x); }
       .guide { margin: 8px 18px 0; }
       .atk-section { margin-bottom: 16px; }
       .atk-card { padding: 12px; }
@@ -554,9 +651,9 @@
         <button class="nav-btn" id="nav-attack" onclick="showTab('attack')">
           &#9886; Ataque
         </button>
-         <button class="nav-btn" id="nav-console" onclick="showTab('console')">
-           &#9881; Consola
-         </button>
+          <button class="nav-btn" id="nav-console" onclick="showTab('console')">
+            &#9881; Registro
+          </button>
          </div><!-- /nav-group -->
 
         <div class="nav-footer">
@@ -576,6 +673,10 @@
             <div class="phead-actions">
               <button class="scan-btn" id="scanBtn" onclick="doScan()">
                 &#x1F50D; Escanear ahora
+              </button>
+              <button class="scan-btn" id="scanUsbBtn" onclick="usbRawScan()" style="background:var(--green)"
+                      title="Escaneo directo con la antena (canales 1-13) — funciona aunque Windows no la vea como WiFi">
+                &#x1F4E1; Escanear (directo)
               </button>
               <input id="monChan" type="number" min="1" max="165" placeholder="CH" title="Canal a fijar al activar (verificado por lectura; algunos drivers lo ignoran sin admin)"
                      style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:60px;outline:none">
@@ -639,7 +740,7 @@
             <div class="sab-btns" style="align-items:center">
               <input id="sab-wordlist" type="text" placeholder="wordlist.txt (opcional)" title="Ruta a wordlist para crack automático"
                      style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;font-family:inherit;width:140px;outline:none">
-              <button class="atk-btn" onclick="autoAttack()" title="Ataque completo: deauth → PMKID → deauth → handshake → convertir → crack">&#x26A1; Auto</button>
+              <button class="atk-btn" id="autoAttackBtn" onclick="autoAttack()" title="Ataque completo: deauth → PMKID → deauth → handshake → convertir → crack">&#x26A1; Auto</button>
               <button class="atk-btn atk-btn--red" onclick="quickAttack('pmkid')" title="Solo capturar PMKID">&#x1F4F6;</button>
               <button class="atk-btn atk-btn--orange" onclick="quickAttack('deauth')" title="Solo deauth rápido">&#x26A1;</button>
               <button class="atk-btn" style="background:var(--gray);padding:5px 10px;font-size:13px" onclick="clearSelection()" title="Deseleccionar">&#x2716;</button>
@@ -689,8 +790,9 @@
              <button class="atk-btn atk-stop" onclick="cancelCurrentAttack()" style="margin-left:auto;background:var(--red);padding:6px 16px">&#x25A0; Detener ataque</button>
            </div>
 
-           <!-- Progress Bar para ataques en background -->
-           <div id="progress-container" style="display:none;padding:0 26px 10px">
+            <!-- Progress Bar + verbose SIEMPRE visible (fusión con Consola):
+                 nada se oculta: la salida en vivo y el historial viven aquí. -->
+            <div id="progress-container" style="display:block;padding:0 26px 10px">
              <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
                <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
              </div>
@@ -699,13 +801,53 @@
                   visibilidad según el estado de verbose (antes quedaba oculto
                   para siempre: solo se veía al pulsar «Ocultar verbose»). -->
              <pre id="live-cv" class="live-view">─ Salida en tiempo real (stdout/stderr del ataque) ─</pre>
-             <div style="display:flex;gap:8px;margin-top:6px">
-               <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
-               <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
-             </div>
-           </div>
+              <div style="display:flex;gap:8px;margin-top:6px">
+                <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
+                <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
+              </div>
+            </div>
+
+            <!-- Historial completo (antes tab Consola): todo lo emitido queda
+                 aquí, sin recortes. Limpiar / matar PID del proceso colgado. -->
+            <div style="padding:0 26px 10px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <strong style="font-size:12.5px">Historial completo</strong>
+                <span style="font-size:11px;color:var(--muted)">todo el verbose, sin omitir nada</span>
+                <span style="flex:1"></span>
+                <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">&#10005; Limpiar</button>
+                <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
+                       style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:88px;outline:none">
+                <button class="scan-btn sm" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">&#x25A0; Matar PID</button>
+              </div>
+              <div class="console-wrap" style="margin:0">
+                <pre id="cv" class="console-view" style="max-height:320px"></pre>
+              </div>
+            </div>
 
           <div class="attack-body" style="flex:1;min-height:0;overflow-y:auto;padding:18px 26px 20px;position:relative">
+            <!-- Barra de objetivo fija (sticky): el objetivo elegido + acciones
+                 directas SIEMPRE visibles al hacer scroll por el tab Ataque.
+                 Oculta hasta que hay selección (renderTargetBar en app.js). -->
+            <div id="atk-target-bar" class="atk-target-bar" style="display:none">
+              <div class="atb-info">
+                <span class="atb-ssid" id="atb-ssid"></span>
+                <span class="atb-meta" id="atb-meta"></span>
+                <span class="atb-verdict" id="atb-verdict"></span>
+              </div>
+              <div class="atb-btns">
+                <button class="atk-btn atk-btn--green" id="atb-auto" onclick="autoAttack()"
+                        title="Pipeline completo automático: perfil → modo monitor → captura → convertir → crack → keygen (solo los pasos que aplican a esta red)">&#x26A1; Ataque completo</button>
+                <button class="atk-btn atk-btn--blue" id="atb-cap" onclick="quickAttack('pmkid')"
+                        title="Captura la evidencia de la contraseña (PMKID, 60 s) para crackearla después">&#x1F4F7; Capturar contrase&ntilde;a</button>
+                <button class="atk-btn atk-btn--red" id="atb-deauth" onclick="quickAttack('deauth')"
+                        title="Desconecta clientes para forzar el re-handshake (SOLO tu red)">&#x1F6AB; Desconectar</button>
+                <button class="atk-btn" id="atb-change" onclick="changeTarget()" style="background:var(--gray)"
+                        title="Quitar este objetivo y volver al escaneo para elegir otra red">&#x2716; Cambiar red</button>
+                <button class="atk-btn atk-stop" id="atb-stop" onclick="cancelCurrentAttack()" style="background:var(--red)"
+                        title="Detener el ataque en curso">&#x23F9; Detener</button>
+              </div>
+            </div>
+
             <!-- Target select -->
             <div class="target-bar">
               <label>Objetivo BSSID:</label>
@@ -726,13 +868,49 @@
               <div id="verdict-meta" style="color:var(--gray);font-size:11px;margin-top:4px"></div>
             </div>
 
+            <!-- Recomendaciones automáticas según el perfil de la red
+                 (renderRecommendations en app.js: botones reales, sin gating) -->
+            <div id="target-recs" style="display:none;margin:-6px 0 18px;padding:12px 16px;background:var(--surface);border:1px solid var(--accent);border-radius:var(--r);font-size:12px;line-height:1.7">
+              <div style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Recomendado para esta red (seg&uacute;n su perfil)</div>
+              <ol id="rec-list" style="margin:0;padding-left:20px"></ol>
+            </div>
+
 
 
             <!-- Veredicto de hardware (informativo, sin gating) -->
             <div id="hw-cap-line" class="hw-cap-line">Hardware: verificando adaptador e inyecci&oacute;n&#8230;</div>
 
+            <!-- Chips de salto: abren y llevan a cada sección (2-8 son acordeón;
+                 renderSectionNA marca «no aplica» según el perfil de la red) -->
+            <div class="atk-chips" id="atk-chips">
+              <button class="atk-chip" onclick="jumpSection('sec-flow')" title="Siempre visible: el camino corto (TX USB, Kali, captura, convertir, crack)">1 · Flujo</button>
+              <button class="atk-chip" onclick="jumpSection('sec-crack')" title="Inspector .22000 + constructor hashcat">2 · Crack<span class="na-tag" id="na-sec-crack" title="No aplica a esta red según su perfil">no aplica</span></button>
+              <button class="atk-chip" onclick="jumpSection('sec-wpa3')" title="Auditoría WPA3, rogue WPA2, Wacker">3 · WPA3<span class="na-tag" id="na-sec-wpa3" title="No aplica a esta red según su perfil">no aplica</span></button>
+              <button class="atk-chip" onclick="jumpSection('sec-wps')" title="wash, WPS PIN, PBC, Pixie Dust">4 · WPS</button>
+              <button class="atk-chip" onclick="jumpSection('sec-inject')" title="aireplay-ng: deauth, inyección, ataques clásicos">5 · Inyecci&oacute;n<span class="na-tag" id="na-sec-inject" title="No aplica a esta red según su perfil">no aplica</span></button>
+              <button class="atk-chip" onclick="jumpSection('sec-dos')" title="Beacon flood (lab)">6 · DoS</button>
+              <button class="atk-chip" onclick="jumpSection('sec-evil')" title="Kit Evil Twin + verificación de candidato">7 · Evil Twin</button>
+              <button class="atk-chip" onclick="jumpSection('sec-access')" title="Conectar con clave + keygen de fábrica">8 · Acceso</button>
+            </div>
+
+            <!-- ══════════ PARA ESTA RED: flujo único visual ══════════ -->
+            <div class="flow-hero" id="flow-hero">
+              <h2 id="hero-title">&#x1F3AF; Para esta red</h2>
+              <p class="wiz-desc" id="hero-desc">Elige una red del escaneo y aquí verás el camino recomendado para ella, paso a paso.</p>
+              <div class="hero-lights">
+                <span class="hero-light" id="hero-l-target">1 · Objetivo: —</span>
+                <span class="hero-light" id="hero-l-ant">2 · Antena: sin verificar</span>
+                <span class="hero-light" id="hero-l-prof">3 · Perfil: —</span>
+              </div>
+              <div class="hero-btns" id="hero-btns">
+                <button class="atk-btn atk-btn--green" onclick="showTab('scan')">&#x1F50D; Escanear redes</button>
+                <button class="atk-btn" onclick="usbRawStatus()">&#x1F50D; Verificar antena</button>
+              </div>
+              <pre id="flow-result"></pre>
+            </div>
+
             <!-- ══════════════════ WIZARD: FLUJO PRINCIPAL ══════════════════ -->
-            <div class="atk-section">
+            <div class="atk-section" id="sec-flow">
               <h2 class="section-title">1 &#183; Flujo principal (el camino corto)</h2>
               <div class="wizard">
 
@@ -741,15 +919,15 @@
                   <div class="wiz-head">
                     <span class="wiz-n wiz-n--green">TX</span>
                     <div>
-                      <h3 class="wiz-title">TX por USB crudo (RT3070 + WinUSB) &#8212; la vía que Npcap nunca dio</h3>
-                      <p class="wiz-desc">Habla con el chip directamente por WinUSB (sin driver WiFi, sin Npcap). Requiere la antena rebindeada a WinUSB (ver driver_re/usb_tx). Con WinUSB activo netsh NO ve la antena &#8212; es el precio del acceso crudo. Reversible con restore_netr28ux.ps1.</p>
+                      <h3 class="wiz-title">Acceso directo a la antena &#8212; recomendado</h3>
+                      <p class="wiz-desc">La app habla directamente con la antena: escanea, escucha y actúa sin depender del WiFi de Windows. Mientras está activo, Windows no la muestra como WiFi (normal). <details class="wiz-more"><summary>Detalle técnico</summary>Acceso WinUSB al RT3070 (ver driver_re/usb_tx). Reversible con restore_netr28ux.ps1. Nunca se reinicia el chip desde aquí.</details></p>
                     </div>
                   </div>
                   <div id="usbraw-status" class="wiz-status">Chip USB: sin verificar — pulsa «Estado chip»</div>
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--green" onclick="usbRawScan()">&#x1F4E1; Escanear redes (USB crudo)</button>
                     <button class="atk-btn" onclick="usbRawStatus()">&#x1F50D; Estado chip</button>
-                    <button class="atk-btn atk-btn--blue" onclick="usbRawInit()">&#x26A1; Init (firmware+canal)</button>
+                    <button class="atk-btn atk-btn--blue" onclick="usbRawInit()">&#x26A1; Init radio (canal, sin kick)</button>
                     <button class="atk-btn atk-btn--green" onclick="usbRawTxBeacon()">&#x1F4E1; TX beacons de prueba</button>
                     <button class="atk-btn atk-btn--red" onclick="usbRawDeauth()">&#x26A1; Deauth objetivo (SOLO tu red)</button>
                     <button class="atk-btn atk-btn--blue" onclick="usbRawSniff()">&#x1F4E1; Sniff (RX mismo chip)</button>
@@ -783,7 +961,6 @@
                       <input id="usbraw-sniff-secs" type="number" min="5" max="300" value="30">
                     </div>
                   </div>
-                  <pre id="usbraw-out" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:11px;color:var(--text);white-space:pre-wrap;max-height:260px;overflow-y:auto"></pre>
                 </div>
 
                 <!-- PASO B: Kali -->
@@ -803,7 +980,6 @@
                     <button class="atk-btn atk-btn--green" onclick="genKaliKit()">&#x1F5A5;&#xFE0F; Kit Kali para este objetivo</button>
                     <button class="atk-btn atk-stop" style="background:var(--red)" onclick="cancelCurrentAttack()">&#x25A0; Detener</button>
                   </div>
-                  <pre id="kali-kit-out" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:11px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto"></pre>
                   <details class="wiz-more">
                     <summary>Avanzado: attach USB, comandos manuales, deauth</summary>
                     <div class="wiz-btns" style="margin-top:8px">
@@ -853,7 +1029,7 @@
                   </div>
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--blue" onclick="doCmd('native_capture',captureNative)">&#x25BC; Capturar 60s (Npcap)</button>
-                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()">&#x25A0; Detener</button>
+
                   </div>
                   <details class="wiz-more">
                     <summary>Avanzado: duraci&oacute;n e interfaz concretas, captura con hcxdumptool (si existiera en Windows)</summary>
@@ -995,8 +1171,8 @@
             </div>
 
             <!-- ══════════════════ ESTRATEGIA DE CRACK ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">2 &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+            <details class="atk-section" id="sec-crack">
+              <summary class="section-title">Avanzado &#183; &#x2699; Estrategia de crack <span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></summary>
               <div class="wizard">
 
                 <!-- Inspector .22000 -->
@@ -1028,7 +1204,6 @@
                         <button class="atk-btn atk-btn--blue" onclick="inspectHash()">Inspeccionar</button>
                         <button class="atk-btn" style="background:var(--gray)" onclick="filterHash()">Filtrar</button>
                       </div>
-                      <pre id="insp-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                     </div>
                   </div>
                 </div>
@@ -1099,11 +1274,11 @@
                 </div>
 
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ WPA3 ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">3 &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+            <details class="atk-section" id="sec-wpa3">
+              <summary class="section-title">Avanzado &#183; &#x1F409; WPA3 <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></summary>
               <div class="wizard">
 
                 <!-- Auditoría WPA3 -->
@@ -1115,11 +1290,16 @@
                       <p class="wiz-desc">¿SAE puro o transición? Solo lectura; la transición se confirma con tshark en Linux</p>
                     </div>
                   </div>
+                  <div class="atk-fields">
+                    <div class="field-row">
+                      <label>BSSID:</label>
+                      <input id="wpa3-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                    </div>
+                  </div>
                   <div class="wiz-btns">
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForWpa3()">Usar objetivo</button>
                     <button class="atk-btn atk-btn--orange" onclick="wpa3Audit()">Auditar</button>
                   </div>
-                  <pre id="wpa3-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                 </div>
 
                 <!-- Rogue WPA2 para downgrade -->
@@ -1152,7 +1332,6 @@
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="genRogueConf()">Generar .conf</button>
                   </div>
-                  <pre id="rogue-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                 </div>
 
                 <!-- Wacker online -->
@@ -1177,14 +1356,13 @@
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--red" onclick="fillWacker()">Rellenar comando</button>
                   </div>
-                  <pre id="wacker-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap">Pulsa para generar la plantilla (revisa --help del repo Wacker en Kali).</pre>
                 </div>
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ WPS ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">4 &#183; &#x1F511; WPS <span style="font-size:10px;font-weight:600;color:var(--gray);border:1px solid var(--gray);border-radius:99px;padding:2px 10px;vertical-align:middle">wash OK &#183; ataques activos requieren TX</span></h2>
+            <details class="atk-section" id="sec-wps">
+              <summary class="section-title">4 &#183; &#x1F511; WPS <span style="font-size:10px;font-weight:600;color:var(--gray);border:1px solid var(--gray);border-radius:99px;padding:2px 10px;vertical-align:middle">wash OK &#183; ataques activos requieren TX</span></summary>
               <div class="wizard">
 
                 <!-- Wash scan -->
@@ -1199,7 +1377,7 @@
                   <div class="atk-fields">
                     <div class="field-row">
                       <label>Interface:</label>
-                      <input id="wash-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      <input id="wash-iface" type="text" placeholder="auto (\Device\NPF_WIFI_{GUID})">
                     </div>
                     <div class="field-row">
                       <label>Canal:</label>
@@ -1208,6 +1386,32 @@
                   </div>
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--blue" onclick="doCmd('wash_scan', doWashScan)">Escanear WPS</button>
+                  </div>
+
+                  <!-- Resultados wash: tabla visual + clic = usar como objetivo -->
+                  <div id="wash-results" style="max-height:230px;overflow-y:auto;margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:2px 4px 6px">
+                    <table class="tbl">
+                      <thead>
+                        <tr>
+                          <th class="th-bssid">BSSID</th>
+                          <th class="th-num" style="text-align:right">CH</th>
+                          <th>WPS</th>
+                          <th>Lck</th>
+                          <th class="th-ssid">ESSID</th>
+                        </tr>
+                      </thead>
+                      <tbody id="wash-tbody">
+                        <tr class="empty-row">
+                          <td colspan="5">
+                            <div class="empty-state">
+                              <span class="ei">&#129534;</span>
+                              <p>Pulsa <strong>Escanear WPS</strong> · clic en una fila = usar como objetivo</p>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <span id="wash-count" class="count-pill" style="display:none;margin:4px 6px 0"></span>
                   </div>
                 </div>
 
@@ -1227,16 +1431,26 @@
                     </div>
                     <div class="field-row">
                       <label>Interface:</label>
-                      <input id="wps-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      <input id="wps-iface" type="text" placeholder="auto (\Device\NPF_WIFI_{GUID})">
                     </div>
                     <div class="field-row">
                       <label>Canal:</label>
                       <input id="wps-chan" type="number" min="1" max="165" placeholder="auto">
                     </div>
+                    <div class="field-row">
+                      <label>Objetivo:</label>
+                      <span id="wps-target-txt" style="flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">— sin seleccionar —</span>
+                    </div>
                   </div>
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--orange" onclick="doCmd('wps_pin_bruteforce', wpsBrute)">&#x25B6; Iniciar WPS PIN</button>
-                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar WPS">&#x25A0; Cancelar</button>
+
+                  </div>
+                  <!-- Resultado real (solo si el stdout trae PIN/PSK; nada inventado) -->
+                  <div id="wps-result" style="display:none;margin-top:10px;padding:8px 12px;border:1px solid var(--green);border-radius:8px;background:rgba(60,200,120,.07)">
+                    <div style="font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:3px">Resultado WPS (stdout de reaver/bully)</div>
+                    <div id="wps-result-pin" style="font-family:monospace;font-size:13px;color:var(--green)"></div>
+                    <div id="wps-result-psk" style="font-family:monospace;font-size:13px;color:var(--green)"></div>
                   </div>
                 </div>
 
@@ -1256,7 +1470,7 @@
                     </div>
                     <div class="field-row">
                       <label>Interface:</label>
-                      <input id="wpspbc-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      <input id="wpspbc-iface" type="text" placeholder="auto (\Device\NPF_WIFI_{GUID})">
                     </div>
                     <div class="field-row">
                       <label>Canal:</label>
@@ -1285,7 +1499,7 @@
                     </div>
                     <div class="field-row">
                       <label>Interface:</label>
-                      <input id="pixie-iface" type="text" placeholder="NPF_{GUID} o nombre">
+                      <input id="pixie-iface" type="text" placeholder="auto (\Device\NPF_WIFI_{GUID})">
                     </div>
                     <div class="field-row">
                       <label>Canal:</label>
@@ -1298,11 +1512,11 @@
                   </div>
                 </div>
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ INYECCIÓN AIREPLAY-NG ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">5 &#183; &#x26A1; Inyección aireplay-ng <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; TX bloqueada en RT3070+Npcap</span></h2>
+            <details class="atk-section" id="sec-inject">
+              <summary class="section-title">Avanzado &#183; &#x26A1; Inyecci&oacute;n aireplay-ng <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; TX bloqueada en RT3070+Npcap</span></summary>
               <div class="wizard">
 
                 <!-- Injection Test -->
@@ -1387,7 +1601,7 @@
                   </div>
                   <div class="wiz-btns">
                     <button class="atk-btn atk-btn--blue" onclick="doCmd('scan_airodump', doAirodumpScan)">&#x1F4BF; Escanear airodump</button>
-                    <button class="atk-btn atk-stop" style="background:var(--gray)" onclick="cancelCurrentAttack()" title="Cancelar escaneo">&#x25A0; Cancelar</button>
+
                   </div>
                 </div>
 
@@ -1527,11 +1741,11 @@
                 </div>
 
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ DOS / FLOOD ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">6 &#183; &#x1F525; DoS / Flood</h2>
+            <details class="atk-section" id="sec-dos">
+              <summary class="section-title">Avanzado &#183; &#x1F525; DoS / Flood</summary>
               <div class="wizard">
 
                 <!-- Beacon Flood (airbase-ng) -->
@@ -1566,11 +1780,11 @@
                   </div>
                 </div>
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ EVIL TWIN ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">7 &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></h2>
+            <details class="atk-section" id="sec-evil">
+              <summary class="section-title">Avanzado &#183; &#x1F608; Evil Twin <span style="font-size:10px;font-weight:600;color:var(--orange);border:1px solid var(--orange);border-radius:99px;padding:2px 10px;vertical-align:middle">&#9888; requiere Linux</span></summary>
               <div class="wizard">
 
                 <!-- Kit Evil Twin -->
@@ -1608,7 +1822,6 @@
                     <button class="atk-btn" style="background:var(--gray)" onclick="useTargetForEvil()">Usar objetivo</button>
                     <button class="atk-btn atk-btn--red" onclick="genEvilTwinKit()">Generar kit</button>
                   </div>
-                  <pre id="et-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap"></pre>
                 </div>
 
                 <!-- Verificar 1 candidato -->
@@ -1708,11 +1921,11 @@
                   </details>
                 </div>
               </div>
-            </div>
+            </details>
 
             <!-- ══════════════════ ACCESO (objetivo: conectarse) ══════════════════ -->
-            <div class="atk-section">
-              <h2 class="section-title">8 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></h2>
+            <details class="atk-section" id="sec-access">
+              <summary class="section-title">8 &#183; &#x1F517; Acceso (paso final: conectar)<span style="font-size:10px;font-weight:600;color:var(--green);border:1px solid var(--green);border-radius:99px;padding:2px 10px;vertical-align:middle">&#10003; Windows</span></summary>
               <div class="wizard">
 
                 <!-- Conectar con clave -->
@@ -1769,10 +1982,9 @@
                     <button class="atk-btn" onclick="keygenDetect()">Detectar</button>
                     <button class="atk-btn" onclick="keygenRun()">Generar</button>
                   </div>
-                  <pre id="keygen-out" style="margin-top:10px;font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:140px;overflow-y:auto"></pre>
                 </div>
               </div>
-            </div>
+            </details>
 
             <!-- Info box -->
             <div class="info-box">
@@ -1793,27 +2005,19 @@
           </div><!-- /attack-body -->
         </section><!-- /tab-attack -->
 
-        <!-- CONSOLE TAB -->
+        <!-- CONSOLE TAB (fusionado en Atacar: redirige; se conserva el id) -->
         <section id="tab-console" class="tab">
           <header class="phead">
             <div>
-              <h1>Consola Verbose</h1>
-              <p class="sub">Salida de escaneo, errores y depuración</p>
+              <h1>Registro</h1>
+              <p class="sub">El verbose vive ahora en Atacar, siempre visible</p>
             </div>
             <div class="phead-actions">
-              <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">
-                &#10005; Limpiar
-              </button>
-              <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
-                     style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:88px;outline:none">
-              <button class="scan-btn sm" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">
-                &#x25A0; Matar PID
+              <button class="scan-btn" onclick="showTab('attack')">
+                &#x26A1; Ir al verbose
               </button>
             </div>
           </header>
-          <div class="console-wrap">
-            <pre id="cv" class="console-view"></pre>
-          </div>
         </section>
       </main>
     </div>
