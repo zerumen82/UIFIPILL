@@ -55,10 +55,10 @@ fn main() {
     try_read(&h, "DEVICE_MODE IN tras re-autoload", USB_DEVICE_MODE, USB_MODE_AUTORUN, 0, 4);
     try_read(&h, "MULTI_READ 0x1000 tras re-autoload", USB_MULTI_READ, 0, 0x1000, 4);
 
-    // 7. DEVICE_MODE OUT con USB_MODE_FIRMWARE (0x02): ¿arranca el MCU aunque no haya firmware?
-    try_write(&h, "DEVICE_MODE OUT val=FIRMWARE(0x02)", USB_DEVICE_MODE, 0, USB_MODE_FIRMWARE, &[]);
-    std::thread::sleep(std::time::Duration::from_millis(2000));
-    try_read(&h, "MULTI_READ 0x1000 tras FIRMWARE-mode", USB_MULTI_READ, 0, 0x1000, 4);
+    // 7. DEVICE_MODE OUT con USB_MODE_FIRMWARE — **PROHIBIDO** (regla 3 del
+    //    AGENTS.md): bajo WinUSB mata el chip (5/5 medido; solo el power-cycle
+    //    físico lo recupera). Este diag ejecutó el kick el 2026-10-06 y degradó
+    //    la antena en plena sesión E0-11 → paso eliminado. No reinstaurarlo.
 
     println!("\n== FIN: pegar este output completo al agente ==");
 }

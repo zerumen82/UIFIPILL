@@ -10,7 +10,7 @@
 | ID | Historia | CA (criterios de aceptación) | Estado |
 |---|---|---|---|
 | E0-01 | Scan de redes sin Kali | `scan_wifi` (netsh) devuelve SSID/BSSID/CH/seuridad reales; fallback automático a scan USB crudo si netsh da 0 | ✅ 2026-10-01 (11 redes + RSN/SAE parseado) |
-| E0-02 | Modo monitor con cambio de canal | `activate_monitor` + `set_monitor_channel` muevan la radio (beacons SOLO del canal pedido en captura) | ✅ 2026-09-21 (CH1 vs CH6) |
+| E0-02 | Modo monitor con cambio de canal | `activate_monitor` + `set_monitor_channel` muevan la radio (beacons SOLO del canal pedido en captura) | ✅ 2026-09-21 (RT3070, CH1 vs CH6) · ✅ 2026-10-06 (RT73: CH1 99% / CH6 92%, SIN parche de driver — `lab_channel_rf`) |
 | E0-03 | RX cruda por WinUSB | ≥500 frames/15 s y ≥3 APs por EP 0x81 con parser FC@20, sin kick FIRMWARE(8) | ✅ 2026-10-01 (524/3) |
 | E0-04 | TX cruda al aire | Beacon/deauth con `TXDONE` y beacon visible desde otro dispositivo | ✅ 2026-09-25 |
 | E0-05 | Scan hopping sostenido | ≥100 frames/30 s en ≥5 canales con ≥10 redes, sin degradación del chip | ✅ 2026-10-01 (247/10 y 225/12) |
@@ -19,7 +19,7 @@
 | E0-08 | wash E2E en Windows | `wash -i \Device\NPF_WIFI_{GUID} -c N -F` en monitor ≥1 fila WPS real; `parse_wash` laclava | ✅ 2026-10-01 (7 filas) |
 | E0-09 | UI «flujo por red» sin jerga | Héroe con veredicto por `profile_target`; 0 ids/handlers/invokes huérfanos; lint+vite+26 tests | ✅ 2026-10-05 |
 | E0-10 | Instalador abre la app | NSIS instala `uifipill.exe` (15,7 MB) y la app queda viva (título UIFIPILL) | ✅ 2026-10-01 |
-| E0-11 | Sniff sostenido largo (USB crudo) | ≥5 min de sniff continuo con watchdog/cancel, frames contados >0 y pcap creciendo; radio restaurada al cierre | ⬜ abierto (siguiente paso natural) |
+| E0-11 | Sniff sostenido largo (USB crudo) | ≥5 min de sniff continuo con watchdog/cancel, frames contados >0 y pcap creciendo; radio restaurada al cierre | ⬜ infraestructura ✅ (300 s, PROGRESS, restore, schtasks). Bloqueo medido 2026-10-06: RT3070 RX sordo en AMBAS antenas (0 frames con aire confirmado por RT73: 7 redes, ch3 100%). Sospecha: puerto USB 3.0 xHCI / paquete WinUSB oem180 → probar puerto USB 2.0 |
 | E0-12 | PMKID/handshake por RX cruda | Sniff crudo produce pcap con EAPOL/PMKID → `pcap_to_22000` → hashcat `.cracked`, todo en Windows | ⬜ abierto (RX ya dada; falta pipeline) |
 | E0-13 | WPS sin Npcap | vía Kali live USB (reaver real) documentada en la app O TX cruda propia; veredicto honesto si Windows no puede asociar | ⬜ decisión: Npcap #85 cerrado (err 203 medido) |
 | E0-14 | efuse/EEPROM (tx power/LNA por canal) | lectura/escritura con verificación de valor; comparación RFCSR23=0x09 vs 0x00 | ⬜ opcional (idea de sesión 10-01) |

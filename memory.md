@@ -7,7 +7,7 @@
 > Referencias `§N` = secciones de ESTE documento.
 
 ## ÍNDICE
-- §1 — Bitácora de sesiones (2026-09-13 → 2026-10-05, orden cronológico; última entrada: 2026-10-06)
+- §1 — Bitácora de sesiones (2026-09-13 → 2026-10-06, orden cronológico; última entrada: 2026-10-06 cont. 5)
 - §2 — Roadmap motor dual WSL2/Kali (origen ROADMAP_WSL2.md)
 - §3 — Ingeniería inversa de netr28ux.sys (origen DRIVER_RE.md)
 - §4 — Investigación RX por WinUSB (origen RX_PLAN.md)
@@ -2306,5 +2306,197 @@ en Windows como Kali Linux».
     `force_log2.txt`), `*.bak-arch` y `tools/*.nullbak` → `.gitignore`.
   · **Push HECHO 2026-10-06** (aprobación «pushea»): `a5fea89..a1b5ba3
     master -> origin/master`, `git status` en sincronía.
+
+## SESIÓN 2026-10-06 (cont.) — ÉPICA E0-11: SNIFF SOSTENIDO (en curso)
+Orden recibida: «arranca». Elegida **E0-11** (base de E0-12: sin escucha
+prolongada no cae ningún handshake). CA: ≥5 min continuo + watchdog/cancel +
+frames>0 + pcap creciendo + radio restaurada al cierre.
+- **Implementado** (código sin commitear todavía):
+  · `driver_re/usb_tx/src/sniff.rs`: línea `PROGRESS t=X/Ys frames=N
+    pcap=ZB` cada 10 s (stdout line-buffered → llega en vivo; sirve de
+    fallback si el proceso se mata antes del resumen final).
+  · `src-tauri/src/commands.rs`: extraída **`run_path_bg()`** de
+    `run_bin_bg_opts` (ruta absoluta ya resuelta: mismo streaming chunked,
+    mismos eventos attack-started/completed, cancelable + watchdog).
+  · `src-tauri/src/usb_raw.rs`: **`usb_raw_sniff_bg()`** (id fijo
+    `usb_sniff_long` = el que la UI claimatea; clamp 10–1800 s; watchdog
+    secs+30; éxito honesto SOLO con frames>0) + **`usb_raw_restore()`**
+    (dispara `restore_netr28ux_run.ps1` con UAC, nunca éxito simulado: la UI
+    lo verifica con `detect_adapters`) + parser `sniff_frames()` con 4 tests
+    nuevos (resumen, 0 honesto, fallback PROGRESS, sin evidencia).
+  · `src-tauri/src/lib.rs`: registrados los 2 comandos.
+  · `index.html`: botón «🎧 Escucha larga», botón «↩️ Restaurar antena»,
+    input `usbraw-long-secs` (60–1800, defecto 300) + checkbox
+    `usbraw-restore-onclose` (marcado).
+  · `src/app.js`: `usbRawSniffLong()` (init previo + claimAttack +
+    polling `detect_adapters` hasta 150 s en `usbRawRestore`, barra con % de
+    los PROGRESS en `_flushEvents`).
+  · Detalle clave (medido): async+State exige `Result` en Tauri (E0277) →
+    `usb_raw_sniff_bg` devuelve `Result<UsbRawResult, String>` como los
+    comandos `*_bg` (el primer build falló por esto).
+- **Verificación**: `npm run lint` ✅ · `npx vite build` ✅ (122.79 kB +
+  81.91 kB) · cargo largo vía `schtasks` (`verify_e011.cmd` + tarea
+  `uifipill_e011`). **Lección de entorno**: la tarea heredaba la consola del
+  shell y murió con 0xC000013A (Ctrl+C) → acción con `start /min` (consola
+  propia) lo resolvió. Ronda 1: `usb_tx` build 0 warnings ✅ + tests 3/3 ✅;
+  src-tauri falló (E0277) → corregido → ronda 2 VERDE ✅ (release 0 warnings, `cargo test --lib` **30 passed/0 failed/8 ignored**).
+- **E2E con HW** (12:36–12:55): PnP `RT3070 Raw USB (WinUSB)` OK/CM_PROB_NONE;
+  `rt3070_init 11` OK (MCU vivo, radio ON, canal 11); sniff 300 s lanzado
+  y escuchando en EP 0x81 (proceso vivo, CPU activa) con **0 frames /
+  pcap 24 B** en t≥100 s — y `netsh` NO ve ninguna WiFi activa en la
+  máquina (la propia RT3070 ya no es WiFi bajo WinUSB; la 2ª radio que emite
+  aire real no está confirmada hoy).
+- **⚠️ E0-11 queda SIN EVIDENCIA de frames.** Nota honesta: el código nuevo
+  (bg+cancel+PROGRESS+restore) está implementado y verificado (lint/vite/
+  cargo 0 warnings/30 tests); el CA de «frames>0 + pcap creciendo» exige
+  hardware aire real (AP emitiendo en el canal o 2ª radio) que HOY no está
+  confirmado — igual que el E2E 10-01 recibió 359 frames porque MIWIFI y
+  compañía emitían en ch11.
+- **✅ Restore verificado 2026-10-06 12:57** (CA «radio restaurada al cierre»):
+  `restore_netr28ux_run.ps1` lanzado con UAC → oem180 desinstalado + netr28ux
+  reinstalado desde DriverStore + rescan → PnP `802.11n USB Wireless LAN
+  Card` **OK / CM_PROB_NONE**, `netsh` ve la antena como **Wi-Fi con 11
+  redes** (HP-Print…, etc.). La radio queda viva en WiFi normal — el
+  mecanismo de `usbRawRestore()` (disparo + polling `detect_adapters`)
+  funciona.
 - **Verificación**: `npm run lint` ✅ (`node -c src/app.js`). Solo toques de
   documentación (sin cambios de código).
+
+## SESIÓN 2026-10-06 (cont. 2) — E0-11 E2E: chip degradado + kick prohibido en diag + lección netsh
+Continuación de E0-11 con «revisa memory y continúa». E2E repetido con HW:
+- **Setup**: `cargo test --lib` 30/8 ✅ → `switch_winusb4.ps1` (UAC) → WinUSB
+  activo (service=WinUSB, status=OK, probe: chip HABLA) → `rt3070_init 11` OK.
+- **Sniff 300 s ch11**: PROGRESS cada 10 s en vivo ✅ (el cableado E0-11
+  funciona), pero **frames=0, pcap=24 B todo el rato**.
+- **Scan hopping 30 s**: también 0 frames en TODOS los canales (el 10-01 daba
+  247/30 s con el MISMO binario rt3070_scan.exe de 02:27 — binario y código
+  descartados, diff de sniff.rs es solo el añadido PROGRESS).
+- **TX test**: bulk OUT `ERR Timeout` tras 2 frames (antes escribía 100/100).
+  Patrón = chip degradado (STALL/timeout total, regla 3).
+- **Power-cycle ×2** (usuario): tras el 1º todo respondía por control pipe
+  (probe OK) pero bulk/RX seguía sordo; tras el 2º, igual. Antena …D8:A7
+  degrada más rápido (medido) — hoy cayó más rápido aún.
+- **🔴 CAUSA PROPIA ENCONTRADA: `rt3070_diag` ejecutaba el kick PROHIBIDO**
+  `DEVICE_MODE OUT val=FIRMWARE(8)` (paso 7 del diag de investigación
+  antiguo). Corrió en esta sesión y degradó el chip. **FIX**: paso eliminado
+  de `diag.rs` con comentario de regla (no reinstaurarlo) + rebuild 0
+  warnings + 3 tests ✅. La herramienta queda segura.
+- **⚠️ LECCIÓN METODOLÓGICA (invalida parcialmente el E2E de ayer)**: la
+  conclusión de ayer «no hay aire porque netsh no ve redes» era INVÁLIDA —
+  con la RT3070 en WinUSB **netsh no tiene NINGUNA interfaz WiFi** (medido
+  hoy: «No hay ninguna interfaz inalámbrica en el sistema»; solo Ethernet).
+  El aire es INVERIFICABLE por netsh mientras la antena esté en WinUSB.
+  Única fuente de aire fiable: hotspot móvil 2.4 GHz u otra radio externa.
+- **Estado E0-11**: código bg+cancel+PROGRESS+restore verificado y E2E de
+  infraestructura OK (300 s continuos, cancelable, pcap generado, restore
+  verificado ayer). El CA «frames>0 + pcap creciendo» sigue pendiente de
+  aire confirmado + chip sano (probar: power-cycle + hotspot móvil + scan
+  hopping; si el hopping ve redes → sniff 300 s en ese canal).
+
+## SESIÓN 2026-10-06 (cont. 3) — RT73 como verificador de aire + RT3070 RX sordo NO-HW
+Continuación con «continúa». Secuencia de hallazgos:
+- **Chip sordo tras el cont. 2** → power-cycle del usuario → igual (0 frames,
+  bulk TX muere a los 2 frames). Se probó E2E vía **schtasks con consola
+  propia** (lección E0-11) → **mismo síntoma** → entorno shell DESCARTADO.
+- **Código descartado**: diff de `src/` vs HEAD = solo PROGRESS (sniff.rs) +
+  fix diag.rs; `rt3070_scan.exe` es el binario del 10-01 que sacó 247 frames.
+- **2ª antena RT3070 conectada** → **mismo síntoma exacto** (control pipe OK,
+  BBP init «vivo», bulk muere a los 2 frames, RX 0). Dos chips distintos con
+  el mismo fallo → **NO es daño del chip** ni del código: algo del entorno
+  cambió desde el 10-01 (posibles: puerto USB 3.0 xHCI — ambas cayeron en
+  Port_#0005.Hub_#0001 del host Intel USB 3.0; reinstalación del paquete
+  WinUSB oem180 por switch_winusb4 ayer; Windows Update). **PRÓXIMA VÍA:
+  probar RT3070 en puerto USB 2.0 distinto / descartar xHCI.**
+- **NUEVA ANTENA RT73 conectada (VID_148F&PID_2573)**, driver vendor «RT73
+  USB Wireless LAN Card» activo → **netsh SÍ escanea con ella**: **7 redes
+  en el aire** (TP-Link_29D6 **100% en ch3**, HP-Print 100% ch3, Q003 60% ch3,
+  MOVISTAR 20% ch1, La Fory 29% ch6, Livebox6 29% ch11…).
+- **IMPLICACIÓN 1 — el aire está CONFIRMADO**: el «0 frames» de la RT3070
+  NO era falta de tráfico (hipótesis de ayer INVALIDADA por segunda vez).
+- **IMPLICACIÓN 2 — RT3070 en ch3 (100% señal): 0 frames igualmente** →
+  RX crudo sordo en ambas antenas hoy. `rt3070_diag` (1ª antena) corrió el
+  kick prohibido (ya eliminado de diag.rs), pero la 2ª antena nunca lo
+  recibió y falla igual → el kick NO explica todo.
+- **RT73 no es compatible con el port usb_tx** (RT3070: rf3xxx, vendor
+  requests distintos; RT73 = rt73usb en Linux). Valor inmediato: verificador
+  de aire por netsh + 2ª radio pasiva Npcap + antena para Kali. Port del
+  protocolo rt73usb a WinUSB = posible historia nueva (E0-16), no iniciada.
+- **✅ RT73: MONITOR + CANAL + CAPTURA VERIFICADOS E2E (misma sesión, tarde)**:
+  añadida a `CHIPS` en wifi_adapter.rs (capable=true) → `lab_monitor_cycle`
+  PASA con ella: activate_monitor OK (mode=monitor), canal 1 aceptado por
+  OID, restore managed OK. **`lab_channel_rf` PASA**: CH1 → 83/84 beacons
+  del canal pedido (99%), CH6 → 80/87 (92%), captura pasiva Npcap real
+  (195 y 125 pkts, dlt127). **El driver rt73.sys cambia de canal SIN parche**
+  (al contrario que netr28ux stock, que necesitó el parche del 09-21).
+  Nota: el GET del canal devuelve valor cacheado (como en RT3070) — la
+  verificación válida es por beacons. Inyección: NO probada (Npcap #85 es
+  capa Npcap — se asume err 31 igual).
+- **Verificación del día**: schtasks E2E verde (probe/init/scan/tx/sniff
+  corrieron; el síntoma es HW/entorno, no del cableado); lint/vite/cargo
+  30/8 ✅; usb_tx 0 warnings + 3 tests ✅ (con fix diag.rs); lab_monitor_cycle
+  + lab_channel_rf PASAN con RT73 (2 lab tests ignorados ejecutados hoy).
+
+## SESIÓN 2026-10-06 (cont. 4) — ¿Parchear netr7364.sys (RT73)? VEREDICTO: NO hace falta
+Pregunta del usuario: «¿parchear el driver es más fácil para la RT73?». Análisis
+estático completo (copias en `driver_re/netr7364.sys/.inf`, sha256 `b3c9de37…`,
+asm en `driver_re/netr7364.asm`, 159k líneas, Intel syntax):
+- **Binario**: netr7364.sys 5.01.03.0000 (Ralink 2024 en DriverStore, VMA base
+  0x11000 sin ASLR high — MÁS simple que netr28ux: 722 KB vs 2.24 MB, .text
+  0x99d2f vs ~0x2c0000). Si PUDIERA hacer falta parchear, es bastante más
+  fácil: despachadores OIDs planos con cmp literal (a3780/a3ccf) vs el
+  aritmético de netr28ux, y símbolos/rutinas más compactas.
+- **RE del canal (ya no hace falta)**: OID_DOT11_CURRENT_CHANNEL (0x0D010335)
+  → despachador a3780 → handler a394c (GET vía a7420, lee byte ctx+0x6ccc —
+  ¡mismo patrón de «valor cacheado» que netr28ux!) → segundo despachador
+  a3ccf → SET a3ece (gate cr8==2 → call a4780). Handler SET a4780: valida
+  longitud≥4, estado (+0x2c bit0 → 0xC0232000), canal 1..14 (0xC0010015 si
+  fuera de rango), almacena en ctx+0x6ccc (con write-back condicional de
+  beacons +0x80). **Sin el gate bit17 (0x20000) del camino Extensible que
+  bloqueaba netr28ux** — y de hecho el gate similar está en 0x26aa0 pero es
+  cr8 (IRQL), no opState. Esto EXPLICA el medido hoy: el canal funciona de
+  fábrica (lab_channel_rf 99%/92% sin parche).
+- **Consumidor del canal**: 124 lecturas de ctx+0x6ccc; la máquina de estados
+  de conexión consume el byte (397de: lo recarga de ctx+0x153ff al iniciar
+  state machine) y la sintonía va por tabla ctx+0x2396df (comparación
+  canal-bytes en 36edd-36f1b con getter 5f350).
+- **¿Para qué SÍ haría falta parchear? NADA identificado**: canal y monitor
+  ya funcionan de fábrica; la inyección falla por Npcap #85 (capa Npcap, err
+  31/203 — no del driver, y ningún parche de netr7364 lo arregla); TX cruda
+  requiere WinUSB (el port usb_tx es específico RT3070/rt28xx, no RT73).
+- **Veredicto**: NO parchear. El «parche fácil» que sí existe para la RT73 es
+  el port del protocolo rt73usb a WinUSB si algún día se quiere TX/RX cruda
+  con ella (historia E0-16 potencial), no un parche del driver NDIS.
+
+## SESIÓN 2026-10-06 (cont. 5) — VEREDICTO DEL MISTERIO BULK: chip sano, stack WinUSB roto
+Plan dual del usuario (RT3070 inyecta / RT73 escucha). Experimentos ejecutados:
+- **Hipótesis full-speed FALSADA**: añadida impresión de velocidad a
+  `probe.rs` (rusb `device().speed()`) → **High-Speed 480 Mbps** ✅, bulk
+  512 B debería funcionar. Build 0 warnings.
+- **PRUEBA DECISIVA — restore a netr28ux** (`restore_netr28ux_run.ps1`,
+  UAC ok, log `restore_run.log` 17:28) → **netsh escanea PERFECTO: 9 redes**
+  (HP-Print/TP-Link/Q003 ch3, La Fory ch6, Livebox/MIWIFI_APUM/MOVISTAR ch11
+  — mismos BSSIDs que vio la RT73). **El chip y el USB físico están SANOS**:
+  el driver vendor recibe frames por el mismo cable/puerto/antena.
+- **Windows Update descartado**: último KB instalado 30/09 (KB5121794) —
+  ANTES del 10-01 exitoso.
+- **Síntoma exacto del fallo WinUSB**: bulk OUT ACKea 2 frames y luego NAK
+  forever (timeout). El motor DMA/USB interno del chip no drena bajo WinUSB,
+  mientras que con vendor firmware todo fluye. Control pipe 100% OK.
+- **Sospechoso restante**: estado del host WinUSB/PnP acumulado desde el
+  10-01 (device enchufado 5 días en estados varios; se vio un
+  `CM_PROB_PHANTOM` hoy en PnP). **No es código, no es HW, no es update.**
+- **DECISIÓN DEL USUARIO**: documentar y parar — **REBOOT PENDIENTE**
+  (único reset no probado: limpia stack USB + hosts WinUSB + fantasma PnP).
+  Próxima sesión: reboot → switch WinUSB → probe → init → scan 30 s → si
+  reviva, ciclo dual (TX rt3070 + RT73 en monitor verificando beacon).
+- **Cambios de código hoy**: `probe.rs` +velocidad (diagnóstico, 0
+  warnings); diag.rs sin kick (cont. 2); wifi_adapter.rs RT73 en CHIPS
+  (capable). Todo sin commitear (regla: petición explícita).
+
+## SESIÓN 2026-11-18 — PORT RT73 POR WINUSB (EN CURSO)
+- INF WinUSB para RT73 (148F:2573) creado y firmado (rt73_winusb.cat, cert lab) → instalado OK; force_winusb_rt73.ps1 rebinda el device.
+- rt73_probe: chip abre, speed High, EP 0x81/0x01, MULTI_READ responde (MAC_CSR0=0x0002573a).
+- rt73_init: firmware rt73.bin (2048B) cargado + kick FIRMWARE(8) OK; init_registers + init_bbp portados; BBP0=0x16.
+- EEPROM leíble por MULTI_READ en 0x0000 (MAC en 0x0002-04).
+- RX: 0 URBs en 10s (chip vivo pero radio no demodule). Falta port de rt73usb_config_channel con RF1-4 por canal (EEPROM). Intento mínimo (RF=0) no funcionó.
+- Conclusión: RT73 por WinUSB NO funcional para RX aún; requiere port de channel config + RF values. RT73 en modo monitor (Npcap) sigue verificado para captura pasiva.

@@ -96,8 +96,29 @@ name = "usb_sniff_stats"
 path = "src/usb_sniff_stats.rs"
 
 [[bin]]
-name = "rt3070_bbpmcu"
-path = "src/bbpmcu.rs"
+name = "rt73_tx"
+path = "src/rt73_tx.rs"
 
 [dependencies]
 rusb = "0.9"
+[[bin]]
+name = "rt73_probe"
+path = "src/rt73_probe.rs"
+
+[[bin]]
+name = "rt73_init"
+path = "src/rt73_init.rs"
+
+[[bin]]
+name = "rt73_rx"
+path = "src/rt73_rx.rs"
+
+[[bin]]
+name = "rt73_eeprom"
+path = "src/rt73_eeprom.rs"
+
+
+[[bin]]
+name = "rt73_chan"
+path = "src/rt73_chan.rs"
+

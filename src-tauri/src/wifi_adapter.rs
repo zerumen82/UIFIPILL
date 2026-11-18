@@ -18,6 +18,11 @@ const CHIPS: &[(&str, &str, bool, &str, &str)] = &[
     ("Realtek RTL8811CU",     "0BDA:C811", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8811cu"),
     ("Realtek RTL8812BU",     "0BDA:B812", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl8812bu"),
     ("Ralink RT2870/RT3070",  "148F:5370", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl93xx"),
+    // RT73 (148F:2573): ralink rt73.sys — VERIFICADO 2026-10-06 con HW real:
+    // lab_monitor_cycle PASA (monitor OK, canal OK, restore OK) y lab_channel_rf
+    // PASA (CH1 99% / CH6 92% por beacons, captura pasiva Npcap dlt127).
+    // Cambia de canal SIN parche de driver (a diferencia de netr28ux stock).
+    ("Ralink RT73",           "148F:2573", true, "Driver vendor (monitor y canal verificados)", "https://github.com/aircrack-ng/aircrack-ng"),
     ("Ralink RT3070",         "148F:3070", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl93xx"),
     ("Ralink RT3071/RT3072",  "148F:3071", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl93xx"),
     ("Ralink RT5572",         "148F:5572", true, "Driver NPcap modificado",        "https://github.com/aircrack-ng/rtl93xx"),

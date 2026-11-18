@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self' http://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline';" />
   <title>UIFIPILL</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F4F6;</text></svg>">
   <style>
     /* ── Reset ────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -641,6 +642,7 @@
       <div class="logo-wrap">
         <div class="logo">◈</div>
         <span class="brand">UIFIPILL</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:6px">v1.0.0</span>
       </div>
 
       <div class="nav-group">
@@ -804,6 +806,7 @@
               <div style="display:flex;gap:8px;margin-top:6px">
                 <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
                 <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
+                <button onclick="copyLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#128203; Copiar stdout+stderr</button>
               </div>
             </div>
 
@@ -815,6 +818,7 @@
                 <span style="font-size:11px;color:var(--muted)">todo el verbose, sin omitir nada</span>
                 <span style="flex:1"></span>
                 <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">&#10005; Limpiar</button>
+                <button class="scan-btn sm" style="background:#3a3a52" onclick="copyConsole()">&#128203; Copiar</button>
                 <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
                        style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:88px;outline:none">
                 <button class="scan-btn sm" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">&#x25A0; Matar PID</button>
@@ -931,6 +935,8 @@
                     <button class="atk-btn atk-btn--green" onclick="usbRawTxBeacon()">&#x1F4E1; TX beacons de prueba</button>
                     <button class="atk-btn atk-btn--red" onclick="usbRawDeauth()">&#x26A1; Deauth objetivo (SOLO tu red)</button>
                     <button class="atk-btn atk-btn--blue" onclick="usbRawSniff()">&#x1F4E1; Sniff (RX mismo chip)</button>
+                    <button class="atk-btn atk-btn--blue" onclick="usbRawSniffLong()">&#x1F3A7; Escucha larga (sostenida, cancelable)</button>
+                    <button class="atk-btn" onclick="usbRawRestore()">&#x21A9;&#xFE0F; Restaurar antena (WiFi normal)</button>
                     <button class="atk-btn atk-btn--green" onclick="usbRawHandshake()">&#x1F3AF; Handshake: deauth+captura UNA antena</button>
                     <button class="atk-btn atk-btn--red" onclick="usbRawAttackCycle()">&#x1F300; CICLO: deauth + aviso captura</button>
                     <button class="atk-btn" onclick="usbRawDiag()">&#x1FA79; Diagnóstico</button>
@@ -959,6 +965,13 @@
                     <div class="field-row">
                       <label>Sniff (segundos):</label>
                       <input id="usbraw-sniff-secs" type="number" min="5" max="300" value="30">
+                    </div>
+                    <div class="field-row">
+                      <label>Escucha larga (segundos, E0-11):</label>
+                      <input id="usbraw-long-secs" type="number" min="60" max="1800" value="300" title="≥300 s (5 min) para evidencia de sniff sostenido; techo 30 min">
+                    </div>
+                    <div class="field-row">
+                      <label><input id="usbraw-restore-onclose" type="checkbox" checked> Restaurar antena (WiFi) al acabar la escucha</label>
                     </div>
                   </div>
                 </div>

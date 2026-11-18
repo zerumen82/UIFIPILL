@@ -84,6 +84,10 @@ npx tauri build --bundles nsis        # instalador → src-tauri/target/release/
 - **Con WinUSB activo la antena NO es WiFi para netsh** → revertir con
   `driver_re/usb_tx/restore_netr28ux.ps1`. Nunca kick `FIRMWARE(8)` bajo WinUSB
   (mata el chip; solo power-cycle físico de 15 s lo recupera).
+- E0-11 (sniff sostenido, 10-06): infraestructura implementada; bloqueo medido
+  RT3070 RX sordo en ambas antenas (0 frames con aire confirmado por RT73);
+  reboot pendiente por decisión del usuario. RT73 añadida a CHIPS (monitor+canal
+  +captura verificados sin parche).
 
 ## Auditoría de stubs/fakes (2026-09-17)
 

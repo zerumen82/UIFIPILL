@@ -64,6 +64,17 @@ fn main() {
     // USB_DMA_CFG (AGG_LIMIT=301) y MAC enable TX+RX — NO pisarlos aquí (el
     // overwrite previo con 0x9C|(1<<29)|(1<<28) daba ~3 beacons/10s; medido).
     let _ = rx_filter_monitor(&h);
+    // Diagnóstico: contadores RX del MAC (0x1700/04/08). Si son >0 pero el
+    // bulk IN entrega 0 frames, el problema es el transporte USB (WinUSB/host),
+    // no la radio — evidencia clave para distinguir RX sordo de RX sin tráfico.
+    for (name, addr) in [("CRC/PHY", 0x1700u16), ("CCA/PLCP", 0x1704), ("dup/ovf", 0x1708)] {
+        match common::reg_read(&h, addr) {
+            Ok(v) => println!("   {name} (0x{addr:04x}) = {v:#010x}"),
+            Err(e) => println!("   {name} (0x{addr:04x}) = ERR {e:?}"),
+        }
+    }
+    // Limpia un posible halt del endpoint antes de empezar (idempotente).
+    let _ = h.clear_halt(0x81);
     println!("✅ RX armado por init_radio + filtro monitor — escuchando {secs}s en EP 0x81…");
 
     let mut file = std::fs::File::create(&out_path).expect("crear pcap");
@@ -73,6 +84,11 @@ fn main() {
     let rt = radiotap_min();
     let mut pkt_count = 0usize;
     let mut buf = vec![0u8; 8192];
+    // E0-11 (sniff sostenido): progreso cada 10 s con frames + tamaño del pcap
+    // en vivo. El padre (run_path_bg en src-tauri) emite estas líneas a la UI
+    // con coalescencia; si el proceso se cancela, el último PROGRESS es la
+    // evidencia de frames capturados.
+    let mut next_report = std::time::Instant::now() + std::time::Duration::from_secs(10);
 
     while std::time::Instant::now() < deadline {
         match h.read_bulk(0x81, &mut buf, std::time::Duration::from_millis(300)) {
@@ -101,11 +117,25 @@ fn main() {
                 }
             }
             Ok(_) => {} // corto: ruido
-            Err(rusb::Error::Timeout) => {} // normal: sin tráfico
-            Err(e) => {
+             Err(rusb::Error::Timeout) => {} // normal: sin tráfico
+             Err(rusb::Error::Pipe) => {
+                 // Endpoint en halt (NAK/STALL): intentar recuperar sin matar
+                 // el chip (clear_halt es seguro, a diferencia de FIRMWARE(8)).
+                 let _ = h.clear_halt(0x81);
+                 std::thread::sleep(std::time::Duration::from_millis(50));
+             }
+             Err(e) => {
                 eprintln!("⚠️ read_bulk: {e:?}");
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
+        }
+        // PROGRESS cada 10 s (stdout line-buffered → llega al padre en vivo).
+        let now = std::time::Instant::now();
+        if now >= next_report {
+            let elapsed = secs.saturating_sub(deadline.saturating_duration_since(now).as_secs());
+            let pcap_len = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+            println!("PROGRESS t={elapsed}s/{secs}s frames={pkt_count} pcap={pcap_len}B");
+            next_report = now + std::time::Duration::from_secs(10);
         }
     }
 

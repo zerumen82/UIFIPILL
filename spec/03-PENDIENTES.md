@@ -9,10 +9,10 @@
 |---|---|---|---|
 | ~~D-01~~ | ~~23 ficheros modificados + ~35 untracked SIN COMMITEAR~~ | ~~pérdida de ~1 semana~~ | **CERRADA 2026-10-06** con aprobación del usuario: commits `64bb5d0` (docs+spec), `d193a30` (ui), `33b2b6b` (usb_tx+backend); `git status` limpio; **push hecho** `a5fea89..a1b5ba3`. |
 | ~~D-02~~ | ~~Basura `1` (479 KB) y `yye` (697 KB) en la raíz~~ | ~~suciedad + datos de captura~~ | **CERRADA 2026-10-06**: borrados; logs de run y backups → `.gitignore` |
-| D-03 | E0-11/E0-12 (sniff sostenido + PMKID/handshake por RX cruda) sin implementar | El pipeline Windows≡Kali no cierra captura→crack sin Npcap | Historia siguiente de la épica E0 |
+| D-03 | E0-11/E0-12 (sniff sostenido + PMKID/handshake por RX cruda) sin implementar | El pipeline Windows≡Kali no cierra captura→crack sin Npcap | Código E0-11 verificado (30/8). **2026-10-06 (cont. 5)**: veredicto del misterio bulk — chip SANOS (vendor netsh ve 9 redes tras restore), High-Speed OK, no update → **stack WinUSB/host roto** (bulk ACK 2 frames → NAK; fantasma PnP). **REBOOT PENDIENTE** (decisión usuario: documentar y parar) → tras reboot: switch WinUSB → probe → init → scan → ciclo dual con RT73 en monitor |
 | D-04 | E0-13 WPS: reaver/bully no asocian en Windows (Npcap #85, err 203 medido) | WPS PIN real solo en Kali live USB | Decisión de usuario: documentar vía Kali en la app vs investigar TX cruda propia |
 | D-05 | Fase 7 roadmap dual sin cerrar (veredicto funcional WSL2/Kali/Windows) | Roadmap con fase pendiente desde 2026-09-14 | Cerrar con E0-15 |
-| D-06 | Verificación completa post-docs pendiente (solo `npm run lint` hoy) | DoD §spec/00 incompleto | `npx vite build` + `cargo build --release` 0 warnings + `cargo test --lib` (26/8) |
+| ~~D-06~~ | ~~Verificación completa post-docs pendiente~~ | ~~DoD §spec/00 incompleto~~ | **CERRADA 2026-11-18**: lint OK, vite build OK (122.79 kB), cargo build --release 0 warnings, cargo test --lib 30 passed / 8 ignored. |
 
 ## Riesgos operativos (no deudas, pero vigentes)
 

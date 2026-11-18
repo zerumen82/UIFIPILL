@@ -145,6 +145,8 @@ pub fn run() {
             usb_raw::usb_raw_tx_beacon,
             usb_raw::usb_raw_deauth,
             usb_raw::usb_raw_sniff,
+            usb_raw::usb_raw_sniff_bg,
+            usb_raw::usb_raw_restore,
             usb_raw::usb_raw_diag,
             usb_raw::usb_raw_scan,
         ])

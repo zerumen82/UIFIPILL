@@ -19,6 +19,16 @@ fn main() {
 
     let desc = h.device().device_descriptor().unwrap();
     println!("   USB {}:{}, {} configuraciones", desc.vendor_id(), desc.product_id(), desc.num_configurations());
+    // Velocidad de enumeración: si el chip cayó a Full-Speed (12 Mbps), los
+    // endpoints bulk de 512 B no funcionan (máx 64 B) → control OK pero
+    // bulk OUT/IN muerto. Hallazgo diagnóstico 2026-10-06 (bulk moría tras 2
+    // frames en ambas antenas y todo puerto).
+    println!("   Velocidad: {:?} ({})", h.device().speed(), match h.device().speed() {
+        rusb::Speed::High => "480 Mbps (High-Speed) ✅",
+        rusb::Speed::Full => "12 Mbps (Full-Speed) ❌ bulk 512B no funcionará",
+        rusb::Speed::Super => "5 Gbps (SuperSpeed) ✅",
+        _other => "otros/inválida",
+    });
 
     // Endpoints de la config activa
     let cfg = h.device().active_config_descriptor().unwrap();

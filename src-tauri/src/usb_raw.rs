@@ -223,6 +223,141 @@ pub async fn usb_raw_sniff(duration_secs: u32, channel: u8, output_path: Option<
     }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
 }
 
+/// Extrae "Capturados N frames" del stdout de rt3070_sniff; si el proceso fue
+/// matado antes del resumen final (cancel ■ / watchdog), usa el último
+/// `PROGRESS t=… frames=N`. `None` = no hay evidencia de frames.
+fn sniff_frames(output: &str) -> Option<usize> {
+    for l in output.lines().rev() {
+        if let Some(rest) = l.split("Capturados ").nth(1) {
+            if let Some(tok) = rest.split_whitespace().next() {
+                if let Ok(n) = tok.parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+        if let Some(rest) = l.split("frames=").nth(1) {
+            if let Some(tok) = rest.split(|c: char| !c.is_ascii_digit()).next() {
+                if let Ok(n) = tok.parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Sniff en BACKGROUND sostenido (épica E0-11): hasta 30 min de escucha con
+/// streaming `attack-progress` (PROGRESS cada 10 s del bin), cancelable con
+/// `cancel_attack` (■ Detener) y watchdog `secs+30` si el bin se cuelga.
+/// Éxito honesto (regla 2): solo con frames > 0; el pcap se genera en `%TEMP%`
+/// (resuelto con `std::env::temp_dir`) salvo que se pase `output_path`.
+#[command]
+pub async fn usb_raw_sniff_bg(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    duration_secs: u32,
+    channel: u8,
+    output_path: Option<String>,
+) -> Result<UsbRawResult, String> {
+    // ≥5 min (CA E0-11) y techo de 30 min; id fijo = el que claimAttack pone
+    // en la UI ('usb_sniff_long') para que los eventos encajen (regla 6).
+    // NOTA: async + State exige retorno Result (E0277 del macro de Tauri).
+    let secs_n = duration_secs.clamp(10, 1800);
+    let attack_id = "usb_sniff_long";
+    let exe = match usb_tx_exe("rt3070_sniff.exe") {
+        Ok(e) => e,
+        Err(e) => return Ok(UsbRawResult { success: false, message: e, output: String::new() }),
+    };
+    let out = output_path.unwrap_or_else(|| {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        std::env::temp_dir().join(format!("uifipill_sniff_long_{t}.pcap"))
+            .to_string_lossy().into_owned()
+    });
+    let chan = channel.clamp(1, 14).to_string();
+    let args = vec![secs_n.to_string(), out.clone(), chan];
+    let r = crate::commands::run_path_bg(
+        &app, &state, attack_id, &exe, &args, Some(secs_n as u64 + 30),
+    ).await;
+    let frames = sniff_frames(&r.output);
+    let n = frames.unwrap_or(0);
+    let mut message = match frames {
+        Some(_) if n > 0 => format!("Capturados {n} frames → {out}"),
+        Some(_) => format!(
+            "0 frames en {secs_n}s: RX no armado («Init radio» primero, sin kick) \
+             o canal sin tráfico; MCU muerto → power-cycle 15 s."
+        ),
+        None => format!("Sin resumen de frames (proceso matado antes de reportar) → pcap: {out}"),
+    };
+    if n > 0 && !r.success {
+        message.push_str(" | detenido antes de tiempo (cancel/watchdog) — captura parcial conservada");
+    }
+    Ok(UsbRawResult { success: n > 0, message, output: r.output })
+}
+
+/// Devuelve la antena a WiFi normal (rebind netr28ux) lanzando el script de lab
+/// auto-elevado (`restore_netr28ux_run.ps1` → `restore_netr28ux.ps1`) con UAC.
+/// SOLO dispara el proceso (nunca un éxito simulado, regla 2): la VERIFICACIÓN
+/// real de que la antena vuelve a ser WiFi la hace el frontend con
+/// `detect_adapters` en polling. Log del script: `restore_run.log` (ruta absoluta).
+#[command]
+pub async fn usb_raw_restore() -> UsbRawResult {
+    let dir = match usb_tx_dir() {
+        Some(d) => d,
+        None => {
+            return UsbRawResult {
+                success: false,
+                message: "❌ Binarios usb_tx no encontrados: no hay dónde buscar restore_netr28ux.ps1".into(),
+                output: String::new(),
+            }
+        }
+    };
+    let script = ["restore_netr28ux_run.ps1", "restore_netr28ux.ps1"]
+        .iter()
+        .map(|s| dir.join(s))
+        .find(|p| p.exists());
+    let script = match script {
+        Some(p) => p,
+        None => {
+            return UsbRawResult {
+                success: false,
+                message: format!(
+                    "❌ restore_netr28ux*.ps1 no está en {} — restauración manual: \
+                     ejecuta ese script como administrador.",
+                    dir.display()
+                ),
+                output: String::new(),
+            }
+        }
+    };
+    let script_s = script.to_string_lossy().replace('\'', "''");
+    // RunAs sobre el wrapper: si el script interno se auto-eleva no habrá UAC
+    // doble (guard IsInRole); si NO se auto-eleva, este RunAs es obligatorio.
+    let cmd = format!(
+        "Start-Process -FilePath powershell.exe -ArgumentList \
+         '-NoProfile','-ExecutionPolicy','Bypass','-File','{}' -Verb RunAs",
+        script_s
+    );
+    let spawn = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &cmd])
+        .spawn();
+    match spawn {
+        Ok(_) => UsbRawResult {
+            success: true,
+            message: format!(
+                "Elevación lanzada (UAC) → {script_s}. Acepta el prompt: la antena \
+                 debe volver a ser WiFi; la app lo verifica con detect_adapters."
+            ),
+            output: format!("$ powershell -Command {cmd}\n"),
+        },
+        Err(e) => UsbRawResult {
+            success: false,
+            message: format!("❌ No se pudo lanzar la elevación: {e}"),
+            output: String::new(),
+        },
+    }
+}
+
 /// Diagnóstico completo del protocolo vendor (para depurar estados raros).
 #[command]
 pub async fn usb_raw_diag() -> UsbRawResult {
@@ -307,3 +442,34 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
         UsbRawScanResult { success: ok, message: msg, networks }
     }).await.unwrap_or_else(|_| UsbRawScanResult { success: false, message: "join error".into(), networks: vec![] })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sniff_frames_from_final_summary() {
+        let out = "✅ RX armado\n✅ Capturados 524 frames → C:\\tmp\\a.pcap\n   Convertir: pcap_to_22000";
+        assert_eq!(sniff_frames(out), Some(524));
+    }
+
+    #[test]
+    fn sniff_frames_zero_is_honest() {
+        let out = "✅ Capturados 0 frames → C:\\tmp\\z.pcap\n⚠️ 0 frames en 300s";
+        assert_eq!(sniff_frames(out), Some(0));
+    }
+
+    #[test]
+    fn sniff_frames_falls_back_to_progress_when_killed() {
+        // Proceso cancelado (kill): sin línea "Capturados" final.
+        let out = "$ rt3070_sniff\nPROGRESS t=120s/300s frames=10342 pcap=1234567B\nPROGRESS t=130s/300s frames=11001 pcap=1310720B\n";
+        assert_eq!(sniff_frames(out), Some(11001));
+    }
+
+    #[test]
+    fn sniff_frames_missing_evidence() {
+        assert_eq!(sniff_frames("No se pudo abrir RT3070"), None);
+        assert_eq!(sniff_frames("⚠️ read_bulk: Pipe"), None);
+    }
+}
+

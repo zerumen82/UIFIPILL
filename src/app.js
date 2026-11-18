@@ -147,8 +147,12 @@ window.clearConsole = function clearConsole() {
   _cvDirty = false;
   const cv = $('cv');
   if (cv) cv.textContent = '';
-  const mini = $('mini-cv');
-  if (mini) mini.textContent = '';
+};
+window.copyConsole = function copyConsole() {
+  const cv = $('cv');
+  const txt = cv ? cv.textContent : '';
+  navigator.clipboard.writeText(txt).then(() => log('[consola] Historial copiado (' + txt.length + ' chars)', 'ok'))
+    .catch(e => log('[consola] Error al copiar: ' + e, 'error'));
 };
 
 // Mini consola del tab Escanear: plegable para recuperar altura útil de la tabla
@@ -2236,6 +2240,12 @@ window.clearLive = function () {
   const cv = $('live-cv');
   if (cv) cv.textContent = '─ Salida en tiempo real (stdout/stderr del ataque) ─';
 };
+window.copyLive = function () {
+  const cv = $('live-cv');
+  const txt = cv ? cv.textContent : '';
+  navigator.clipboard.writeText(txt).then(() => log('[consola] Copiado stdout+stderr (' + txt.length + ' chars)', 'ok'))
+    .catch(e => log('[consola] Error al copiar: ' + e, 'error'));
+};
 
 // El panel live recibe un evento por línea de stdout/stderr: se acumula el
 // texto y se vuelca en un solo frame (un append + un scroll por ráfaga).
@@ -2310,6 +2320,12 @@ function _flushEvents() {
   if (low.includes('received')) updateProgress(25, 'Recibiendo... 25%');
   if (low.includes('pmkid')) updateProgress(50, 'PMKID encontrado! 50%');
   if (low.includes('beacon')) updateProgress(75, 'Procesando beacons... 75%');
+  // E0-11: PROGRESS del rt3070_sniff → barra real (frames + KB en vivo cada 10 s).
+  const mp = last.match(/PROGRESS t=(\d+)s\/(\d+)s frames=(\d+) pcap=(\d+)B/);
+  if (mp) {
+    const pct = Math.min(99, Math.round(((+mp[1]) / Math.max(1, +mp[2])) * 100));
+    updateProgress(pct, `${mp[3]} frames · ${Math.round(+mp[4] / 1024)} KB · ${mp[1]}/${mp[2]}s`);
+  }
 }
 
 listen('attack-progress', (event) => {
@@ -2528,8 +2544,16 @@ window.applyHardwareGates = async function () {
   try {
     const rep = await window.__invoke('detect_adapters');
     const ads = rep?.adapters || [];
+    // Roles duales: RT73 → monitor/captura pasiva; RT3070 → TX/RX crudo (WinUSB)
+    const rt73 = ads.find(a => /RT73|2573/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
+    const rt3070 = ads.find(a => /RT3070|3070/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
+    if (rt73) { window._rt73Guid = rt73.guid; window._rt73Name = rt73.name || rt73.chipset; }
+    if (rt3070) { window._rt3070Guid = rt3070.guid; window._rt3070Name = rt3070.name || rt3070.chipset; }
     const cap = ads.find(a => a.monitor_capable) || ads[0];
     if (cap) { chip = cap.chipset || cap.name || '?'; guid = cap.guid || null; }
+    if (rt73 && rt3070) {
+      msg = 'Dual: RT73 (monitor/captura) + RT3070 (TX/RX crudo).';
+    }
   } catch (e) { msg = 'detect_adapters falló: ' + e; }
   try {
     const inj = await window.__invoke('check_injection_capability', { ifaceGuid: guid || '' });
@@ -2538,7 +2562,10 @@ window.applyHardwareGates = async function () {
   } catch (e) { msg = msg || ('check_injection_capability falló: ' + e); }
   if (line) {
     line.classList.remove('ok', 'no');
-    if (supported) {
+    if (rt73 && rt3070) {
+      line.classList.add('ok');
+      line.innerHTML = '<b>Dual-antena:</b> RT73 → monitor/captura pasiva · RT3070 → TX/RX crudo (WinUSB). ' + (msg ? '<span style="color:var(--muted)">' + esc(msg) + '</span>' : '');
+    } else if (supported) {
       line.classList.add('ok');
       line.innerHTML = '<b>Hardware:</b> ' + esc(chip) + ' — <b style="color:var(--green)">TX disponible</b>: ataques activos listos.' + (msg ? ' <span style="color:var(--muted)">' + esc(msg) + '</span>' : '');
     } else {
@@ -2547,7 +2574,7 @@ window.applyHardwareGates = async function () {
         'Pipeline pasivo: captura &#8594; convertir &#8594; crack &#8594; keygen &#8594; conectar. RF activa: «Kit Kali» o Kali live USB.';
     }
   }
-  log('Hardware: ' + chip + (supported ? ' con TX.' : ' en modo pasivo (sin TX).'), supported ? 'ok' : 'info');
+  log('Hardware: ' + chip + (supported ? ' con TX.' : ' en modo pasivo (sin TX).') + (rt73 && rt3070 ? ' Dual-antena detectada.' : ''), supported ? 'ok' : 'info');
 };
 
 // ── Kit Kali para el objetivo seleccionado ────────────────────────────────
@@ -2825,6 +2852,91 @@ window.usbRawSniff = async function (secs) {
   } catch (e) {
     log('[sniff] ' + e, 'error');
     return null;
+  }
+};
+
+// ── E0-11: ESCUCHA LARGA SOSTENIDA (≥5 min, cancelable, restore al cierre) ──
+// Diferencia con usbRawSniff (corto, síncrono): corre en BACKGROUND vía
+// usb_raw_sniff_bg → eventos attack-progress con PROGRESS cada 10 s (barra de
+// frames/KB), cancelable con ■ Detener (cancel_attack mata el child) y
+// watchdog secs+30 en el backend. Al cerrar restaura la antena a WiFi normal
+// (checkbox) y lo VERIFICA con detect_adapters — sin éxito simulado (regla 2).
+window.usbRawSniffLong = async function () {
+  const s = parseInt(($('usbraw-long-secs') || {}).value, 10) || 300;
+  const chan = parseInt(($('usbraw-chan') || {}).value, 10) || selectedChannel() || 11;
+  if (s < 60) { log('[escucha-larga] Mínimo 60 s; para la evidencia E0-11 usa ≥300 s (5 min).', 'warn'); return false; }
+  if (!claimAttack('usb_sniff_long')) return false;
+  showProgress(true);
+  updateProgress(2, 'Preparando escucha sostenida…');
+  setAttackRunning(true, `Escucha sostenida ${s}s (canal ${chan}) — ■ Detener cancela`);
+  const line = $('usbraw-status');
+  const setSt = (t, ok) => { if (line) { line.textContent = 'Chip USB: ' + t; line.className = 'wiz-status' + (ok ? ' ok' : ' warn'); } };
+  try {
+    setSt('init radio (sin kick)…', false);
+    const ini = await window.__invoke('usb_raw_init', { channel: chan });
+    if (!ini.success) {
+      log('[escucha-larga] init: ' + ini.message, 'error');
+      setSt('❌ ' + ini.message, false);
+      return false;
+    }
+    setSt(`escuchando 0/${s}s en canal ${chan}…`, false);
+    log(`[escucha-larga] Escuchando ${s}s en canal ${chan} por USB crudo (background, cancelable)…`, 'info');
+    const r = await window.__invoke('usb_raw_sniff_bg', { durationSeconds: s, channel: chan });
+    window.usbRawShow(r);
+    log('[escucha-larga] ' + r.message, r.success ? 'ok' : 'warn');
+    if (r.success) {
+      setSt('✅ ' + r.message, true);
+      const m = (r.output || '').match(/Capturados \d+ frames → (.+\.pcap)/);
+      if (m) {
+        const conv = $('convert-native-pcap');
+        if (conv) conv.value = m[1].trim();
+        log('[escucha-larga] pcap listo para convertir → ' + m[1].trim(), 'ok');
+      }
+    } else {
+      setSt('⚠️ ' + r.message, false);
+    }
+    return r.success;
+  } catch (e) {
+    log('[escucha-larga] ' + e, 'error');
+    setSt('❌ ' + e, false);
+    return false;
+  } finally {
+    if (currentAttackId === 'usb_sniff_long') currentAttackId = null;
+    setAttackRunning(false);
+    const rc = $('usbraw-restore-onclose');
+    if (rc && rc.checked) await window.usbRawRestore();
+  }
+};
+
+// Restaura la antena a WiFi normal (rebind netr28ux, UAC) y VERIFICA el
+// resultado con detect_adapters en polling (hasta 150 s). Devuelve true solo
+// cuando la antena es visible de nuevo para el stack WiFi.
+window.usbRawRestore = async function () {
+  log('[restore] Restaurando antena a WiFi normal (driver netr28ux — se pedirá UAC)…', 'info');
+  try {
+    const r = await window.__invoke('usb_raw_restore');
+    log('[restore] ' + r.message, r.success ? 'warn' : 'error');
+    if (!r.success) return false;
+    for (let i = 1; i <= 30; i++) {
+      await new Promise(res => setTimeout(res, 5000));
+      try {
+        const d = await window.__invoke('detect_adapters');
+        const hit = (d.adapters || []).find(a =>
+          /3070|RT30/i.test(`${a.chipset_key || ''} ${a.chipset || ''} ${a.name || ''}`));
+        if (hit) {
+          log(`[restore] ✅ Antena visible de nuevo como WiFi: ${hit.name} (${hit.status}) — verificado con detect_adapters`, 'ok');
+          window._usbAlive = false; // ya NO está en WinUSB crudo
+          renderHero();
+          return true;
+        }
+      } catch { /* polling: sigue intentando */ }
+      if (i % 6 === 0) log(`[restore] esperando rebind… ${i * 5}s`, 'info');
+    }
+    log('[restore] ⚠️ La antena NO volvió a aparecer en 150 s (¿UAC rechazado?). Manual: driver_re/usb_tx/restore_netr28ux_run.ps1 como admin.', 'warn');
+    return false;
+  } catch (e) {
+    log('[restore] ' + e, 'error');
+    return false;
   }
 };
 

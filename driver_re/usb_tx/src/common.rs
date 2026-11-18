@@ -8,6 +8,11 @@ use std::collections::HashMap;
 
 pub const VID_RALINK: u16 = 0x148f;
 pub const PID_RT3070: u16 = 0x3070;
+pub const PID_RT73: u16 = 0x2573;
+
+// RT73 (rt73usb.h) CSR offsets
+pub const RT73_MAC_CSR0: u16 = 0x3000;
+pub const RT73_PHY_CSR3: u16 = 0x308c;
 
 // Vendor requests (bRequest) — rt2x00usb.h REAL (hallazgo 2026-09-22:
 // la tabla que tenía era la de RT2500/RT73, el RT2800/RT3070 usa otra):
@@ -275,6 +280,30 @@ pub fn open_rt3070() -> rusb::Result<rusb::DeviceHandle<rusb::Context>> {
     // vendor con datos (MULTI_READ/WRITE) no se procesan (hallazgo 2026-09-22).
     h.set_active_configuration(1).ok();
     // La interfaz 0 lleva los endpoints bulk de datos.
+    h.claim_interface(0)?;
+    Ok(h)
+}
+
+pub fn open_rt73() -> rusb::Result<rusb::DeviceHandle<rusb::Context>> {
+    let ctx: rusb::Context = rusb::Context::new()?;
+    let mut handle: Option<rusb::DeviceHandle<rusb::Context>> = None;
+    let devices = ctx.devices()?;
+    for dev in devices.iter() {
+        let d = match dev.device_descriptor() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if d.vendor_id() == VID_RALINK && d.product_id() == PID_RT73 {
+            handle = Some(dev.open()?);
+            break;
+        }
+    }
+    let h = match handle {
+        Some(h) => h,
+        None => return Err(rusb::Error::NotFound),
+    };
+    h.set_auto_detach_kernel_driver(true).ok();
+    h.set_active_configuration(1).ok();
     h.claim_interface(0)?;
     Ok(h)
 }
@@ -1210,3 +1239,4 @@ mod tests {
         assert_eq!(MCU_BBP_SIGNAL, 0x80);
     }
 }
+pub const RT73_PHY_CSR4: u16 = 0x3090;

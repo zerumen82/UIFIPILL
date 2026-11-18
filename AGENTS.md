@@ -15,13 +15,16 @@ autorización explícita).
 funcione en Windows como en Kali** — scan → monitor → RX → TX → captura → crack
 sin salir de la máquina. Ganado hasta hoy: TX cruda al aire (09-25), RX cruda
 (10-01), canal con driver parcheado (09-21), wash E2E (10-01), UI de flujo
-(10-05). Pendiente: sniff sostenido, PMKID/handshake por RX cruda y veredicto
-dual (Fase 7).
+(10-05), RT73 monitor+canal+captura sin parche (10-06). En curso: E0-11
+(sniff sostenido) — infraestructura implementada (usb_raw_sniff_bg, restore,
+PROGRESS 10 s, tests), bloqueado por RX sordo en RT3070 bajo WinUSB (0 frames
+en ambas antenas; reboot pendiente por decisión del usuario). Pendiente:
+PMKID/handshake por RX cruda (E0-12), veredicto dual (Fase 7).
 
 ## Reglas del proyecto
 1. **Verificación obligatoria tras tocar código**: `npm run lint` + `npx vite build`
    + `cd src-tauri && cargo build --release` (**0 warnings**) + `cargo test --lib`
-   (26 passed / 8 ignored desde 2026-10-05 — los `lab_*` exigen HW). Entorno: el runner corta a
+   (30 passed / 8 ignored rev. 2026-10-06 — los `lab_*` exigen HW). Entorno: el runner corta a
    ~30 s y mata el árbol de procesos → builds largos con `schtasks /create + /run`
    y sondeo del log.
 2. **Sin fakes/stubs**: ningún comando devuelve éxito simulado. Éxito = evidencia
@@ -73,7 +76,17 @@ dual (Fase 7).
 8. Canales: `selectedChannel()` hereda el canal del AP escaneado en todos los
    flujos. Npcap exige Dot11Support (activado en este equipo).
 
-## Estado actual (act. 2026-10-05)
+## Estado actual (act. 2026-10-06, cont. 5)
+- **E0-11 (sniff sostenido) — infraestructura implementada (2026-10-06)**:
+  `usb_raw_sniff_bg` (300 s, cancelable, watchdog secs+30), PROGRESS cada 10 s,
+  `usbRawSniffLong`/`usbRawRestore` en la UI, `usb_raw_restore` (rebind UAC +
+  polling `detect_adapters`), 3 tests `sniff_frames` en usb_raw.rs, RT73 añadida
+  a `CHIPS`. Verificado: usb_tx 0 warnings + 3 tests ✅; lab_monitor_cycle +
+  lab_channel_rf PASAN con RT73 (CH1 99% / CH6 92%, sin parche de driver).
+  **Bloqueo medido**: RT3070 RX sordo en AMBAS antenas (0 frames con aire
+  confirmado por RT73: 7 redes, ch3 100%); sospecha stack WinUSB/host acumulado
+  → REBOOT PENDIENTE por decisión del usuario. Detalle: memory §1 sesiones
+  2026-10-06 (cont. 1-5), spec/02 E0-11 y spec/03 D-03.
 - **UI ATAQUE: FLUJO ÚNICO VISUAL POR RED (2026-10-05)**: héroe `#flow-hero`
   con luces Objetivo/Antena/Perfil + botones primarios por veredicto
   (`renderHero()`), defaults por `profile_target` (open→conectar; wpa2_psk→

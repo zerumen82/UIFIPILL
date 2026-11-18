@@ -1168,16 +1168,26 @@ async fn run_bin_bg_opts(app: &AppHandle, state: &State<'_, AppState>, attack_id
     }
     // Igual que run_bin: ruta absoluta para que el proceso arranque de verdad.
     let exe_abs = resolve_bin_abs(exe);
+    run_path_bg(app, state, attack_id, &exe_abs, args, timeout_secs).await
+}
+
+/// Como `run_bin_bg_opts` pero con la RUTA ABSOLUTA ya resuelta: la usan los
+/// binarios usb_tx (p. ej. `rt3070_sniff` de la épica E0-11, escucha sostenida),
+/// que no pasan por `require_bin`/`resolve_bin_abs` (se resuelven con
+/// `usb_tx_exe`). Mismo streaming (attack-progress chunked), mismos eventos
+/// `attack-started`/`attack-completed`, cancelable con `cancel_attack` y con
+/// watchdog opcional.
+pub(crate) async fn run_path_bg(app: &AppHandle, state: &State<'_, AppState>, attack_id: &str, exe_abs: &str, args: &[String], timeout_secs: Option<u64>) -> CmdResponse {
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
     // Traza REAL para la UI: la línea de comando exacta que se lanza. Antes, en
     // los ataques en background el panel verbose arrancaba vacío y no había forma
     // de saber si el proceso estaba vivo o qué parámetros había recibido.
-    let cmdline = format!("$ {} {}\n", exe, args.join(" "));
+    let cmdline = format!("$ {} {}\n", exe_abs, args.join(" "));
     emit_chunked(app, attack_id, "stdout", &cmdline);
     let _ = app.emit("attack-started", serde_json::json!({
         "id": attack_id,
-        "exe": exe,
+        "exe": exe_abs,
         "args": args,
         "cmdline": cmdline.trim_end(),
         "bg": true
