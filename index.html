@@ -766,68 +766,90 @@
         <section id="tab-attack" class="tab">
           <header class="phead">
             <div>
-              <h1>Panel de Ataque</h1>
-              <p class="sub">PMKID capture · WPS PIN bruteforce · crack hashcat · aireplay-ng · evil twin · solo redes propias en laboratorio</p>
+              <h1>Ataque</h1>
+              <p class="sub">Simple: elige red en Escanear, pulsa Atacar y mira los logs. Solo redes propias/laboratorio.</p>
             </div>
-</header>
+          </header>
 
-           <!-- Guía rápida: cómo se realiza un ataque (plegable: cerrada por
-                defecto para no robar altura a las tarjetas de ataque) -->
-           <details class="guide">
-             <summary>Guía rápida: flujo del ataque</summary>
-             <b style="color:var(--accent)">0.</b> Escanea en el tab &#128269; y <b>clic en una red</b> (todo se rellena solo: BSSID, SSID, canal) — el objetivo elegido aparece arriba de todo aquí.&nbsp;
-             <b style="color:var(--accent)">1.</b> <b>&#9889; Ataque automático</b>: pipeline de 7 pasos con la antena actual (RT3070).&nbsp;
-             <b style="color:var(--accent)">2&#8594;7.</b> O lanza bloques concretos: <b>Crack &#8594; WPS &#8594; WPA3 &#8594; Evil Twin &#8594; Acceso</b>.&nbsp;
-             <b style="color:var(--accent)">Kali USB</b>: para RF activa (inyección+canal) con la RT3070, arráncala en Kali live USB — el botón «Kit Kali» del paso A genera los comandos listos para tu objetivo.&nbsp;
-             <b style="color:var(--accent)">Mientras ataca:</b> los botones se bloquean y aparece la barra roja con &#9632; Detener; la salida en vivo se ve bajo la barra.
-           </details>
+          <div style="padding:12px 26px 0;display:flex;flex-direction:column;gap:10px">
+            <div id="simple-attack-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+              <button id="simple-attack-btn" class="atk-btn atk-btn--green" onclick="simpleAttack()" style="padding:12px 22px;font-size:14px;font-weight:700">&#9889; Atacar</button>
+              <button id="simple-stop-btn" class="atk-btn atk-stop" onclick="simpleStop()" style="padding:12px 22px;font-size:14px;font-weight:700;background:var(--red)">&#9632; Detener</button>
+              <button id="simple-pwnagotchi-btn" class="atk-btn" onclick="simplePwnagotchiKit()" style="background:var(--surface2);color:var(--text);padding:8px 14px;font-size:12px" title="Guía para capturar con Pwnagotchi (RPi, externo) y crackear aquí">Kit Pwnagotchi</button>
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:220px">
+                <span id="simple-target-label" style="font-size:12.5px;font-weight:600">Objetivo: —</span>
+                <span id="simple-target-meta" style="font-size:11px;color:var(--muted)">Selecciona una red en Escanear (clic en la fila). Si no, se intentará la más fuerte. Si indicas un .22000/.pcap en la tarjeta oculta, se usará ese material.</span>
+              </div>
+              <span id="simple-stage" style="margin-left:auto;font-size:11px;color:var(--muted)"></span>
+            </div>
 
-           <!-- Barra de estado del ataque: visible SOLO mientras hay un ataque
-                en curso. Todos los botones se deshabilitan (setAttackRunning)
-                salvo este Detener. -->
-           <div id="attack-status-bar" style="display:none;align-items:center;gap:12px;margin:10px 26px 0;padding:10px 16px;background:rgba(255,68,68,.08);border:1px solid var(--orange);border-radius:var(--r)">
-             <span class="pulse-dot" style="width:10px;height:10px;border-radius:50%;background:var(--orange);display:inline-block;animation:pulse 1.2s infinite"></span>
-             <strong id="attack-status-label" style="color:var(--orange);font-size:12.5px">Ataque en curso…</strong>
-             <span style="font-size:11px;color:var(--muted)">salida en vivo abajo + detalle completo en &#9881; Consola</span>
-             <button class="atk-btn atk-stop" onclick="cancelCurrentAttack()" style="margin-left:auto;background:var(--red);padding:6px 16px">&#x25A0; Detener ataque</button>
-           </div>
+            <!-- estado interno usado por setAttackRunning -->
+            <div id="attack-status-bar" style="display:none;align-items:center;gap:12px;padding:8px 12px;background:rgba(255,68,68,.08);border:1px solid var(--orange);border-radius:var(--r)">
+              <span class="pulse-dot" style="width:10px;height:10px;border-radius:50%;background:var(--orange);display:inline-block;animation:pulse 1.2s infinite"></span>
+              <strong id="attack-status-label" style="color:var(--orange);font-size:12.5px">Ataque en curso…</strong>
+            </div>
 
-            <!-- Progress Bar + verbose SIEMPRE visible (fusión con Consola):
-                 nada se oculta: la salida en vivo y el historial viven aquí. -->
-            <div id="progress-container" style="display:block;padding:0 26px 10px">
-             <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
-               <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
-             </div>
-             <!-- Salida verbose en tiempo real (streaming attack-progress).
-                  OJO: sin `display:none` inline — showProgress() gobierna su
-                  visibilidad según el estado de verbose (antes quedaba oculto
-                  para siempre: solo se veía al pulsar «Ocultar verbose»). -->
-             <pre id="live-cv" class="live-view">─ Salida en tiempo real (stdout/stderr del ataque) ─</pre>
-              <div style="display:flex;gap:8px;margin-top:6px">
-                <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
-                <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar</button>
-                <button onclick="copyLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#128203; Copiar stdout+stderr</button>
+            <!-- Gatillo EAPOL (dos antenas): fuerza M1/M2 con contraseña incorrecta mientras la captura corre -->
+            <div id="simple-trigger-card" style="display:flex;flex-direction:column;gap:8px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <strong style="font-size:12.5px">Gatillo EAPOL (dos antenas)</strong>
+                <span style="font-size:10.5px;color:var(--muted)">Asocia la antena gatillo (managed) con clave incorrecta para provocar M1/M2/PMKID mientras la otra captura en monitor.</span>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <div class="field-row" style="flex:1;min-width:160px">
+                  <label style="font-size:11px">Interfaz gatillo (managed):</label>
+                  <input id="trigger-iface" type="text" placeholder="Wi-Fi 2 (netsh wlan show interfaces)" style="font-size:11px">
+                </div>
+                <div class="field-row" style="width:80px">
+                  <label style="font-size:11px">Intentos:</label>
+                  <input id="trigger-attempts" type="number" value="5" min="1" max="20" style="font-size:11px">
+                </div>
+                <div class="field-row" style="width:80px">
+                  <label style="font-size:11px">Espera(s):</label>
+                  <input id="trigger-delay" type="number" value="3" min="0" max="30" style="font-size:11px">
+                </div>
+                <div class="field-row" style="flex:1;min-width:180px">
+                  <label style="font-size:11px">Clave falsa:</label>
+                  <input id="trigger-password" type="text" value="clavefalsa123" style="font-size:11px">
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="atk-btn" style="background:var(--surface2);color:var(--text);padding:6px 14px;font-size:11.5px" onclick="triggerEapol()">▶ Disparar gatillo</button>
+                <button class="atk-btn atk-stop" style="background:var(--red);padding:6px 14px;font-size:11.5px" onclick="triggerCancel()">■ Parar gatillo</button>
+                <span id="trigger-stage" style="font-size:10.5px;color:var(--muted);align-self:center"></span>
               </div>
             </div>
 
-            <!-- Historial completo (antes tab Consola): todo lo emitido queda
-                 aquí, sin recortes. Limpiar / matar PID del proceso colgado. -->
-            <div style="padding:0 26px 10px">
+            <div id="progress-container" style="display:block;padding:0">
+              <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
+                <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
+              </div>
+              <pre id="live-cv" class="live-view" style="margin-top:8px;min-height:180px;max-height:360px">─ Logs en tiempo real (stdout/stderr) ─</pre>
+              <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+                <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
+                <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar vivo</button>
+                <button onclick="copyLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#128203; Copiar</button>
+              </div>
+            </div>
+
+            <div style="padding:0 0 14px">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <strong style="font-size:12.5px">Historial completo</strong>
-                <span style="font-size:11px;color:var(--muted)">todo el verbose, sin omitir nada</span>
+                <strong style="font-size:12.5px">Historial (logs completos)</strong>
                 <span style="flex:1"></span>
                 <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">&#10005; Limpiar</button>
                 <button class="scan-btn sm" style="background:#3a3a52" onclick="copyConsole()">&#128203; Copiar</button>
-                <input id="killPid" type="number" min="1" placeholder="PID" title="PID del proceso a matar (ver Procesos)"
-                       style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 10px;font-size:12px;font-family:inherit;width:88px;outline:none">
-                <button class="scan-btn sm" style="background:var(--red)" onclick="doKillPid()" title="Mata el proceso con kill_attack_process">&#x25A0; Matar PID</button>
               </div>
               <div class="console-wrap" style="margin:0">
                 <pre id="cv" class="console-view" style="max-height:320px"></pre>
               </div>
             </div>
+          </div>
 
+          <!-- select oculto requerido por la lógica existente (syncTargetList/getSelectedBssid) -->
+          <select id="attack-bssid" onchange="onTargetChange()" style="display:none"><option value="">--</option></select>
+
+          <!-- UI avanzada oculta: conserva todos los ids para compatibilidad JS -->
+          <div id="attack-advanced" style="display:none">
           <div class="attack-body" style="flex:1;min-height:0;overflow-y:auto;padding:18px 26px 20px;position:relative">
             <!-- Barra de objetivo fija (sticky): el objetivo elegido + acciones
                  directas SIEMPRE visibles al hacer scroll por el tab Ataque.
@@ -855,7 +877,7 @@
             <!-- Target select -->
             <div class="target-bar">
               <label>Objetivo BSSID:</label>
-              <select id="attack-bssid" onchange="onTargetChange()">
+              <select id="attack-bssid-adv" style="display:none">
                 <option value="">-- Selecciona una red de la lista --</option>
               </select>
               <button id="refreshTargetBtn" onclick="syncTargetList()">&#8635; Actualizar</button>
@@ -915,10 +937,41 @@
 
             <!-- ══════════════════ WIZARD: FLUJO PRINCIPAL ══════════════════ -->
             <div class="atk-section" id="sec-simple">
-              <h2 class="section-title">Ataque simplificado (solo logs)</h2>
-              <div style="display:flex;gap:8px;margin-bottom:8px">
-                <button class="scan-btn" onclick="scanAndAutoAttack()">&#9889; Atacar (secuencia completa)</button>
-                <button class="scan-btn sm" style="background:var(--surface2);color:var(--text)" onclick="clearLive()">&#10005; Limpiar</button>
+              <h2 class="section-title">Ataque simplificado</h2>
+              <div class="wiz-step wiz-step--green" id="ultra-plan-card" style="margin:0">
+                <div class="wiz-head">
+                  <span class="wiz-n wiz-n--green">⚡</span>
+                  <div>
+                    <h3 class="wiz-title">Probar contraseñas (ultra simple)</h3>
+                    <p class="wiz-desc">Usa la red objetivo y tu archivo .22000. Prueba en orden: claves de fábrica, patrones comunes (8/10 dígitos, SSID+números), diccionario y reglas si existen. Se detiene al encontrar la clave (.cracked). Sin IA ni fakes: solo lo que tu equipo tenga instalado.</p>
+                  </div>
+                </div>
+                <div class="atk-fields" style="margin-top:8px">
+                  <div class="field-row">
+                    <label>Hash (.22000):</label>
+                    <input id="ultra-hash" type="text" placeholder="capture_xxx.22000 (del paso C o el tuyo)">
+                  </div>
+                  <div class="field-row">
+                    <label>SSID (opcional, mejora patrones):</label>
+                    <input id="ultra-ssid" type="text" placeholder="Nombre de la red">
+                  </div>
+                  <div class="field-row">
+                    <label>BSSID (opcional, para keygen):</label>
+                    <input id="ultra-bssid" type="text" placeholder="AA:BB:CC:DD:EE:FF">
+                  </div>
+                  <div class="field-row">
+                    <label>Generador externo (opcional):</label>
+                    <input id="ultra-external" type="text" placeholder="wordlist .txt (PassGAN/PassGPT), feed (.dll/.so) o ejecutable">
+                  </div>
+                </div>
+                <div class="wiz-btns">
+                  <button class="atk-btn" style="background:var(--gray)" onclick="ultraPlanPreview()">Ver plan</button>
+                  <button class="atk-btn atk-btn--green" onclick="ultraPlanRun()">&#9889; Probar contraseñas</button>
+                  <button class="atk-btn atk-stop" style="background:var(--red)" onclick="ultraPlanCancel()">&#9632; Parar</button>
+                  <button class="atk-btn" onclick="scanAndAutoAttack()" title="Secuencia completa (scan + captura + crack si aplica)">&#9889; Atacar todo (secuencia)</button>
+                  <button class="atk-btn sm" style="background:var(--surface2);color:var(--text)" onclick="clearLive()">&#10005; Limpiar</button>
+                </div>
+                <pre id="ultra-plan-out" class="wiz-status" style="white-space:pre-wrap;max-height:220px;overflow:auto;margin-top:8px">Listo: indica el .22000 y pulsa «Ver plan» o «Probar contraseñas».</pre>
               </div>
             </div>
             <div class="atk-section" id="sec-flow">
@@ -2023,6 +2076,7 @@
             </div>
 
           </div><!-- /attack-body -->
+          </div><!-- /attack-advanced -->
         </section><!-- /tab-attack -->
 
         <!-- CONSOLE TAB (fusionado en Atacar: redirige; se conserva el id) -->

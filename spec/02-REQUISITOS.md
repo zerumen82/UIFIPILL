@@ -24,6 +24,8 @@
 | E0-13 | WPS sin Npcap | vía Kali live USB (reaver real) documentada en la app O TX cruda propia; veredicto honesto si Windows no puede asociar | ⬜ decisión: Npcap #85 cerrado (err 203 medido) |
 | E0-14 | efuse/EEPROM (tx power/LNA por canal) | lectura/escritura con verificación de valor; comparación RFCSR23=0x09 vs 0x00 | ⬜ opcional (idea de sesión 10-01) |
 | E0-15 | Veredicto dual (Fase 7) | Tabla final Windows crudo vs Npcap vs Kali con evidencia por flujo; marcada en memory §2 Fase 7 | ⬜ |
+| E0-16 | Pipeline de candidatas dirigido (offline) | `crack_plan_preview` devuelve etapas ordenadas (keygen→máscaras→rockyou→reglas→externo) con keyspace/motivo; `crack_plan_run_bg` ejecuta en orden, detiene en `.cracked` real (hashcat), salta etapas no disponibles con hint, cancelable; UI ultra-simple en pestaña Ataque | ⬜ 2026-11-19 (infra implementada y extendida por E0-17; verificación E2E de lab pendiente D-07) |
+| E0-17 | Candidatas PCFG/ML-compatibles + flujo Pwnagotchi→crack | `crack_plan`: PCFG nativo hashcat v8+ (`-a 4`) + `hints` con SSID seguro (omitido con motivo si <v8), diccionarios extra (`tools/`, `tools/wordlists/`, `dive.rule`) y candidatas auto-detectadas (`candidates*/passgan*/passgpt*/generated*/samples*/wordgen*.txt`), externo tipado (`.txt`→`-a 0`, feed→`-a 8` v8+, ejecutable→`--slow-candidates` con fallback honesto). `simpleAttack` acepta `.22000` o `.pcap/.pcapng` existente (omite captura/conversión según material, p.ej. Pwnagotchi). `gen_pwnagotchi_kit` genera guía/config/snippets de lab sin ejecución remota ni cambios de driver/RF. 0 huérfanos UI↔backend. | ⬜ 2026-11-19 (implementado; lint/vite/cargo check+test lib verdes; build release y E2E lab pendientes) |
 
 ## Historias de mantenimiento (M)
 

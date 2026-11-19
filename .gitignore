@@ -97,4 +97,7 @@ tools/Rust/
 tools/tunings/
 tools/tools/
 tools/aircrack-ng-win/
+.pillcli/
+_tmp_attack_tab.txt
+
 tools/aircrack-win/

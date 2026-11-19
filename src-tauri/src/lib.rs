@@ -2,8 +2,11 @@ mod commands;
 mod capture;
 mod connect;
 mod crack;
+mod crack_plan;
 mod eviltwin;
+mod wpa2_trigger;
 mod keygen;
+mod pwnagotchi_kit;
 mod profiler;
 mod tools_detect;
 mod wifi_adapter;
@@ -92,6 +95,12 @@ pub fn run() {
             crack::filter_hash,
             crack::list_crack_assets,
             crack::crack_custom,
+            crack_plan::crack_plan_preview,
+            crack_plan::crack_plan_run_bg,
+            crack_plan::crack_plan_cancel,
+            pwnagotchi_kit::gen_pwnagotchi_kit,
+            wpa2_trigger::wpa2_trigger_bg,
+            wpa2_trigger::wpa2_trigger_cancel,
             // WPA3: auditoría + rogue conf (sin ejecución en Windows)
             wpa3::wpa3_audit,
             wpa3::gen_rogue_conf,
