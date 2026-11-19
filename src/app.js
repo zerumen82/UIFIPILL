@@ -2541,12 +2541,13 @@ window.applyHardwareGates = async function () {
   window._hwGatesDone = true;
   const line = $('hw-cap-line');
   let chip = '?', guid = null, supported = false, msg = '';
+  let rt73 = null, rt3070 = null;
   try {
     const rep = await window.__invoke('detect_adapters');
     const ads = rep?.adapters || [];
     // Roles duales: RT73 → monitor/captura pasiva; RT3070 → TX/RX crudo (WinUSB)
-    const rt73 = ads.find(a => /RT73|2573/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
-    const rt3070 = ads.find(a => /RT3070|3070/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
+    rt73 = ads.find(a => /RT73|2573/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
+    rt3070 = ads.find(a => /RT3070|3070/i.test((a.chipset_key||'')+' '+(a.chipset||'')+' '+(a.name||'')));
     if (rt73) { window._rt73Guid = rt73.guid; window._rt73Name = rt73.name || rt73.chipset; }
     if (rt3070) { window._rt3070Guid = rt3070.guid; window._rt3070Name = rt3070.name || rt3070.chipset; }
     const cap = ads.find(a => a.monitor_capable) || ads[0];
