@@ -4,7 +4,6 @@ mod connect;
 mod crack;
 mod crack_plan;
 mod eviltwin;
-mod wpa2_trigger;
 mod keygen;
 mod pwnagotchi_kit;
 mod profiler;
@@ -99,8 +98,6 @@ pub fn run() {
             crack_plan::crack_plan_run_bg,
             crack_plan::crack_plan_cancel,
             pwnagotchi_kit::gen_pwnagotchi_kit,
-            wpa2_trigger::wpa2_trigger_bg,
-            wpa2_trigger::wpa2_trigger_cancel,
             // WPA3: auditoría + rogue conf (sin ejecución en Windows)
             wpa3::wpa3_audit,
             wpa3::gen_rogue_conf,
@@ -122,6 +119,9 @@ pub fn run() {
             commands::wps_pbc_attack_bg,
             commands::wps_pixiedust_bg,
             commands::cleanup_temp_files,
+            commands::ollama_check,
+            commands::ollama_chat,
+            commands::ollama_tools,
             // puente WSL2/Kali (motor RF dual, ROADMAP_WSL2 Fase 5)
             wsl::wsl_exec,
             wsl::wsl_attach,

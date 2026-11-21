@@ -1,6 +1,6 @@
 {
   "name": "uifipill",
-  "version": "1.0.3",
+  "version": "1.0.12",
   "description": "UIFIPILL - WiFi suite desktop for Windows",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "build:nsis": "tauri build --bundles nsis",
-    "lint": "node -c src/app.js",
+    "lint": "node -c src/app.js && node -c src/js/ia.js && node -c src/js/main.js && node scripts/audit-wiring.cjs",
     "vite": "vite",
     "vite:build": "vite build"
   },

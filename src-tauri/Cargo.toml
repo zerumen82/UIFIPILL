@@ -1,6 +1,6 @@
 [package]
 name = "uifipill"
-version = "1.0.4"
+version = "1.0.12"
 description = "UIFIPILL - WiFi suite desktop for Windows"
 edition = "2021"
 rust-version = "1.77.2"
@@ -39,6 +39,7 @@ md5 = "0.7"
 sha1 = "0.10"
 libloading = "0.8"
 tokio = { version = "1", features = ["time", "macros", "rt"] }
+reqwest = { version = "0.13", features = ["json"] }
 log = "0.4"
 env_logger = "0.10"
 glob = "0.3"

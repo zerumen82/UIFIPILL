@@ -1660,3 +1660,156 @@ CC:D8:43:9F:BC:61   11  00  2.0  No   RalinkTe  sagemcomDEF0_Plus
 }
 
 
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaStatus {
+    pub available: bool,
+    pub models: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn ollama_check() -> OllamaStatus {
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(3)).build() {
+        Ok(c) => c,
+        Err(e) => return OllamaStatus { available: false, models: vec![], error: Some(e.to_string()) },
+    };
+    match client.get("http://localhost:11434/api/tags").send().await {
+        Ok(resp) if resp.status().is_success() => {
+            #[derive(serde::Deserialize)]
+            struct Tag { name: String }
+            #[derive(serde::Deserialize)]
+            struct Tags { models: Option<Vec<Tag>> }
+            let models = match resp.json::<Tags>().await {
+                Ok(t) => t.models.unwrap_or_default().into_iter().map(|m| m.name).collect(),
+                Err(e) => return OllamaStatus { available: true, models: vec![], error: Some(e.to_string()) },
+            };
+            OllamaStatus { available: true, models, error: None }
+        }
+        Ok(resp) => OllamaStatus { available: false, models: vec![], error: Some(format!("HTTP {}", resp.status())) },
+        Err(e) => OllamaStatus { available: false, models: vec![], error: Some(e.to_string()) },
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaChatResult {
+    pub success: bool,
+    pub response: String,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn ollama_chat(prompt: String, model: Option<String>) -> OllamaChatResult {
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
+        Ok(c) => c,
+        Err(e) => return OllamaChatResult { success: false, response: String::new(), error: Some(e.to_string()) },
+    };
+    let model = model.unwrap_or_else(|| "hermes3:8b".to_string());
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "stream": false
+    });
+    match client.post("http://localhost:11434/api/generate").json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            #[derive(serde::Deserialize)]
+            struct Gen { response: Option<String> }
+            match resp.json::<Gen>().await {
+                Ok(g) => OllamaChatResult { success: true, response: g.response.unwrap_or_default(), error: None },
+                Err(e) => OllamaChatResult { success: false, response: String::new(), error: Some(e.to_string()) },
+            }
+        }
+        Ok(resp) => OllamaChatResult { success: false, response: String::new(), error: Some(format!("HTTP {}", resp.status())) },
+        Err(e) => OllamaChatResult { success: false, response: String::new(), error: Some(e.to_string()) },
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OllamaToolsResult {
+    pub success: bool,
+    pub response: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn ollama_tools(prompt: String, model: Option<String>) -> OllamaToolsResult {
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build() {
+        Ok(c) => c,
+        Err(e) => return OllamaToolsResult { success: false, response: String::new(), tool_calls: vec![], error: Some(e.to_string()) },
+    };
+    let model = model.unwrap_or_else(|| "hermes3:8b".to_string());
+
+    // Herramientas disponibles para la IA (mapean a comandos del orquestador).
+    let tools = serde_json::json!([
+        {"type":"function","function":{"name":"scan_networks","description":"Escanea redes WiFi cercanas","parameters":{"type":"object","properties":{}}}},
+        {"type":"function","function":{"name":"activate_monitor","description":"Activa modo monitor en la antena","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"channel":{"type":"integer"}},"required":["iface_guid"]}}},
+        {"type":"function","function":{"name":"capture_handshake","description":"Captura handshake/EAPOL/PMKID","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"duration_seconds":{"type":"integer"},"bssid":{"type":"string"}},"required":["iface_guid"]}}},
+        {"type":"function","function":{"name":"convert_pcap","description":"Convierte pcap a hash .22000","parameters":{"type":"object","properties":{"pcap_path":{"type":"string"}},"required":["pcap_path"]}}},
+        {"type":"function","function":{"name":"crack_hash","description":"Lanza plan de crack sobre un .22000","parameters":{"type":"object","properties":{"hash_file":{"type":"string"},"ssid":{"type":"string"},"bssid":{"type":"string"}},"required":["hash_file"]}}},
+        {"type":"function","function":{"name":"keygen_detect","description":"Detecta keygen de fabricante (Thomson/Comtrend)","parameters":{"type":"object","properties":{"ssid":{"type":"string"}},"required":["ssid"]}}},
+        {"type":"function","function":{"name":"deauth","description":"Envía deauth para forzar handshake","parameters":{"type":"object","properties":{"bssid":{"type":"string"},"count":{"type":"integer"}},"required":["bssid"]}}},
+        {"type":"function","function":{"name":"wash_scan","description":"Escanea WPS (wash) en un canal","parameters":{"type":"object","properties":{"iface":{"type":"string"},"channel":{"type":"integer"}},"required":["iface"]}}},
+        {"type":"function","function":{"name":"wps_pin","description":"Prueba PIN WPS (reaver)","parameters":{"type":"object","properties":{"bssid":{"type":"string"},"iface":{"type":"string"},"channel":{"type":"integer"}},"required":["bssid","iface"]}}}
+    ]);
+
+    // Hermes XML: inyectar tools en system prompt (fallback para modelos sin native tool calling).
+    let tools_json = serde_json::to_string(&tools).unwrap_or_default();
+    let system_msg = format!(
+        "You are a function calling AI model. You are provided with function signatures. You may call one or more functions. \
+         For each function call return a JSON object with function name and arguments inside <tool_call></tool_call> tags. \
+         Available tools:\n<tools>\n{}\n</tools>",
+        tools_json
+    );
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role":"system","content":system_msg},
+            {"role":"user","content":prompt}
+        ],
+        "tools": tools,
+        "stream": false
+    });
+
+    match client.post("http://localhost:11434/api/chat").json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            #[derive(serde::Deserialize)]
+            struct TC { function: Option<TCFunc> }
+            #[derive(serde::Deserialize)]
+            struct TCFunc { name: String, arguments: Option<serde_json::Value> }
+            #[derive(serde::Deserialize)]
+            struct Msg { content: Option<String>, tool_calls: Option<Vec<TC>> }
+            #[derive(serde::Deserialize)]
+            struct ChatResp { message: Option<Msg> }
+            match resp.json::<ChatResp>().await {
+                Ok(cr) => {
+                    let msg = cr.message.unwrap_or(Msg { content: None, tool_calls: None });
+                    let content = msg.content.unwrap_or_default();
+                    let mut tcs: Vec<ToolCall> = msg.tool_calls.unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|tc| tc.function.map(|f| ToolCall { name: f.name, arguments: f.arguments.unwrap_or(serde_json::json!({})) }))
+                        .collect();
+                    // Fallback Hermes XML: parse <tool_call>{"name":..., "arguments":{...}}</tool_call>
+                    if tcs.is_empty() {
+                        let re = regex::Regex::new(r"<tool_call>\s*(\{.*?\})\s*</tool_call>").unwrap();
+                        for cap in re.captures_iter(&content) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cap[1]) {
+                                let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                let args = v.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                                if !name.is_empty() { tcs.push(ToolCall { name, arguments: args }); }
+                            }
+                        }
+                    }
+                    OllamaToolsResult { success: true, response: content, tool_calls: tcs, error: None }
+                }
+                Err(e) => OllamaToolsResult { success: false, response: String::new(), tool_calls: vec![], error: Some(e.to_string()) },
+            }
+        }
+        Ok(resp) => OllamaToolsResult { success: false, response: String::new(), tool_calls: vec![], error: Some(format!("HTTP {}", resp.status())) },
+        Err(e) => OllamaToolsResult { success: false, response: String::new(), tool_calls: vec![], error: Some(e.to_string()) },
+    }
+}

@@ -1,0 +1,645 @@
+    /* ── Reset ────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0c0c10;
+      --surface:  #171720;
+      --surface2: #1e1e2c;
+      --border:   #2e2e3e;
+      --accent:   #7c6dfa;
+      --accent-glow: rgba(124,109,250,.18);
+      --text:     #e4e4f0;
+      --muted:    #6f7090;
+      --red:      #f07178;
+      --orange:   #e8a030;
+      --yellow:   #f0c040;
+      --green:    #55d48a;
+      --blue:     #62b8ff;
+      --gray:     #555760;
+      --r:        10px;
+      --transition: .18s ease;
+    }
+
+    html, body {
+      height: 100%; width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    .app { display: flex; height: 100vh; height: 100dvh; width: 100vw; overflow: hidden; }
+
+    /* ── Sidebar ──────────────────────────────────────────────────── */
+    .sidebar {
+      width: 200px; min-width: 200px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      padding: 18px 0;
+      /* La navegación nunca debe quedar recortada en ventanas bajas
+         (minHeight de la ventana: 560 px): scroll propio + footer fijo. */
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .sidebar::-webkit-scrollbar { width: 6px; }
+    .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .logo-wrap {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 18px 20px;
+    }
+    .logo {
+      font-size: 22px; color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px;
+    }
+    .brand { font-weight: 700; font-size: 15px; letter-spacing: .4px; }
+
+    .nav-group { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 10px; }
+    .nav-label {
+      font-size: 10px; font-weight: 700; letter-spacing: .8px;
+      color: var(--muted); text-transform: uppercase;
+      padding: 6px 10px 6px;
+    }
+    .nav-btn {
+      display: flex; align-items: center; gap: 9px;
+      width: 100%; padding: 9px 10px;
+      background: transparent; border: 1px solid transparent;
+      color: var(--muted); border-radius: 8px;
+      font-family: inherit; font-size: 13px; cursor: pointer;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+    }
+    .nav-btn:hover { background: var(--accent-glow); color: var(--text); }
+    .nav-btn.active {
+      background: var(--accent);
+      color: #fff; border-color: var(--accent);
+    }
+    .nv { font-size: 15px; width: 20px; text-align: center; }
+
+    .nav-footer { padding: 12px 18px; }
+    .badge-wi { font-size: 10px; color: var(--gray); }
+
+    /* ── Main panel ────────────────────────────────────────────────── */
+    .panel {
+  flex: 1; display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden;
+}
+
+    /* ── Tabs ──────────────────────────────────────────────────────── */
+    .tab { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-bottom: 2px solid var(--border); padding-bottom: 12px; }
+    .tab.active { }
+
+    /* ── Panel header ──────────────────────────────────────────────── */
+    .phead {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      flex-wrap: wrap; gap: 10px;
+      padding: 18px 26px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    /* Grupo de acciones del header: envuelve en varias filas en vez de salirse
+       de la ventana (antes los últimos botones quedaban fuera de pantalla). */
+    .phead-actions {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; justify-content: flex-end;
+      flex: 1 1 320px; min-width: 0;
+    }
+    .phead h1 { font-size: 18px; font-weight: 700; }
+    .phead .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .scan-btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 9px;
+      padding: 9px 20px;
+      font-family: inherit; font-size: 12.5px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), opacity var(--transition), transform .1s;
+    }
+    .scan-btn:hover { opacity: .88; }
+    .scan-btn:active { transform: scale(.96); }
+    .scan-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    /* Variante compacta para las acciones secundarias del header (recupera
+       altura útil para la tabla). */
+    .scan-btn.sm { padding: 6px 12px; font-size: 11.5px; }
+    /* Botón Detener de la barra de estado: nunca se deshabilita mientras hay
+       ataque (setAttackRunning lo re-habilita explícitamente). */
+    #tab-attack .atk-stop:disabled { opacity: 1; cursor: pointer; }
+    @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+    /* ── Horizontal bar (status, counts) ──────────────────────────── */
+    .hbar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 26px;
+    }
+    .status-pill {
+      font-size: 11.5px; color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 99px;
+    }
+    .count-pill {
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid rgba(124,109,250,.3);
+      padding: 4px 14px; border-radius: 99px;
+    }
+
+    /* ── Table ─────────────────────────────────────────────────────── */
+    .tbl-wrap { flex: 1; min-height: 120px; overflow-y: auto; padding: 0 12px 16px; }
+    .tbl-wrap::-webkit-scrollbar { width: 5px; }
+    .tbl-wrap::-webkit-scrollbar-track { background: transparent; }
+    .tbl-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .tbl { width: 100%; border-collapse: separate; border-spacing: 0 3px; }
+
+    thead { position: sticky; top: 0; z-index: 2; }
+
+    th {
+      padding: 7px 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--muted);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    th.th-bar { width: 72px; }
+    th.th-ssid { }
+    th.th-num  { text-align: right; }
+    th.th-bssid { font-family: monospace; font-size: 10.5px; }
+
+    tbody tr {
+      background: var(--surface);
+      transition: background var(--transition);
+    }
+    tbody tr:hover { background: var(--surface2); }
+
+    td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .td-bar   { font-size: 17px; font-family: monospace; line-height: 1; }
+    .td-ssid  { font-weight: 500; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+    .td-num   { text-align: right; font-weight: 600; }
+    .td-bssid { font-family: monospace; font-size: 11.5px; color: var(--muted); }
+
+    .empty-row td { padding: 40px; }
+    .empty-state { text-align: center; }
+    .empty-state .ei { font-size: 38px; opacity: .5; display: block; margin-bottom: 12px; }
+    .empty-state p { color: var(--muted); font-size: 13px; }
+    .empty-state strong { color: var(--text); }
+
+    /* ── Console ───────────────────────────────────────────────────── */
+    .console-wrap {
+      flex: 1; min-height: 0; overflow-y: auto;
+      margin: 0 26px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      background: #0e0e14;
+    }
+    .console-wrap::-webkit-scrollbar { width: 6px; }
+    .console-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .console-view {
+      padding: 16px;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 11.5px; line-height: 1.65;
+      color: #b0b0c4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ── Row selection + quick attack bar ──────────────────────────────── */
+    @keyframes scan-fade-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    tr.selected {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+      background: var(--surface2) !important;
+    }
+    .scan-attack-bar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 12px 16px; margin-top: 10px;
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: var(--r);
+      animation: scan-fade-in .2s ease;
+    }
+    .scan-attack-bar .sab-info {
+      flex: 1; font-size: 12.5px; line-height: 1.4;
+    }
+    .scan-attack-bar .sab-info strong { color: var(--accent); }
+    .scan-attack-bar .sab-info small { color: var(--muted); display: block; }
+    .scan-attack-bar .sab-btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+    .scan-attack-bar .atk-btn { padding: 7px 14px; font-size: 11.5px; white-space: nowrap; }
+
+    /* ── Animated scan spinner ─────────────────────────────────────── */
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 var(--accent); }
+      80%  { box-shadow: 0 0 0 6px rgba(124,109,250,.5); }
+      100% { box-shadow: 0 0 0 12px rgba(124,109,250,0); }
+     }
+
+    /* ── Attack grid buttons ─────────────────────────────────────────────── */
+    .atk-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 9px;
+      padding: 8px 18px;
+      font-family: inherit; font-size: 12px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), opacity var(--transition);
+      justify-content: center;
+    }
+    /* OJO: sin `width:100%` — estos botones viven en filas flex con
+       flex-wrap (tarjetas de ataque, barra rápida del scan). Con width:100%
+       cada botón ocupaba una fila entera y la barra rápida se desbordaba
+       horizontalmente (zonas fuera de pantalla). */
+    .atk-btn-row .atk-btn { width: 100%; }
+    .atk-btn:hover  { opacity: .88; }
+    .atk-btn:active { transform: scale(.97); }
+    .atk-btn:disabled { opacity: .40; cursor: not-allowed; }
+    .atk-btn.atk-red    { background: #f07178; }
+    .atk-btn.atk-blue   { background: #62b8ff; }
+    .atk-btn.atk-orange { background: #e8a030; }
+
+    .attack-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    /* Ninguna tarjeta debe desbordar su columna (inputs/botones anchos). */
+    .attack-grid > * { min-width: 0; }
+
+    /* ── Wizard del flujo principal: tarjetas de paso grandes y claras ── */
+    .wizard { display: flex; flex-direction: column; gap: 14px; }
+    .wiz-step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r);
+      padding: 16px 18px;
+    }
+    .wiz-head { display: flex; align-items: flex-start; gap: 14px; }
+    .wiz-n {
+      flex: 0 0 auto;
+      width: 38px; height: 38px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 17px;
+    }
+    .wiz-title { font-size: 15px; font-weight: 700; }
+    .wiz-desc { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 3px; }
+    .wiz-status {
+      font-size: 12px; color: var(--muted); background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 12px; margin: 10px 0 4px;
+      font-family: ui-monospace, monospace;
+    }
+    .wiz-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    /* ── Héroe "Para esta red": flujo único visual por veredicto ─────── */
+    .flow-hero {
+      background: linear-gradient(180deg, rgba(124,109,250,.10), rgba(124,109,250,.02)),
+                  var(--surface);
+      border: 1px solid var(--accent); border-radius: var(--r);
+      padding: 16px 18px; margin-bottom: 16px;
+    }
+    .flow-hero h2 { font-size: 15px; font-weight: 800; }
+    .flow-hero .wiz-desc { font-size: 12.5px; }
+    .hero-lights { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+    .hero-light {
+      font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 3px 12px;
+      border: 1px solid var(--border); color: var(--muted); background: var(--surface2);
+    }
+    .hero-light.ok { color: var(--green); border-color: var(--green); }
+    .hero-light.warn { color: var(--orange); border-color: var(--orange); }
+    .hero-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .hero-btns .atk-btn { padding: 11px 20px; font-size: 13.5px; font-weight: 700; }
+    #flow-result {
+      display: none; margin-top: 12px; padding: 10px 12px; font-size: 11.5px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--r); white-space: pre-wrap; max-height: 180px; overflow-y: auto;
+    }
+    .wiz-btns .atk-btn { flex: 0 1 auto; padding: 9px 16px; font-size: 12.5px; }
+    .wiz-more { margin-top: 10px; }
+    .wiz-more > summary {
+      cursor: pointer; font-size: 11.5px; color: var(--muted);
+      list-style: none; user-select: none;
+    }
+    .wiz-more > summary::-webkit-details-marker { display: none; }
+    .wiz-more > summary::before { content: '\25B8\00a0avanzado: '; color: var(--gray); font-style: italic; }
+    .wiz-more[open] > summary::before { content: '\25BE\00a0avanzado: '; }
+    /* Wizard: pasos 2-8 usan el círculo con el color del tema de la sección */
+    .wiz-n.wiz-n--green  { background: var(--green); }
+    .wiz-n.wiz-n--orange { background: var(--orange); }
+    .wiz-n.wiz-n--yellow { background: var(--yellow); }
+    .wiz-n.wiz-n--red    { background: var(--red); }
+    .wiz-n.wiz-n--gray   { background: var(--gray); }
+    .wiz-step.wiz-step--green  { border-left-color: var(--green); }
+    .wiz-step.wiz-step--orange { border-left-color: var(--orange); }
+    .wiz-step.wiz-step--yellow { border-left-color: var(--yellow); }
+    .wiz-step.wiz-step--red    { border-left-color: var(--red); }
+    .wiz-step.wiz-step--gray   { border-left-color: var(--gray); }
+    /* Wizard: filas de campos a dos columnas en pasos con muchas tarjetas */
+    .wiz-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .wiz-cols > * { min-width: 0; }
+    /* Wizard: sub-bloque dentro de un details avanzado (varias herramientas) */
+    .wiz-sub { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+    .wiz-sub h4 { font-size: 12.5px; margin-bottom: 2px; }
+    .wiz-sub .atk-desc { margin-bottom: 8px; }
+
+    /* ── Tools status ─────────────────────────────────────────────────── */
+    .tool-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 10px; background: var(--bg); border-radius: 6px;
+    }
+    .tool-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .tool-dot.ok   { background: var(--green); }
+    .tool-dot.miss { background: var(--red); }
+    .tool-dot.warn { background: var(--orange); }
+    .tool-name { font-size: 12px; font-weight: 600; color: var(--text); min-width: 140px; }
+    .tool-path { font-size: 11px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-ver  { font-size: 10.5px; color: var(--gray); min-width: 110px; text-align: right; }
+
+    /* ── Attack card styling ─────────────────────────────────────────── */
+    .atk-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 16px;
+    }
+    .atk-title {
+      font-size: 14px; font-weight: 700; margin-bottom: 4px;
+    }
+    .atk-title--red    { color: var(--red); }
+    .atk-title--orange { color: var(--orange); }
+    .atk-title--yellow { color: var(--yellow); }
+    .atk-title--blue   { color: var(--blue); }
+    .atk-title--accent { color: var(--accent); }
+
+    .atk-desc {
+      font-size: 11.5px; color: var(--muted); margin-bottom: 12px;
+    }
+
+    .atk-fields {
+      display: flex; flex-direction: column; gap: 7px;
+    }
+    .field-row {
+      display: flex; align-items: center; gap: 7px;
+    }
+    .field-row label {
+      font-size: 11px; color: var(--muted); width: 72px; flex-shrink: 0;
+    }
+    .field-row input,
+    .field-row select {
+      flex: 1;
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 8px; font-size: 12px; outline: none; font-family: inherit;
+    }
+    .field-row .unit {
+      font-size: 11px; color: var(--muted); margin-left: 4px;
+    }
+
+    .atk-btn-row {
+      display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;
+    }
+    .atk-btn-row .atk-btn { flex: 1; }
+
+    /* ── Attack section (grouped cards) ─────────────────────────────── */
+    .atk-section { margin-bottom: 24px; }
+    /* Secciones 2-8 plegables (acordeón): summary = mismo aspecto que el
+       h2 anterior + caret. La sección 1 (Flujo principal) sigue abierta. */
+    details.atk-section > summary.section-title {
+      cursor: pointer; list-style: none;
+      display: block; user-select: none;
+      border-radius: 8px;
+    }
+    details.atk-section > summary.section-title::-webkit-details-marker { display: none; }
+    details.atk-section > summary.section-title::before {
+      content: '\25B8\00a0'; color: var(--accent);
+    }
+    details.atk-section[open] > summary.section-title::before {
+      content: '\25BE\00a0';
+    }
+    details.atk-section > summary.section-title:hover { background: var(--accent-glow); }
+
+    /* ── Chips de salto entre secciones ─────────────────────────────── */
+    .atk-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+    .atk-chip {
+      background: var(--surface2); color: var(--muted);
+      border: 1px solid var(--border); border-radius: 99px;
+      padding: 5px 12px; font-family: inherit; font-size: 11.5px; font-weight: 600;
+      cursor: pointer; white-space: nowrap;
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+    }
+    .atk-chip:hover { background: var(--accent-glow); color: var(--text); border-color: var(--accent); }
+    .atk-chip .na-tag {
+      display: none; margin-left: 6px; font-size: 9.5px; font-weight: 700;
+      letter-spacing: .3px; color: var(--orange);
+      border: 1px solid var(--orange); border-radius: 99px; padding: 1px 7px;
+    }
+    .atk-chip .na-tag.on { display: inline-block; }
+    /* Línea de veredicto de hardware (informativa; sin bloqueos: todos los
+       botones siguen lanzables). */
+    .hw-cap-line { margin:-4px 0 16px; padding:10px 16px; border:1px solid var(--border); border-radius:var(--r); background:var(--surface); font-size:12px; line-height:1.55 }
+    .hw-cap-line.ok { border-color:var(--green) }
+    .hw-cap-line.no { border-color:var(--orange) }
+    .section-title {
+      font-size: 13px; font-weight: 700; color: var(--accent);
+      padding: 6px 10px 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 14px;
+    }
+
+    /* ── Target selection bar ───────────────────────────────────────── */
+    .target-bar {
+      display: flex; align-items: center; gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    .target-bar label {
+      font-size: 12px; color: var(--muted); white-space: nowrap;
+    }
+    .target-bar select {
+      flex: 1; max-width: 340px;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 12px; font-family: inherit; font-size: 13px; outline: none;
+    }
+    .target-bar button {
+      background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 14px; cursor: pointer; font-family: inherit; font-size: 12px;
+    }
+
+    /* ── Barra de objetivo fija (sticky) del tab Ataque ─────────────────
+       Vive como primer hijo de .attack-body (el contenedor de scroll): al
+       hacer scroll se queda pegada arriba con SSID·BSSID·CH·seguridad·señal,
+       el veredicto compacto del perfilador y las acciones directas.
+       --ab-x/--ab-t = paddings laterales/superior de .attack-body (también
+       cambian en ventanas bajas, ver @media abajo). */
+    .atk-target-bar {
+      --ab-x: 26px; --ab-t: 18px;
+      position: sticky; top: 0; z-index: 30;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin: calc(-1 * var(--ab-t)) calc(-1 * var(--ab-x)) 14px;
+      padding: 10px var(--ab-x);
+      background: var(--surface);
+      border-bottom: 1px solid var(--accent);
+      box-shadow: 0 6px 18px rgba(0,0,0,.35);
+      animation: scan-fade-in .2s ease;
+    }
+    .atk-target-bar .atb-info { flex: 1 1 240px; min-width: 0; }
+    .atk-target-bar .atb-ssid {
+      display: block; font-size: 14px; font-weight: 700; color: var(--accent);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .atk-target-bar .atb-meta {
+      display: block; font-family: monospace; font-size: 11px; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .atk-target-bar .atb-verdict {
+      display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 700;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+    .atk-target-bar .atb-btns { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+    .atk-target-bar .atk-btn { padding: 7px 13px; font-size: 11.5px; }
+
+    /* Variantes de color de las tarjetas (.atk-btn--*): se usaban por todo el
+       HTML pero no estaban definidas — todas caían al morado por defecto. */
+    .atk-btn.atk-btn--green  { background: var(--green); color: #0b140e; }
+    .atk-btn.atk-btn--blue   { background: var(--blue);  color: #0b121c; }
+    .atk-btn.atk-btn--red    { background: var(--red);   color: #1b0c0e; }
+    .atk-btn.atk-btn--orange { background: var(--orange); color: #1a1406; }
+
+    /* ── Info box ───────────────────────────────────────────────────── */
+    .info-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 14px 18px; margin-bottom: 18px;
+    }
+    .info-box p { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+    .info-box strong { color: var(--orange); }
+
+    /* ── Tools panel ────────────────────────────────────────────────── */
+    .tools-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--r); overflow: hidden;
+    }
+    .tools-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface2);
+    }
+    .tools-header h3 {
+      font-size: 13px; font-weight: 700; color: var(--text);
+    }
+    .tools-header button {
+      background: var(--accent); color: #fff; border: none; border-radius: 6px;
+      padding: 4px 12px; font-size: 11px; cursor: pointer; font-family: inherit;
+    }
+    #tools-status-body {
+      padding: 12px 18px; display: flex; flex-direction: column; gap: 8px;
+    }
+    #tools-status-body .muted { font-size: 11.5px; color: var(--muted); }
+
+    /* ── Panel de salida viva del ataque (altura relativa: en ventanas bajas
+          deja sitio a las tarjetas de ataque) ─────────────────────────── */
+    .live-view {
+      display: block; margin-top: 8px;
+      height: clamp(110px, 24vh, 190px);
+      overflow-y: auto; background: #0e0e14;
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; font-size: 11px; line-height: 1.5;
+      color: #b8b8d0; white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* ─ Mini consola del tab Escanear (plegable) ──────────────────────── */
+    .mini-console {
+      flex: 0 0 auto;
+      margin: 0 12px 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .mini-head { display: flex; align-items: center; gap: 8px; }
+    .mini-title {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .mini-hint { font-size: 10px; color: var(--gray); }
+    .mini-toggle {
+      margin-left: auto; background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 0 8px; font-size: 11px; line-height: 18px;
+      cursor: pointer; font-family: inherit;
+    }
+    .mini-console.collapsed .mini-body { display: none; }
+    #mini-cv {
+      height: 60px; overflow-y: auto; background: #0e0e14;
+      border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+      font-size: 10.5px; line-height: 1.5; color: #8080a0;
+      white-space: pre-wrap; word-break: break-all; margin: 6px 0 0;
+    }
+
+    /* ── Guía del tab Ataque (plegable: por defecto cerrada) ──────────── */
+    .guide {
+      margin: 10px 26px 0; padding: 10px 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; font-size: 12px; line-height: 1.7; color: var(--muted);
+    }
+    .guide > summary {
+      cursor: pointer; color: var(--text); font-weight: 700;
+      list-style: none; outline: none;
+    }
+    .guide > summary::-webkit-details-marker { display: none; }
+    .guide > summary::before { content: '\25B8\00a0'; color: var(--accent); }
+    .guide[open] > summary::before { content: '\25BE\00a0'; }
+    .guide[open] > summary { margin-bottom: 6px; }
+
+    /* ─ Ventanas bajas: la ventana admite hasta 900×560 ────────────── */
+    @media (max-height: 700px) {
+      .phead { padding: 12px 18px 8px; }
+      .phead h1 { font-size: 16px; }
+      .phead .sub { font-size: 11px; }
+      .hbar { padding: 6px 18px; }
+      .scan-attack-bar { padding: 8px 12px; margin-top: 6px; }
+      .mini-console { margin: 0 12px 6px; }
+      .mini-hint { display: none; }
+      #mini-cv { height: 44px; }
+      .attack-body { padding: 12px 18px 16px !important; }
+      /* La barra sticky compensa el padding reducido de .attack-body */
+      .atk-target-bar { --ab-x: 18px; --ab-t: 12px; padding: 8px var(--ab-x); }
+      .guide { margin: 8px 18px 0; }
+      .atk-section { margin-bottom: 16px; }
+      .atk-card { padding: 12px; }
+      .console-wrap { margin: 0 18px 12px; }
+    }
+
+
+/* ── UI minimalista final: solo redes + consola grande + 2 botones ─────── */
+.app { flex-direction: column !important; }
+.sidebar { display: none !important; }
+.phead, .hbar, .scan-attack-bar, .mini-console, .nav-footer,
+#scanBtn, #scanUsbBtn, #monitorBtn, #restoreBtn, #captureBtn,
+#ifaceStatusBtn, #procBtn, #cleanupBtn, #monChan,
+#attack-status-bar, #simple-stage, #simple-pwnagotchi-btn,
+.atk-section, .flow-hero, #flow-result { display: none !important; }
+#simple-attack-bar {
+  justify-content: center; gap: 16px; padding: 12px;
+  border: none !important; background: transparent !important;
+}
+#simple-attack-btn, #simple-stop-btn {
+  padding: 14px 40px; font-size: 16px; font-weight: 800;
+}
+.tbl-wrap { max-height: 20vh; overflow-y: auto; flex: 0 0 auto; }
+.console-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin: 0; }
+#console-body, #cv { flex: 1 1 auto; min-height: 0; }

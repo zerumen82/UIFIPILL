@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 // ── State ────────────────────────────────────────────────────────────────
-let activeTab = 'scan';
+let activeTab = 'attack';
 let logLines  = [];
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -203,6 +203,7 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   syncTargetEverywhere(bssid, ssid, channel);
   profileTarget(bssid);
   renderTargetBar();
+  if (window.setIaStatus) window.setIaStatus('Objetivo seleccionado: ' + (ssid||'red') + ' · CH ' + (channel||'?') + '. Listo para atacar.');
 
   window.showTab('attack');
 };
@@ -338,9 +339,18 @@ function renderProfile(p) {
 // el perfil (renderProfile). Sin objetivo → oculta.
 function renderTargetBar() {
   const bar = $('atk-target-bar');
-  if (!bar) return;
   const bssid = valOrEmpty($('attack-bssid')?.value);
-  if (!bssid) { bar.style.display = 'none'; return; }
+  // Barra simple del tab Ataque: refleja el objetivo seleccionado (bug: antes
+  // nunca se actualizaba y siempre decía "Objetivo: —").
+  const simpleLabel = $('simple-target-label');
+  const simpleMeta = $('simple-target-meta');
+  if (!bssid) {
+    if (bar) bar.style.display = 'none';
+    if (simpleLabel) simpleLabel.textContent = 'Objetivo: —';
+    if (simpleMeta) simpleMeta.textContent = 'Selecciona una red en Escanear (clic en la fila). Si no, se intentará la más fuerte.';
+    renderHero();
+    return;
+  }
   const n = (typeof lastNets !== 'undefined' ? lastNets : []).find(
     x => (x.bssid || '').toUpperCase() === bssid.toUpperCase());
   const p = window._profile;
@@ -350,33 +360,40 @@ function renderTargetBar() {
   const sig  = n?.signal != null ? `${n.signal}%`
              : (prof?.signal != null ? `${prof.signal}%` : 'señal n/d');
   const sec  = n?.security || (prof ? `${prof.auth}/${prof.cipher}` : 'seguridad n/d');
-  bar.style.display = 'flex';
-  const sEl = $('atb-ssid');
-  if (sEl) { sEl.textContent = ssid; sEl.title = ssid; }
-  const mEl = $('atb-meta');
-  if (mEl) {
-    const meta = `${bssid} · CH ${ch} · ${sec} · ${sig}`;
-    mEl.textContent = meta;
-    mEl.title = meta;
-  }
-  const vEl = $('atb-verdict');
-  if (vEl) {
-    if (prof) {
-      vEl.textContent = prof.title;
-      vEl.title = prof.detail || prof.title;
-      vEl.style.color = VERDICT_COLORS[prof.verdict] || 'var(--gray)';
-      vEl.style.display = '';
-    } else {
-      vEl.textContent = '';
-      vEl.style.display = 'none';
+  if (bar) {
+    bar.style.display = 'flex';
+    const sEl = $('atb-ssid');
+    if (sEl) { sEl.textContent = ssid; sEl.title = ssid; }
+    const mEl = $('atb-meta');
+    if (mEl) {
+      const meta = `${bssid} · CH ${ch} · ${sec} · ${sig}`;
+      mEl.textContent = meta;
+      mEl.title = meta;
+    }
+    const vEl = $('atb-verdict');
+    if (vEl) {
+      if (prof) {
+        vEl.textContent = prof.title;
+        vEl.title = prof.detail || prof.title;
+        vEl.style.color = VERDICT_COLORS[prof.verdict] || 'var(--gray)';
+        vEl.style.display = '';
+      } else {
+        vEl.textContent = '';
+        vEl.style.display = 'none';
+      }
     }
   }
+  if (simpleLabel) simpleLabel.textContent = `Objetivo: ${ssid} · ${bssid}`;
+  if (simpleMeta) simpleMeta.textContent = `${bssid} · CH ${ch} · ${sec} · ${sig}`;
   renderHero();
 }
 window.renderTargetBar = renderTargetBar;
 
 // «✖ Cambiar red» de la barra sticky: quita el objetivo y vuelve al escaneo
 // para elegir otra (el flujo natural de selección es scan → clic → Ataque).
+// Nota: la antigua tabla de resultados (#attack-results-tbody) se eliminó con
+// el panel avanzado; el resultado visible es #flow-result + la consola en vivo.
+
 window.changeTarget = function () {
   window.clearSelection();
   window.showTab('scan');
@@ -697,6 +714,7 @@ window.showTab = function (id) {
         }).catch(() => {});
       }
     }
+    try { if (tab) tab.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
     _flushLog();
   } catch (e) {
     log(`showTab error: ${e}`, 'error');
@@ -967,14 +985,15 @@ window.scanAndAutoAttack = async function () {
 // del tab Ataque se deshabilitan salvo el de parada; así no hay duda de si
 // «está atacando» y no se pueden lanzar dos procesos RF a la vez.
 let _attackBusy = false;
+let _attackWatchdog = null;
 const ATTACK_BTN_SEL = '#tab-attack .atk-btn';
 
 function setAttackRunning(on, label) {
   _attackBusy = !!on;
+  if (_attackWatchdog) { clearTimeout(_attackWatchdog); _attackWatchdog = null; }
   const tab = document.getElementById('tab-attack');
   if (tab) tab.classList.toggle('attack-running', _attackBusy);
   document.querySelectorAll(ATTACK_BTN_SEL).forEach(b => { b.disabled = _attackBusy; });
-  // El botón de parada queda SIEMPRE operativo mientras hay ataque.
   document.querySelectorAll('#tab-attack .atk-stop').forEach(b => { b.disabled = false; });
   const status = document.getElementById('attack-status-bar');
   if (status) {
@@ -986,6 +1005,13 @@ function setAttackRunning(on, label) {
   }
   const scanBtn = document.getElementById('scanBtn');
   if (scanBtn) scanBtn.disabled = _attackBusy;
+  if (_attackBusy) {
+    _attackWatchdog = setTimeout(() => {
+      log('Watchdog: ataque sin respuesta 10 min — liberando lock de UI.', 'warn');
+      currentAttackId = null;
+      setAttackRunning(false);
+    }, 10 * 60 * 1000);
+  }
 }
 function attackIsBusy() { return _attackBusy; }
 
@@ -1418,10 +1444,16 @@ window.doCmd = function (cmdName, handler) {
   }
 };
 
-async function invokeAttack(cmd, args) {
-  if (attackIsBusy()) { log(`⚠️ Ya hay un ataque en curso; deténlo antes de lanzar ${cmd}.`, 'warn'); return false; }
+// `ownsLock`: los orquestadores (startAutoAttack) ya han puesto el lock de UI
+// para TODA la secuencia; en ese caso este paso no debe rechazarse por busy ni
+// liberar el lock al terminar — el orquestador lo libera al final.
+async function invokeAttack(cmd, args, opts = {}) {
+  const ownsLock = !!opts.ownsLock;
+  if (!ownsLock) {
+    if (attackIsBusy()) { log(`⚠️ Ya hay un ataque en curso; deténlo antes de lanzar ${cmd}.`, 'warn'); return false; }
+    setAttackRunning(true, cmd + ' en curso…');
+  }
   log(`>>> Rust invoke → ${cmd}  args=${JSON.stringify(args)}`, 'info');
-  setAttackRunning(true, cmd + ' en curso…');
   const t0 = performance.now();
   try {
     const result = await window.__invoke(cmd, args);
@@ -1449,7 +1481,7 @@ async function invokeAttack(cmd, args) {
     log(`[FATAL ${cmd}] ${err}`, 'error');
     return false;
   } finally {
-    setAttackRunning(false);
+    if (!ownsLock) setAttackRunning(false);
   }
 }
 
@@ -1545,7 +1577,7 @@ window.doCleanup = async function () {
 };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
-window.showTab('scan');
+window.showTab('attack');
 
 // Auto-scan con manejo de errores - no bloquea el inicio
 setTimeout(async () => {
@@ -1866,7 +1898,7 @@ window.startAutoAttack = async function () {
     currentAttackId = step.bgId || null;
     let stepOk = false;
     if (step.run) { try { stepOk = (await step.run()) === true; } catch (e) { log(`[${step.n}] error: ${e}`, 'error'); } }
-    else stepOk = (await invokeAttack(step.cmd, step.args)) === true;
+    else stepOk = (await invokeAttack(step.cmd, step.args, { ownsLock: true })) === true;
     if (stepOk) autoOk++; else autoMiss++;
   }
   currentAttackId = null;
@@ -1922,12 +1954,35 @@ function waitForAttack(id, timeoutMs) {
 
 // ── Ataque simple (UI: logs + Atacar/Detener) ───────────────────────────
 window.simpleAttack = async function () {
-  if (attackIsBusy()) { log('Ya hay un ataque en curso. Pulsa Detener si quieres cancelarlo.', 'warn'); return; }
-  window._simpleStop = false;
-  window._autoStop = false;
+  // NOTA: aquí había `if (!activeNet && ...)` con `activeNet` SIN DECLARAR en
+  // todo el repo → ReferenceError en la 1ª línea → el clic no hacía nada y el
+  // error ni caía en el try/catch. La validación real (objetivo O material
+  // .22000/.pcap) está más abajo, dentro del try; ese chequeo era además
+  // redundante y bloqueaba el flujo Pwnagotchi sin red seleccionada.
+  if (attackIsBusy()) {
+    try {
+      const r = await window.__invoke('list_attack_processes');
+      const out = (r?.output || '') + ' ' + (r?.stderr || '');
+      const vivos = /PID|\d{3,}/.test(out) && !/no hay|none|0 procesos|no running/i.test(out);
+      if (!vivos) {
+        log('Lock de ataque liberado automaticamente (no quedan procesos vivos).', 'info');
+        setAttackRunning(false);
+        currentAttackId = null;
+      } else {
+        log('Ya hay un ataque en curso. Pulsa Detener si quieres cancelarlo.', 'warn');
+        return;
+      }
+    } catch (e) {
+      log('Error verificando procesos: ' + e, 'error');
+      return;
+    }
+  }
+  window.setIaStatus('IA: analizando objetivo…');
   if (!claimAttack('simple_attack')) return;
   window._simpleOrchestrating = true;
   setAttackRunning(true, 'Preparando ataque…');
+  window._simpleStop = false;
+  window._autoStop = false;
   showProgress(true);
   updateProgress(2, 'Iniciando…');
   _liveBuf = '';
@@ -1939,10 +1994,16 @@ window.simpleAttack = async function () {
     if (t) log(`[etapa] ${t}`, 'info');
   };
 
+  // Declaradas FUERA del try: el bloque finally necesita bssid/ssid/ch para
+  // addAttackResult. Dentro del try eran `let` de ámbito de bloque y el
+  // finally las leía → ReferenceError al terminar CADA ataque (arnés detectado).
   let cracked = false;
   let hashFile = null;
   let natGuid = null;
   let natPcap = null;
+  let bssid = '';
+  let ssid = '';
+  let ch = undefined;
 
   try {
     // Material provisto (flujo Pwnagotchi/externo): .22000 o .pcap/.pcapng
@@ -1962,7 +2023,7 @@ window.simpleAttack = async function () {
     const hasMaterial = !!(providedHash || providedPcap);
 
     // 0) Objetivo (best effort)
-    let bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
+    bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
     if (!bssid && !hasMaterial) {
       setStage('Escaneando redes…', 5);
       try { await window.doScan(); } catch (e) { log('Scan falló: ' + e, 'error'); }
@@ -1974,8 +2035,6 @@ window.simpleAttack = async function () {
     }
     if (window._simpleStop) throw new Error('cancelado');
 
-    let ssid = '';
-    let ch = undefined;
     if (bssid) {
       const n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
       ssid = valOrEmpty($('ultra-ssid')?.value) || (n.ssid && !/oculta/i.test(n.ssid) ? n.ssid : '') || (window._profile && window._profile.ssid) || '';
@@ -2027,7 +2086,8 @@ window.simpleAttack = async function () {
           natGuid = ad.guid.trim();
           setStage(`Activando modo monitor (${ad.chipset || ad.name || 'adaptador'})…`, 22);
           try {
-            const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channel: ch || null });
+            await window.iaConfirm('IA: activar monitor (iface ' + natGuid + ', canal ' + (ch || 'auto') + ') antes de capturar.');
+const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channel: ch || null });
             log(`[monitor] ${m && (m.message || JSON.stringify(m))}`, m && m.success ? 'ok' : 'warn');
             if (!(m && m.success) && !ad.monitor_active) {
               log('[monitor] No se confirmó monitor; se intentará captura si el adaptador ya estaba listo.', 'warn');
@@ -2047,7 +2107,8 @@ window.simpleAttack = async function () {
         setStage(`Capturando ${dur}s (CH ${ch || 'auto'}, pasivo)…`, 30);
         log(`[captura] native_capture ${dur}s · GUID ${natGuid} · CH ${ch || '?'} (requiere modo monitor; sin inyección en Npcap).`, 'info');
         try {
-          const cap = await window.__invoke('native_capture', { ifaceGuid: natGuid, durationSecs: dur });
+          await window.iaConfirm('IA: capturar en ' + natGuid + ' durante ' + dur + 's (handshake/PMKID) — ¿ejecutar?');
+const cap = await window.__invoke('native_capture', { ifaceGuid: natGuid, durationSecs: dur });
           log(`[captura] ${cap.message} (packets=${cap.packets}, dlt=${cap.datalink} ${cap.datalink_name || ''})`, cap.success ? 'ok' : 'error');
           if (cap.success && cap.output_file) {
             natPcap = cap.output_file;
@@ -2091,7 +2152,8 @@ window.simpleAttack = async function () {
       log('[crack] Plan: keygen (si aplica) → máscaras → diccionarios/reglas → PCFG (-a 4, hashcat v8+ si disponible) → candidatas detectadas (p.ej. exports PassGAN/PassGPT en tools/) → externo opcional. Se detiene en .cracked real.', 'info');
       currentAttackId = 'crack_plan';
       try {
-        const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '', bssid: bssid || '', externalGenerator });
+        await window.iaConfirm('IA: lanzar crack plan en ' + hashFile + ' para ' + (ssid || bssid || 'objetivo') + ' (acción destructiva) — ¿ejecutar?');
+const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '', bssid: bssid || '', externalGenerator });
         log(`[crack] Plan en ejecución (${r.stages} etapas).`, 'info');
         const done = await waitForAttack('crack_plan');
         if (done && done.p) {
@@ -2161,6 +2223,7 @@ window.simplePwnagotchiKit = async function () {
 };
 
 window.simpleStop = async function () {
+  window.setIaStatus('IA: deteniendo…');
   window._simpleStop = true;
   window._autoStop = true;
   log('Detener solicitado por el usuario.', 'warn');
@@ -2170,66 +2233,8 @@ window.simpleStop = async function () {
   // native_capture es síncrona (~60s) y no cancelable; el cierre se normaliza al terminar el paso.
 };
 
-// ── Gatillo EAPOL (dos antenas, Windows sin inyección) ────────────────────
-window.triggerEapol = async function () {
-  const iface = (valOrEmpty($('trigger-iface')?.value) || '').trim();
-  const attempts = parseInt($('trigger-attempts')?.value) || 5;
-  const delay = parseInt($('trigger-delay')?.value) || 3;
-  const password = valOrEmpty($('trigger-password')?.value) || 'clavefalsa123';
-  const bssid = (getSelectedBssid && getSelectedBssid()) || valOrEmpty(($('attack-bssid') || {}).value) || '';
-  const n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
-  const ssid = valOrEmpty($('ultra-ssid')?.value) || (n.ssid && !/oculta/i.test(n.ssid) ? n.ssid : '') || (window._profile && window._profile.ssid) || '';
-
-  if (!ssid) {
-    log('[trigger] Falta SSID del objetivo. Selecciona una red en Escanear o pon el SSID en la tarjeta avanzada.', 'warn');
-    return;
-  }
-  if (!iface) {
-    log('[trigger] Falta la interfaz gatillo (managed, visible para netsh, p.ej. "Wi-Fi 2"). Verifica con: netsh wlan show interfaces', 'warn');
-    if ($('trigger-stage')) $('trigger-stage').textContent = 'Falta interfaz gatillo';
-    return;
-  }
-
-  if ($('trigger-stage')) $('trigger-stage').textContent = 'Ejecutando…';
-  log(`[trigger] Iniciando gatillo: SSID='${ssid}' iface='${iface}' intentos=${attempts} espera=${delay}s (solo lab).`, 'info');
-  log('[trigger] IMPORTANTE: la antena de CAPTURA (monitor, canal del AP) debe estar capturando antes de lanzar el gatillo.', 'warn');
-
-  try {
-    const r = await window.__invoke('wpa2_trigger_bg', {
-      ssid, interface: iface, attempts, delaySeconds: delay, password
-    });
-    log(`[trigger] Lanzado (${r.attempts} intentos, ${r.delay_seconds}s entre intentos).`, 'info');
-  } catch (e) {
-    log('[trigger] ERROR al iniciar: ' + e, 'error');
-    if ($('trigger-stage')) $('trigger-stage').textContent = 'Error';
-    return;
-  }
-
-  // Esperar finalización por evento
-  const done = await waitForAttack('wpa2_trigger');
-  if (done && done.p) {
-    const summary = done.p.stdout || '';
-    if (summary) log(`[trigger] resultado:\n${summary}`, done.p.success ? 'ok' : 'warn');
-    if ($('trigger-stage')) $('trigger-stage').textContent = done.p.success ? 'Completado' : 'Terminado';
-  } else {
-    log('[trigger] Gatillo terminó sin resultado claro.', 'warn');
-    if ($('trigger-stage')) $('trigger-stage').textContent = 'Terminado';
-  }
-};
-
-window.triggerCancel = async function () {
-  log('Cancelación del gatillo solicitada.', 'warn');
-  try { await window.__invoke('wpa2_trigger_cancel'); } catch {}
-  if ($('trigger-stage')) $('trigger-stage').textContent = 'Cancelando…';
-};
-
-// Auto-rellenar interfaz gatillo si hay adaptador managed detectado
-function fillTriggerIface() {
-  const el = $('trigger-iface');
-  if (!el || el.value.trim()) return;
-  // no auto-detect robusto sin backend; dejar placeholder
-}
-
+// El gatillo EAPOL (dos antenas) se eliminó por completo en 1.0.12: UI, JS y
+// backend (wpa2_trigger.rs + comandos). El flujo de ataque no lo usaba.
 
 // Cierre específico del plan: resumen en tarjeta avanzada (si visible)
 listen('attack-completed', (event) => {
@@ -2773,8 +2778,7 @@ listen('attack-progress', (event) => {
   if (type !== 'stdout' && type !== 'stderr') return;
   const isSync = id === 'sync' && !currentAttackId;
   const orchAllow = window._simpleOrchestrating && (id === 'crack_plan' || id === 'simple_attack');
-  const triggerAllow = id === 'wpa2_trigger';
-  if (id !== currentAttackId && !isSync && !orchAllow && !triggerAllow) return;
+  if (id !== currentAttackId && !isSync && !orchAllow) return;
   if (isSync) {
     // Solo la primera vez: showProgress(true) reinicia el panel de salida viva.
     const pc = $('progress-container');
@@ -2814,11 +2818,6 @@ listen('attack-completed', (event) => {
   if (window._simpleOrchestrating && id === 'crack_plan') {
     // El orquestador simple espera este evento y gestiona el cierre.
     if (currentAttackId === 'crack_plan') currentAttackId = null;
-    return;
-  }
-  if (id === 'wpa2_trigger') {
-    // El gatillo es independiente del orquestador de ataque; solo actualiza UI.
-    if ($('trigger-stage')) $('trigger-stage').textContent = 'Terminado';
     return;
   }
   if (id === currentAttackId) {
@@ -3471,3 +3470,4 @@ window.usbRawHandshake = async function () {
     setAttackRunning(false);
   }
 };
+
