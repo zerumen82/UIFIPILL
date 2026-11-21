@@ -7,11 +7,12 @@
 > Referencias `§N` = secciones de ESTE documento.
 
 ## ÍNDICE
-- §1 — Bitácora de sesiones (2026-09-13 → 2026-10-06, orden cronológico; última entrada: 2026-10-06 cont. 5)
+- §1 — Bitácora de sesiones (2026-09-13 → 2026-11-21, orden cronológico; última entrada: 2026-11-21 cont. 4)
 - §2 — Roadmap motor dual WSL2/Kali (origen ROADMAP_WSL2.md)
 - §3 — Ingeniería inversa de netr28ux.sys (origen DRIVER_RE.md)
 - §4 — Investigación RX por WinUSB (origen RX_PLAN.md)
 - §5 — Por qué no funciona igual en Windows (origen LINUX_EN_WINDOWS.md)
+- **§6 — TRASPASO / HANDOFF (2026-11-21): estado real, cómo verificar, deudas y trampas — EMPEZAR AQUÍ si relevas al agente**
 
 # PARTE 1 — BITÁCORA DE SESIONES (orden cronológico; origen: AGENTS.md)
 
@@ -2577,3 +2578,55 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **Guardias nuevas** en `audit-wiring.cjs`: prohíben que reaparezca el gatillo en UI/JS o registrado en `lib.rs`. Lint: 70 invokes / 74 onclicks (antes 72/76), 0 huérfanos.
 - **Bump 1.0.11 → 1.0.12** en los 7 sitios. Recompilado: bundle `index-Di5f2rSS.js` (96,55 kB HTML / 101,63 kB JS), `uifipill.exe` 20,52 MB, NSIS `UIFIPILL_1.0.12_x64-setup.exe`. Instalado `/S` (`exitCode=0`, `ProductVersion=1.0.12`); el exe NO contiene `wpa2_trigger` y SÍ contiene el bundle nuevo. Verificación: lint ✅ · deep-audit 726 invocaciones/0 undeclared/0 scope ✅ · cargo test 35/0/8 ✅ · cargo build 0 warnings ✅.
 - **COMMIT + PUSH (petición explícita)**: `269ae9d` «fix: botones Atacar/Auto, quitar gatillo EAPOL y código muerto (v1.0.12)» → `origin/master` (`5fdde69..269ae9d`, 19 archivos). Incluye `src/js/`, `src/style.css` y `scripts/audit-wiring.cjs` (necesarios para build/lint); excluye los `.cjs`/`.bak`/backups sueltos de diagnóstico (sin trackear).
+
+# PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
+
+## 6.1 — Estado entregable
+- **Versión 1.0.12**, rama `master`, HEAD `db56ee5` (docs) / `269ae9d` (fix). Remoto `origin = git@github.com:zerumen82/UIFIPILL.git`. Push verificado: `5fdde69..db56ee5`.
+- Instalador: `src-tauri/target/release/bundle/nsis/UIFIPILL_1.0.12_x64-setup.exe`. Binario: `src-tauri/target/release/uifipill.exe` (20,52 MB). Instalado en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe` con `ProductVersion=1.0.12`; el ejecutable incrustado contiene `index-Di5f2rSS.js` y NO contiene `wpa2_trigger`.
+- **Código frontend activo**: `index.html` → `<script type="module" src="src/js/main.js">` → importa `../style.css`, `./ia.js`, `../app.js`. `src/app.js` NO es código muerto: es donde vive `simpleAttack`/`startAutoAttack` y todo el cableado. `src/js/ia.js` define `iaConfirm` (resuelve `true`) y el tool-calling Ollama; se carga ANTES que app.js.
+-_backend_: Tauri v2, 95→93 invokes registrados (se quitaron los 2 del gatillo). `lib.rs` es el registro; `commands.rs` comandos; `crack_plan.rs` plan de crack; `usb_raw.rs` puente WinUSB.
+- **Cambios de esta sesión (2026-11-21)**: (1) 3 bugs del botón Atacar — `claimAttack` duplicado, `activeNet` sin declarar, `let` dentro del `try` leído en `finally`; (2) `invokeAttack(..., {ownsLock:true})` para los pasos de `startAutoAttack`; (3) gatillo EAPOL eliminado de UI, JS y backend; (4) código muerto de la tabla de resultados eliminado; (5) guardias de regresión en `scripts/audit-wiring.cjs`. Detalle y evidencia en §1, sesiones 2026-11-21 cont. 1-4.
+
+## 6.2 — Qué está verificado y qué NO (no exagerar)
+- **SÍ verificado con evidencia**: lint (70 invokes / 74 onclicks, 0 huérfanos), vite build, `cargo build --release` 0 warnings, `cargo test --lib` 35 passed / 0 failed / 8 ignored, instalación `/S` con exit 0, versión del exe, hash del bundle incrustado, y arnés de ejecución (726 invocaciones / 174 funciones / 0 identificadores no declarados / 0 errores de ámbito).
+- **NO verificado por el agente**: el **clic real en la app con hardware**. El flujo se probó con un DOM simulado y stubs del backend, no con RT3070/RT73 físicas. El usuario tiene la 1.0.12 instalada y es quien debe confirmar en pantalla. Si vuelve a reportar fallo: pedir la línea exacta del verbose en vivo (`#live-cv`) y el paso donde se queda; no asumir que es el mismo bug.
+- **RF (heredado, YA MEDIDO — no repetir sin motivo)**: RT3070 + Npcap = captura pasiva sí, inyección NO (Npcap #85, err 31); RT3070 + WinUSB crudo = TX al aire sí, RX sorda en las pruebas recientes (0 frames, stack/host acumulado); RT73 en monitor con Npcap = canal + captura pasiva OK sin parche; driver netr28ux parcheado = cambio de canal en monitor. Nunca kick `FIRMWARE(8)` bajo WinUSB (mata el chip 5/5; solo power-cycle 15 s). Ver §3/§4/§5 y `AGENTS.md` regla 3.
+- **Crack**: hashcat `tools/` = v7.1.2 sin OpenCL/GPU → PCFG (-a 4 / hints) se omite con justificación; E0-17 (material externo/candidatas) sigue sin E2E con `.22000` real → deuda D-07.
+- **D-03 / E0-11 / E0-12**: reboot pendiente por decisión del usuario (no ejecutado). No reactivar el sniff sostenido RT3070 sin antes seguir el protocolo: power-cycle → restore_netr28ux → switch WinUSB → probe → init → scan → ciclo dual RT73.
+
+## 6.3 — Reproducir la verificación (comandos y salida esperada)
+```
+cd D:\PROJECTS\UIFIPILL
+npm run lint        # audit-wiring: OK (70 invokes, 74 onclicks)
+npx vite build      # dist/index.html 96,55 kB · dist/assets/index-Di5f2rSS.js 101,63 kB
+cd src-tauri
+cargo test --lib    # 35 passed; 0 failed; 8 ignored
+cargo build --release   # Finished release profile, 0 warnings
+cd ..
+npx tauri build --bundles nsis   # UIFIPILL_1.0.12_x64-setup.exe
+```
+Tras instalar con `/S`, comprobar `ProductVersion` del exe en `%LOCALAPPDATA%\UIFIPILL` y que el ASCII del binario contenga `index-Di5f2rSS.js`. Si el frontend cambia, el nombre del bundle cambia (hash content-addressed) — verificado con sondeos: añadir un comentario NO cambia el hash; cambiar código SÍ.
+
+## 6.4 — Cómo diagnosticar una regresión parecida (método que funcionó)
+- Arnés temporal (NO está en el repo; estaba en `%TEMP%\uifipill-deep-audit.cjs` y `%TEMP%\uifipill-undeclared.cjs`): carga cada módulo en su propio IIFE dentro de `vm.runInNewContext('with (guard) { ... }')`, donde `guard` es un Proxy con `has: () => true` y `get` que **lanza** si el identificador no está en el sandbox. Eso convierte un `ReferenceError` silencioso en un fallo explícito. Invoca todas las funciones `window.*`/`function*` con varios juegos de argumentos y analiza `try/catch/finally` con **balanceo de llaves** (una regex ingenua dio falsos positivos).
+- Errores esperados del arnés (NO bugs): `navigator.clipboard.writeText` y pasar tipos genéricos a `toUpperCase()`.
+- Guardias ya commitidas en `scripts/audit-wiring.cjs` (se ejecutan con `npm run lint`): exactamente 1 `claimAttack('simple_attack')`; prohibido `activeNet`; `bssid`/`ssid`/`ch` declarados antes del `try` de `simpleAttack`; todo `invokeAttack()` dentro de `startAutoAttack` con `ownsLock:true`; ningún `wpa2_trigger`/`triggerEapol`/`simple-trigger-card` en UI/JS ni `mod wpa2_trigger` en `lib.rs`.
+- Reglas de cableado: Tauri v2 convierte args a camelCase (frontend `durationSeconds`, `ifaceGuid`…); respuestas en snake_case; ningún `invoke` sin handler; ningún `onclick`/`on*` huérfano; eventos `attack-progress/started/completed/error` deben existir en ambos sitios: `listen()` (JS) y `emit()` (Rust).
+
+## 6.5 — Deudas y estado del repo
+- **Sin commitear / sin trackear (decisión deliberada)**: `add.py`, `cleanup.cjs`, `cross.cjs`, `divattack.cjs`, `divcheck.cjs`, `extract_ids.cjs`, `groups.cjs`, `lines.cjs`, `needed.cjs`, `tags.cjs`, `usage.cjs`, `index.html.bak`, `memory_backup.txt`, `prev_index.html`, `test64.html`. Son scripts/backups de diagnóstico de sesiones anteriores; NO son necesarios para compilar. Si el usuario pide «commitear todo», preguntar antes de incluirlos.
+- Deudas formales en `spec/03-PENDIENTES.md`: D-03 (RF/RT3070 RX + reboot), D-07 (crack E2E con hashcat v8+/OpenCL y `.22000` real). Épica E0 «Windows ≡ Kali» en `spec/02-REQUISITOS.md`.
+- `AGENTS.md` conserva el cuerpo con revisión 2026-10-06 y cifras viejas (ej. 95 invokes, 30 tests); su cabecera tiene una nota de actualización 2026-11-21 apuntando aquí. **La verdad operativa es esta §6 + `git log`.**
+
+## 6.6 — Reglas duras (resumen; fuente completa `~/.agents/AGENTS.md` + `AGENTS.md`)
+1. No hardcode / no stub / no fake: éxito solo con evidencia real (`.cracked`, PIN parseado, `TXDONE`, frames reales). Binario ausente → hint accionable.
+2. Verificación obligatoria tras tocar código: lint + vite + cargo build 0 warnings + cargo test.
+3. USB: nunca kick `FIRMWARE(8)` bajo WinUSB; vendor requests RT2800/RT3070 = SINGLE_WRITE 2 / SINGLE_READ 3 / MULTI_WRITE 6 / MULTI_READ 7; `USB_DEVICE_MODE` va en wValue; no RESET antes de leer registros.
+4. UAC: scripts elevados → log directo a fichero con ruta absoluta; el shell no es admin.
+5. El instalador NSIS aplana `tools/` en `_up_\tools`; los DLL (libpcap/Packet/libwinpthread) van en resources. Regla histórica: si se añade un bin al crate, mantener `default-run="uifipill"`.
+6. Bitácora: todo decision/prueba/resultado se anota aquí con fecha. No registrar = no hecho.
+7. No commit/push sin petición explícita; tampoco acciones destructivas (borados, resets, force-push) sin confirmación.
+
+## 6.7 — Checklist para el agente que releva
+`git log -3` → leer §6 → `npm run lint` → `cargo test --lib` → confirmar versión instalada → Si el usuario reporta un botón muerto, **buscar primero identificadores no declarados y ámbitos try/finally** (fueron la causa real, no el hardware) → cualquier cambio de RF se mide y se anota → cualquier decisión de alcance se pregunta al usuario (él es el orchestrator).

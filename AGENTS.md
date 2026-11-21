@@ -1,5 +1,13 @@
 # AGENTS.md — UIFIPILL Project
 
+> **ACTUALIZACIÓN DE ESTADO 2026-11-21 (lee esto primero):** versión **1.0.12**,
+> HEAD `db56ee5` (fix `269ae9d`), push a `origin/master` hecho. Arreglados los 3
+> bugs del botón Atacar/Auto; gatillo EAPOL y código muerto eliminados. El estado
+> operativo real, los comandos de verificación, las deudas abiertas y el checklist
+> de traspaso están en **`memory.md` §6 (TRASPASO / HANDOFF)**. El resto de este
+> archivo conserva las reglas (vigentes) y el estado histórico a 2026-10-06;
+> donde choque con §6, manda §6 + `git log`.
+
 > **Reglas, objetivos, arquitectura y estado VIGENTE** (última revisión 2026-10-06).
 > La historia vive en **`memory.md`**: §1 bitácora de sesiones (2026-09-13 → 2026-10-05),
 > §2 roadmap motor dual WSL2/Kali, §3 RE de netr28ux.sys, §4 investigación RX WinUSB,
