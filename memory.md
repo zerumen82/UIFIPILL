@@ -2677,6 +2677,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Log del usuario: netsh vio 0 redes justo tras restaurar managed y el fallback USB crudo falló con `rt3070_scan.exe no encontrado en <inst>/_up_/driver_re/usb_tx`. Causa: el NSIS no incluía ese binario (ni `rt3070_sniff.exe`). Añadidos a `tauri.conf.json` resources; NSIS recompilado/reinstalado, exit 0, ambos exes presentes en `<inst>/_up_/driver_re/usb_tx/target/release`.
 - Verificado CDP: `usb_raw_scan` ya **ejecuta** el binario (adiós «exe not found») y devuelve veredicto honesto «Sin redes en 12s…». Incluso tras `usb_raw_init` (MCU vivo, sin kick FIRMWARE(8), radio ON CH11) sigue dando 0 redes: coherente con la RX sorda measured del RT3070 en crudo. El escaneo normal por netsh sí ve redes cuando la radio ya está asentada (13 en mediciones anteriores). Sin commit de artefactos, solo config/docs.
 
+### SESIÓN 2026-11-22 (cont. 17) — SCAN WINDOWS A 0 REDES: RT73 QUEDÓ EN MONITOR/SORDO
+- Log del usuario: `scan_wifi` → 0 redes y fallback USB crudo. Diagnóstico CDP: `detect_adapters.monitor_active=true`, `monitor_status.mode=monitor`, CH1 — el RT73 seguía en monitor tras las pruebas de deauth/gatillo. `restore_managed` devolvió `success=true` y `mode=managed`, pero `netsh wlan show networks` **seguía con 0 redes**: el driver se quedó sordo para el scan tras tantos cambios monitor↔managed (el aire sí tenía beacons: 33 capturados antes).
+- **Fix aplicado**: script elevado `C:\Users\INdaHouse\AppData\Local\Temp\uifipill_reset_rt73.ps1` (disable/enable `Wi-Fi 4`, UAC aceptado por el usuario, log en ruta absoluta). Resultado: `adapter_status=Disconnected`, **6 redes visibles** (sagemcomDEF0, TP-Link_29D6, Q0030207711424, HP-Print, La Fory 3H, MIWIFI_APUM). Verificado en la app: `mode=managed`, `monitor_active=false`, `scan_wifi` → 6 redes.
+- **Lección**: `restore_managed` por OID no siempre recupera el stack de scan; si `scan_wifi` da 0 y `monitor_status` decía monitor, hacer disable/enable elevado del adaptador (o power-cycle físico) antes de culpar a la señal. RF dejada en managed y app relanzada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
