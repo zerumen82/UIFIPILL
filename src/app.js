@@ -1199,16 +1199,34 @@ window.iaAttack = async function () {
     let plan = await window.__invoke('ollama_tools', { prompt, model });
     if (!(plan && plan.success)) throw new Error('ollama_tools falló: ' + ((plan && plan.error) || 'sin respuesta'));
     let steps = Array.isArray(plan.tool_calls) ? plan.tool_calls : [];
-    const ACTION_TOOLS = ['activate_monitor', 'capture_packets', 'crack_hash'];
+    const ACTION_TOOLS = ['activate_monitor', 'capture_packets', 'deauth_burst', 'trigger_handshake', 'crack_hash'];
     const hasAction = () => steps.some(s => ACTION_TOOLS.includes(String((s && s.name) || '')));
-    if (steps.length < 2 || !hasAction()) {
-      log('[IA] Plan ' + (steps.length < 2 ? 'demasiado corto' : 'sin pasos de ataque') + ' (' + steps.length + ' pasos); repitiendo la consulta con instrucción más estricta…', 'warn');
-      const retry = prompt + '\nIMPORTANTE: tu plan debe incluir OBLIGATORIAMENTE activate_monitor y capture_packets (60 s) sobre el GUID del contexto, además de los pasos informativos. No devuelvas solo scan/detect/keygen.';
+    if (steps.length < 3 || !hasAction()) {
+      log('[IA] Plan ' + (steps.length < 3 ? 'demasiado corto' : 'sin pasos de ataque') + ' (' + steps.length + ' pasos); repitiendo la consulta con instrucción más estricta…', 'warn');
+      const retry = prompt + '\nIMPORTANTE: tu plan debe incluir OBLIGATORIAMENTE deauth_burst o trigger_handshake (con BSSID/canal reales), además de los pasos informativos. No devuelvas solo scan/detect/keygen/profile.';
       plan = await window.__invoke('ollama_tools', { prompt: retry, model });
       if (plan && plan.success && Array.isArray(plan.tool_calls) && plan.tool_calls.length) steps = plan.tool_calls;
     }
+    // Plan mínimo obligatorio: si el modelo sigue quedándose corto, el
+    // orquestador completa el plan CON HERRAMIENTAS IA (nunca el pipeline
+    // determinista antiguo). Se anota en el log para no fingir que fue la IA.
+    if (steps.length < 3 || !hasAction()) {
+      const have = new Set(steps.map(s => String((s && s.name) || '')));
+      const minimal = (material
+        ? [
+            { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
+            { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
+          ]
+        : [
+            { name: 'profile_target', arguments: { bssid } },
+            { name: 'deauth_burst', arguments: { bssid, channel: ch } },
+            { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
+            { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
+          ]).filter(x => !have.has(x.name));
+      log('[IA] Plan insuficiente tras el reintento: orquestador añade ' + minimal.length + ' paso(s) mínimo(s) con herramientas IA.', 'warn');
+      steps.push(...minimal);
+    }
     if (!steps.length) throw new Error('La IA no propuso herramientas válidas. Respuesta: ' + String(plan.response || '(vacía)').slice(0, 300));
-    if (!hasAction()) throw new Error('Plan sin pasos de ataque: la IA solo propuso consultas informativas. No se ejecutó nada.');
     log(`[IA] Plan recibido: ${steps.length} herramienta(s) (modelo ${model || 'hermes3:8b'}).`, 'ok');
     if (plan.response) log('[IA] ' + String(plan.response).slice(0, 500), 'info');
 

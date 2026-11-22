@@ -2682,6 +2682,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **Fix aplicado**: script elevado `C:\Users\INdaHouse\AppData\Local\Temp\uifipill_reset_rt73.ps1` (disable/enable `Wi-Fi 4`, UAC aceptado por el usuario, log en ruta absoluta). Resultado: `adapter_status=Disconnected`, **6 redes visibles** (sagemcomDEF0, TP-Link_29D6, Q0030207711424, HP-Print, La Fory 3H, MIWIFI_APUM). Verificado en la app: `mode=managed`, `monitor_active=false`, `scan_wifi` → 6 redes.
 - **Lección**: `restore_managed` por OID no siempre recupera el stack de scan; si `scan_wifi` da 0 y `monitor_status` decía monitor, hacer disable/enable elevado del adaptador (o power-cycle físico) antes de culpar a la señal. RF dejada en managed y app relanzada.
 
+### SESIÓN 2026-11-22 (cont. 18) — PLAN MÍNIMO OBLIGATORIO EN MODO IA
+- Log del usuario: `hermes3:8b` devolvió un plan de **1 paso** dos veces (retry incluido) y el Modo IA se detuvo con «Plan sin pasos de ataque: no se ejecutó nada» (guardia honesto, sin ataque falso).
+- Fix aprobado: si tras el reintento el plan sigue corto (<3 pasos o sin herramienta de acción), el orquestador **añade pasos mínimos con herramientas IA** (`profile_target`/`deauth_burst`/`inspect_hash`/`crack_hash`; con material previo solo `inspect_hash`/`crack_hash`). Se anota en el log: «Plan insuficiente tras el reintento: orquestador añade N paso(s) mínimo(s) con herramientas IA». **No se vuelve al pipeline determinista**. `ACTION_TOOLS` incluye ahora `deauth_burst`/`trigger_handshake`.
+- Verificado CDP con `ollama_tools` forzado a 1 paso: retry → «orquestador añade 3 pasos» → plan de 4 herramientas → ejecutadas `profile_target`, `deauth_burst` (args reales BSSID/CH4), `inspect_hash`, `crack_hash`. Guardia actualizado en `audit-wiring.cjs`; lint/NSIS verdes. Antena devuelta a managed; app relanzada sin stubs.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

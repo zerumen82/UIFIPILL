@@ -139,8 +139,8 @@ if (!/Plan SIN RESULTADOS/.test(appSrc)) {
 if (!/window\._attackAwaitingConfirm/.test(appSrc) || !/window\._attackAwaitingConfirm/.test(iaSrc)) {
   console.error('REGRESSION: el watchdog no se pausa mientras espera confirmación (lock liberado a los 10 min).'); bad++;
 }
-if (!/hasAction\(\)/.test(appSrc) || !/Plan sin pasos de ataque/.test(appSrc)) {
-  console.error('REGRESSION: se aceptan planes solo informativos (sin monitor/captura/crack).'); bad++;
+if (!/hasAction\(\)/.test(appSrc) || !/paso\(s\) mínimo\(s\) con herramientas IA/.test(appSrc)) {
+  console.error('REGRESSION: falta el plan mínimo obligatorio del Modo IA tras un plan corto.'); bad++;
 }
 
 const toolsBlock = cmdsSrc.slice(cmdsSrc.indexOf('let tools = serde_json::json!(['), cmdsSrc.indexOf(']);', cmdsSrc.indexOf('let tools = serde_json::json!([')));
