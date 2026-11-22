@@ -2668,6 +2668,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Análisis del pcap: `parse_pmf` para ese BSSID → **33 beacons**, `MFPC=false MFPR=false` (AP presente en CH6 y sin PMF); conteo de STAs por addr3/addr1 + addr2 → **0 clientes**. Conclusión: el TX funciona y el AP está ahí, pero no hay ningún cliente asociado visible al que forzar la reconexión; sin EAPOL no hay handshake. No es fallo de código.
 - RF devuelta a managed. Commit/push de esta bitácora: ver `git log`.
 
+### SESIÓN 2026-11-22 (cont. 15) — E0-24 IMPLEMENTADO, VEREDICTO NEGATIVO EN HW
+- Implementado: `wifi_probe_trigger` (perfil netsh temporal con clave falsa + captura NPF_WIFI_ en managed), `convert_ethernet_eapol` (DLT 1 y 127/radiotap, M1+M2 → `WPA*02*` con SSID real), herramienta IA `trigger_handshake` y comando de consola «gatillo». 43 tests unitarios verdes. Correcciones durante la prueba: `pcapPath` camelCase, captura spawneada ANTES del connect (el future sin poll abría Npcap tarde), NPF_ (DLT1) daba 0 paquetes → usar NPF_WIFI_ (DLT127), conversor ampliado a radiotap+LLC/SNAP.
+- **Medición real (La Fory 3H, autorizada)**: `netsh connect` con perfil falso → «solicitud completada», captura managed **336 paquetes**, **0 EAPOL**, solo 2 beacons del AP. Conclusión: el stack Windows/RT73 **no entrega los frames del 4-way handshake de su propia asociación** a Npcap; el auto-gatillo no produce material aquí. No se simula éxito: el conversor devuelve «No se encontró un M1+M2 EAPOL válido».
+- RF devuelta a managed; NSIS reinstalado; veredicto registrado en `spec/02 E0-24`. Siguiente vía fiable: cliente real conectado al AP + deauth (TX ya verificado).
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

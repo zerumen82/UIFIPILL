@@ -278,6 +278,14 @@ fn frame_has_eapol(wifi: &[u8], target: &[u8; 6]) -> bool {
     wifi.get(24..).map(|b| b.windows(2).any(|w| w == [0x88, 0x8e])).unwrap_or(false)
 }
 
+/// EAPOL en ethernet (DLT 1): ethertype 0x888E a partir del byte 12.
+/// Se usa en el auto-gatillo (E0-24): el RT73 se asocia en managed y el
+/// EAPOL M1/M2 viaja como trama ethernet, no 802.11+radiotap.
+fn frame_has_eapol_eth(frame: &[u8], target: &[u8; 6]) -> bool {
+    if frame.len() < 14 || frame[12] != 0x88 || frame[13] != 0x8e { return false; }
+    frame.get(0..6) == Some(target) || frame.get(6..12) == Some(target)
+}
+
 fn parse_bssid(s: &str) -> Option<[u8; 6]> {
     let p: Vec<&str> = s.split([':', '-']).collect();
     if p.len() != 6 { return None; }
@@ -295,6 +303,7 @@ pub async fn capture_until_eapol(
     iface_guid: String,
     bssid: String,
     duration_secs: Option<u64>,
+    raw: Option<bool>,
 ) -> EapolCaptureResult {
     let fail = |m: String| EapolCaptureResult { success: false, output_file: String::new(), packets: 0, eapol: false, message: m };
     let target = match parse_bssid(&bssid) { Some(b) => b, None => return fail("BSSID inválido".into()) };
@@ -307,7 +316,12 @@ pub async fn capture_until_eapol(
         } else { s.trim_start_matches("NPF_").to_string() }
     };
     if guid.is_empty() { return fail("GUID de interfaz vacío.".into()); }
-    let dev = format!(r"\Device\NPF_WIFI_{{{}}}", guid);
+    let is_raw = raw.unwrap_or(true);
+    let dev = if is_raw {
+        format!(r"\Device\NPF_WIFI_{{{}}}", guid)
+    } else {
+        format!(r"\Device\NPF_{{{}}}", guid)
+    };
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs()).unwrap_or(0);
     let out = format!("npcap_watch_{}.pcap", ts);
@@ -320,7 +334,10 @@ pub async fn capture_until_eapol(
             return fail(format!("No se pudo abrir {}: {}", dev, CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()));
         }
         let dlt = (w.datalink)(handle);
-        if dlt == 1 { (w.close)(handle); return fail("Adaptador NO está en modo monitor (DLT 1).".into()); }
+        if dlt == 1 && is_raw {
+            (w.close)(handle);
+            return fail("Adaptador NO está en modo monitor (DLT 1).".into());
+        }
         let out_c = match CString::new(out.clone()) {
             Ok(c) => c,
             Err(_) => { (w.close)(handle); return fail("Ruta de salida inválida.".into()); }
@@ -349,7 +366,8 @@ pub async fn capture_until_eapol(
                     } else { bytes };
                     (w.dump)(dumper, hdr as *const PcapPkthdr, data);
                     pkts += 1;
-                    if !eapol && frame_has_eapol(wifi, &target) {
+                    let hit = if dlt == 1 { frame_has_eapol_eth(wifi, &target) } else { frame_has_eapol(wifi, &target) };
+                    if !eapol && hit {
                         eapol = true;
                         let _ = app.emit("eapol-detected", serde_json::json!({
                             "bssid": bssid.to_uppercase(), "output_file": out, "packets": pkts

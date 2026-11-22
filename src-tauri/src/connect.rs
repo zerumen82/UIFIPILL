@@ -2,6 +2,7 @@
 // Windows no acepta SSID+clave por CLI directa: se genera un perfil XML
 // temporal, se importa con `netsh wlan add profile` y se conecta con
 // `netsh wlan connect`. 100% nativo, sin inyección ni monitor mode.
+use serde::Serialize;
 use tauri::{command, AppHandle};
 use tauri_plugin_shell::ShellExt;
 use crate::commands::CmdResponse;
@@ -115,6 +116,92 @@ pub async fn wifi_connect(app: AppHandle, ssid: String, password: String) -> Cmd
         ),
         stderr: String::new(),
         exit_code: Some(if ok { 0 } else { 1 }),
+    }
+}
+
+// ── E0-24 fase A: auto-gatillo M1/M2 con la ÚNICA radio WiFi (RT73) ─────────
+#[derive(Debug, Clone, Serialize)]
+pub struct ProbeResult {
+    pub success: bool,
+    pub output_file: String,
+    pub eapol: bool,
+    pub packets: u64,
+    pub message: String,
+}
+
+/// Intenta asociarse con una clave falsa para provocar el 4-way handshake de un
+/// AP SIN clientes, capturando EAPOL en la propia interfaz managed (DLT 1).
+/// El perfil es temporal (nombre único) y se borra siempre al terminar.
+#[command]
+pub async fn wifi_probe_trigger(
+    app: AppHandle,
+    ssid: String,
+    bssid: String,
+    channel: Option<u8>,
+    duration_secs: Option<u64>,
+) -> ProbeResult {
+    let fail = |m: String| ProbeResult { success: false, output_file: String::new(), eapol: false, packets: 0, message: m };
+    let ssid = ssid.trim().to_string();
+    if ssid.is_empty() { return fail("SSID requerido".into()); }
+    let _ = channel; // el canal lo elige el AP; el monitor ya no se usa aquí
+
+    let rep = crate::wifi_adapter::detect_adapters().await;
+    let ad = rep.adapters.iter().find(|a| !a.guid.is_empty())
+        .ok_or_else(|| "sin adaptador WiFi".to_string());
+    let guid = match ad { Ok(a) => a.guid.clone(), Err(e) => return fail(e) };
+
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 + d.as_secs()).unwrap_or(12345);
+    let profile = format!("uifipill_probe_{seed:x}");
+    let wrong_pass = format!("WrongPass{:08x}", seed & 0xffff_ffff);
+    let xml = format!(
+        "<?xml version=\"1.0\"?>\n\
+         <WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">\n\
+         \x20   <name>{p}</name>\n\
+         \x20   <SSIDConfig><SSID><name>{s}</name></SSID></SSIDConfig>\n\
+         \x20   <connectionType>ESS</connectionType><connectionMode>manual</connectionMode>\n\
+         \x20   <MSM><security><authEncryption>\n\
+         \x20       <authentication>WPA2PSK</authentication><encryption>AES</encryption><useOneX>false</useOneX>\n\
+         \x20   </authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected>\n\
+         \x20       <keyMaterial>{k}</keyMaterial></sharedKey></security></MSM>\n\
+         </WLANProfile>\n",
+        p = xml_escape(&profile), s = xml_escape(&ssid), k = xml_escape(&wrong_pass)
+    );
+    let xml_path = std::env::temp_dir().join(format!("{profile}.xml"));
+    if std::fs::write(&xml_path, &xml).is_err() { return fail("No se pudo escribir el perfil temporal".into()); }
+    let xml_s = xml_path.display().to_string();
+    let (ok_add, out_add) = match netsh(&app, &["wlan", "add", "profile", &format!("filename=\"{xml_s}\""), "user=current"]).await {
+        Ok(r) => r,
+        Err(e) => { let _ = std::fs::remove_file(&xml_path); return fail(e); }
+    };
+    let _ = std::fs::remove_file(&xml_path);
+    if !ok_add { return fail(format!("netsh add profile falló: {}", out_add.trim())); }
+
+    // Arrancar la captura ANTES de conectar para no perder M1/M2.
+    let dur = duration_secs.unwrap_or(15).clamp(5, 60);
+    // spawnear: si solo creamos el future, el adaptador Npcap NO se abre hasta
+    // que se hace await, y para entonces el EAPOL de la asociación ya pasó.
+    // NPF_ (DLT 1) no entrega tramas en este driver; NPF_WIFI_ sí, incluso en
+    // managed (medido: 442 paquetes durante el intento de asociación).
+    let cap_handle = tokio::spawn(crate::capture::capture_until_eapol(
+        app.clone(), guid.clone(), bssid.clone(), Some(dur), Some(true)));
+    let (ok_con, out_con) = match netsh(&app, &["wlan", "connect", &format!("name={profile}")]).await {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+    let cap = cap_handle.await.unwrap_or_else(|e| crate::capture::EapolCaptureResult {
+        success: false, output_file: String::new(), packets: 0, eapol: false,
+        message: format!("join error: {e}"),
+    });
+    let _ = netsh(&app, &["wlan", "delete", "profile", &format!("name=\"{profile}\"")]).await;
+    let _ = netsh(&app, &["wlan", "disconnect"]).await;
+
+    ProbeResult {
+        success: cap.success,
+        output_file: cap.output_file,
+        eapol: cap.eapol,
+        packets: cap.packets,
+        message: format!("conectar={ok_con} · {}\n{}", out_con.trim(), cap.message),
     }
 }
 

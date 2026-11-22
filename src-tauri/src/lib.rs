@@ -14,6 +14,7 @@ mod pcap_convert;
 mod pmf;
 mod dictionary;
 mod ia_memory;
+mod eapol_convert;
 mod wpa3;
 mod wsl;
 mod usb_raw;
@@ -96,6 +97,7 @@ pub fn run() {
             ia_memory::ia_memory_add,
             ia_memory::ia_memory_list,
             ia_memory::ia_memory_clear,
+            eapol_convert::convert_ethernet_eapol,
             // perfilador de objetivo (solo lectura)
             profiler::profile_target,
             // estrategia de crack (hashcat -m 22000, corre en Windows)
@@ -116,6 +118,7 @@ pub fn run() {
             eviltwin::verify_candidate,
             // Conexión a la red atacada (lab): perfil netsh + keygen Comtrend
             connect::wifi_connect,
+            connect::wifi_probe_trigger,
             connect::wifi_disconnect,
             keygen::keygen_detect,
             keygen::keygen_run,

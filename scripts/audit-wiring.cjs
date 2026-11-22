@@ -173,6 +173,10 @@ if (!/generate_dictionary/.test(lib) || !/generate_dictionary/.test(iaSrc) || !/
 if (!/ia_memory_list/.test(lib) || !/iaMemoryContext/.test(iaSrc) || !/iaMemoryContext/.test(appSrc)) {
   console.error('REGRESSION: falta la memoria local de la IA inyectada en el prompt (E0-23).'); bad++;
 }
+// E0-24: auto-gatillo M1/M2
+if (!/wifi_probe_trigger/.test(lib) || !/convert_ethernet_eapol/.test(lib) || !/iaTriggerHandshake/.test(appSrc)) {
+  console.error('REGRESSION: falta el auto-gatillo M1/M2 o su conversor (E0-24).'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }
