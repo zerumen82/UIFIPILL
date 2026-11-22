@@ -2658,6 +2658,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **Fix**: `tauri.conf` resources += `tools/OpenCL/*`, `tools/modules/*`, `tools/charsets/*`, `hashcat.exe/.bin/.hcstat2`, `rules/*`, `masks/*`. `crack.rs` y `crack_plan.rs` lanzan hashcat con **ruta absoluta** y `current_dir(tools/)` (también en `crack_backend_check` y `hashcat_major`). `crack_custom` añade `--potfile-disable` para que un hash ya conocido no se omita sin escribir `.cracked`, y lee la contraseña **del fichero `.cracked`** (evidencia real), no de stdout.
 - **Verificación (evidencia real)**: `hashcat -I` desde el instalado detecta `OpenCL 3.0 CUDA 13.5.49`, `NVIDIA GeForce RTX 3060 Ti, 8191 MB, 38MCU` (aviso CUDA SDK → fallback OpenCL, inocuo). `crack_backend_check` → `ready:true, opencl:true`. Generé un `.22000` PMKID sintético con contraseña conocida (`labpass123`) y wordlist de 2 entradas: `crack_custom` → `success:true, PASSWORD: labpass123` y `.cracked` escrito con la línea completa. `cargo test --lib` 42 passed / 0 failed / 8 ignored; lint verdes; NSIS reinstalado exit 0. D-07 queda abierta SOLO para PCFG (hashcat v8+).
 
+### SESIÓN 2026-11-22 (cont. 13) — COMMIT/PUSH + BARRIDO PMF/STAS
+- **COMMIT + PUSH (petición explícita del usuario)**: `c71b30f` «fix: UI/IA y pipeline E0-20/E0-22/E0-23 (v1.0.13)» → `origin/master` (`43f8385..c71b30f`), 27 ficheros, +1817/-118. Incluye los 4 ficheros fuente nuevos (`pmf.rs`, `dictionary.rs`, `ia_memory.rs`, `rt3070_chan_preflight.rs`). **Fuera del commit** (decisión deliberada): scripts `.cjs` de diagnóstico, `*.bak`, `memory_backup.txt`, `test64.html` y `tools/` (con rockyou de 140 MB y binarios).
+- **E0-21 (continuación)**: barrido PMF de los **14 canales** (5 s/canal) → 9 APs con RSN, **0 con MFPR=1**; único con PMF opcional: `MIWIFI_APUM` (88:0F:A2:49:39:A4, CH11, MFPC=1/MFPR=0). No hay objetivo con el que probar enforcement.
+- **Barrido pasivo de STAs** (14 canales, 5 s/canal, BSSID+addr2): **0 clientes detectados** en ningún AP. Sin clientes no hay handshake que capturar aunque el TX funcione. Necesitamos que el usuario indique un AP propio con clientes activos (o conecte un cliente mientras atacamos). Antena devuelta a managed.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
