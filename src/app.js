@@ -794,6 +794,39 @@ function rowsHtml(nets) {
   `).join('');
 }
 
+// Devolver la radio a managed al terminar un ataque (si quedó en monitor).
+async function restoreRadioAfterAttack() {
+  try {
+    const rep = await window.__invoke('detect_adapters');
+    const ad = ((rep && rep.adapters) || []).find(a => a.guid);
+    if (!ad) return;
+    const st = await window.__invoke('monitor_status', { ifaceGuid: ad.guid });
+    if (st && /monitor/i.test(st.mode || '')) {
+      await window.__invoke('restore_managed', { ifaceGuid: ad.guid });
+      log('[radio] adaptador devuelto a managed tras el ataque.', 'info');
+    }
+  } catch (e) { /* no bloquear el cierre del ataque */ }
+}
+
+// Si un ataque dejó la radio en monitor, netsh ve 0 redes. Recuperar antes
+// de culpar a la señal o de lanzar el scan USB crudo (RX sorda del RT3070).
+async function recoverScanIfMonitor() {
+  try {
+    const rep = await window.__invoke('detect_adapters');
+    const ad = ((rep && rep.adapters) || []).find(a => a.guid);
+    if (!ad) return null;
+    const st = await window.__invoke('monitor_status', { ifaceGuid: ad.guid });
+    if (!st || !/monitor/i.test(st.mode || '')) return null;
+    log('[scan] adaptador en modo monitor: restaurando managed y reescaneando…', 'warn');
+    await window.__invoke('restore_managed', { ifaceGuid: ad.guid });
+    await new Promise(r => setTimeout(r, 2500));
+    const retry = await window.__invoke('scan_wifi');
+    const nets = (retry && retry.networks) || [];
+    if (nets.length) log('[scan] recuperado: ' + nets.length + ' redes tras restore_managed.', 'ok');
+    return nets.length ? nets : null;
+  } catch (e) { return null; }
+}
+
 // ── Scan handler ──────────────────────────────────────────────────────────
 window.doScan = async function () {
   const btn = $('scanBtn');
@@ -806,8 +839,13 @@ window.doScan = async function () {
   const t0 = performance.now();
 
   try {
-    const result = await window.__invoke('scan_wifi');
+    let result = await window.__invoke('scan_wifi');
     const ms = Math.round(performance.now() - t0);
+
+    if (result?.error || !(result?.networks || []).length) {
+      const recovered = await recoverScanIfMonitor();
+      if (recovered) result = { networks: recovered };
+    }
 
     if (result?.error) {
       log(`ERROR: ${result.error}`, 'error');
@@ -1193,7 +1231,7 @@ window.iaAttack = async function () {
       'Para forzar tráfico usa deauth_burst (RT3070 WinUSB) o trigger_handshake (si no hay clientes): SÍ están disponibles y funcionan. No propongas herramientas que no existan (ni wps_pin ni deauth por Npcap). No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
       'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
-      'Si no hay clientes conectados al AP, usa trigger_handshake (auto-gatillo M1/M2 con la propia radio managed) con SSID/BSSID/canal para generar material crackeable.',
+      'NO uses trigger_handshake en este equipo: medido con veredicto negativo (Windows no expone el EAPOL de su propia asociación). Para generar tráfico usa SIEMPRE deauth_burst por RT3070 WinUSB.',
     ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
     const model = valOrEmpty($('ia-model')?.value) || null;
     let plan = await window.__invoke('ollama_tools', { prompt, model });
@@ -1203,7 +1241,10 @@ window.iaAttack = async function () {
     const hasAction = () => steps.some(s => ACTION_TOOLS.includes(String((s && s.name) || '')));
     // Sin material hace falta UNA herramienta que GENERE tráfico (deauth o
     // gatillo). "activar monitor + capturar" por sí solos no producen EAPOL.
-    const hasForced = () => steps.some(s => ['deauth_burst', 'trigger_handshake'].includes(String((s && s.name) || '')));
+    // trigger_handshake NO cuenta: veredicto negativo medido en este HW
+    // (Windows no expone el EAPOL de su propia asociación). Solo deauth_burst
+    // genera tráfico útil aquí.
+    const hasForced = () => steps.some(s => String((s && s.name) || '') === 'deauth_burst');
     // Plan mínimo obligatorio: si el modelo se queda corto o solo propone
     // consultas/capturas, completar YA (sin otro viaje a Ollama) con
     // HERRAMIENTAS IA (nunca el pipeline determinista). Se anota en el log.
@@ -1337,6 +1378,7 @@ window.iaAttack = async function () {
     if (currentAttackId === 'ia_attack' || currentAttackId === 'crack_plan') currentAttackId = null;
     setAttackRunning(false);
     showProgress(false);
+    await restoreRadioAfterAttack();
     log('Modo IA finalizado.', 'warn');
   }
 };
@@ -2530,6 +2572,14 @@ window.simpleAttack = async function () {
             await window.iaConfirm('IA: activar monitor (iface ' + natGuid + ', canal ' + (ch || 'auto') + ') antes de capturar.');
 const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channel: ch || null });
             log(`[monitor] ${m && (m.message || JSON.stringify(m))}`, m && m.success ? 'ok' : 'warn');
+            // activate_monitor deja el canal cacheado en CH1: fijarlo de verdad
+            // antes de la captura, o se captura 60s en el canal equivocado.
+            if (m && m.success && ch) {
+              try {
+                const sc = await window.__invoke('set_monitor_channel', { ifaceGuid: natGuid, channel: ch });
+                log('[monitor] fijar canal CH' + ch + ': ' + ((sc && sc.message) || 'sin confirmación'), (sc && sc.success) ? 'ok' : 'warn');
+              } catch (e) { log('[monitor] set_monitor_channel: ' + e, 'warn'); }
+            }
             if (!(m && m.success) && !ad.monitor_active) {
               log('[monitor] No se confirmó monitor; se intentará captura si el adaptador ya estaba listo.', 'warn');
             }
@@ -2644,6 +2694,7 @@ const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '
     setAttackRunning(false);
     showProgress(false);
     updateProgress(cracked ? 100 : 0, cracked ? 'Clave encontrada' : (stopped ? 'Detenido' : 'Fin'));
+    await restoreRadioAfterAttack();
     log(cracked ? '✅ Ataque finalizado: clave encontrada (ver logs/.cracked).' : (stopped ? '⏹ Ataque detenido.' : 'Ataque finalizado. Revisa los logs: captura/hash/candidatas determinan el resultado.'), cracked ? 'ok' : 'warn');
   }
 };

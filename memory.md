@@ -2696,6 +2696,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix en `app.js`: (1) prompt actualizado — usar `deauth_burst`/`trigger_handshake` para generar tráfico; (2) `hasForced()` exige una herramienta generadora de tráfico cuando no hay material; si falta, se añade al plan mínimo con las demás; (3) se elimina el reintento a Ollama (ahorro ~1 min) y se completa el plan de inmediato; (4) `set_monitor_channel` se llama **tras activate_monitor** y **antes de capture_packets** con el canal del objetivo.
 - Verificado CDP (ollama_tools forzado): plan de 3 informativos → «orquestador añade 4 pasos» → `profile_target`, `deauth_burst` (BSSID/CH4 reales), `inspect_hash`, `crack_hash`. Con plan de `activate_monitor`+`capture_packets`+scan → se añade deauth y se ejecutan las llamadas de fijación de canal. Lint/NSIS verdes; RF sin cambios; app relanzada sin stubs.
 
+### SESIÓN 2026-11-23 (cont. 21) — RADIO QUEDABA EN MONITOR TRAS LOS ATAQUES
+- Log del usuario: tras un ataque, `scan_wifi` volvió a ver 0 redes y cayó al fallback USB crudo. Causa repetida: los flujos terminaban sin devolver la radio a managed (`activate_monitor` queda activo), y el prompt/plan del Modo IA eligió `trigger_handshake` (veredicto negativo) en vez de `deauth_burst`.
+- Fix en `app.js`: (1) `restoreRadioAfterAttack()` en el `finally` de `simpleAttack` e `iaAttack` — si `monitor_status` dice monitor, llama a `restore_managed` y lo anota; (2) `recoverScanIfMonitor()` en `doScan` — si netsh da error/0 redes y la radio está en monitor, restaura, espera 2,5 s y reescanea antes de intentar USB crudo; (3) `hasForced()` solo cuenta `deauth_burst` (trigger_handshake NO cuenta) y el prompt dice explícitamente que no lo use en este HW; (4) `set_monitor_channel` también en el flujo determinista tras `activate_monitor`.
+- Verificado CDP: al arrancar la app instalada, `monitor_active=false`, `mode=managed`, `scan_wifi` → **6 redes** (antes 0). Arnés con plan que proponía solo `trigger_handshake` → orquestador añadió `profile_target`/`deauth_burst`/`inspect_hash`/`crack_hash`. Lint/NSIS verdes; app relanzada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
