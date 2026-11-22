@@ -1299,6 +1299,17 @@ window.iaAttack = async function () {
       if (name === 'convert_pcap' && ctxPaths.pcap) args.pcap_path = ctxPaths.pcap;
       if (name === 'inspect_hash' && ctxPaths.hash) args.hash_path = ctxPaths.hash;
       if (name === 'crack_hash' && ctxPaths.hash) args.hash_file = ctxPaths.hash;
+      // Si el ataque no generó material, no ejecutar pasos con rutas de ejemplo.
+      if ((name === 'inspect_hash' || name === 'crack_hash') && !ctxPaths.hash &&
+          /path\/to|placeholder|SAMPLE/i.test(String(args.hash_path || args.hash_file || ''))) {
+        log(`[IA] Paso ${i + 1}/${total} omitido (${name}): no hay .22000 real; el ataque no generó material.`, 'warn');
+        continue;
+      }
+      // El auto-gatillo tiene veredicto negativo medido en este HW: omitirlo.
+      if (name === 'trigger_handshake') {
+        log(`[IA] Paso ${i + 1}/${total} omitido (trigger_handshake): sin EAPOL en este HW; se usa deauth_burst.`, 'warn');
+        continue;
+      }
       const v = window.iaValidateTool(name, args);
       if (!v.ok) { log(`[IA] Paso ${i + 1}/${total} rechazado (${name}): ${v.error}`, 'warn'); failCount++; continue; }
       let confirmMsg = `Paso ${i + 1}/${total}: ${name}\nArgumentos: ${JSON.stringify(args)}`;

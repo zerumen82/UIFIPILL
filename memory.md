@@ -2705,6 +2705,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - El usuario pidió dejar un cazador de handshake con parada por EAPOL **o por pulsar Detener**. Script CDP temporal `%TEMP%\uifipill-hunt.cjs` (5 ciclos máx, `window._simpleStop` como señal de Detener). Resultado: **2 ciclos** con preflight CH4 OK, watcher 972 y 1338 paquetes, **0 EAPOL**; el usuario pulsó Detener → `FIN DETENIDO POR USUARIO`. Vuelve a confirmarse: sin cliente asociado no hay material, aunque TX/channel funcionen.
 - Petición del usuario: bump de versión + recompilar instalable + commit + push. Versión **1.0.15** en los 7 sitios (package.json/lock ×2, Cargo.toml/lock, tauri.conf, 2 badges de index.html) y `AGENTS.md`. Instalable recompilado como `UIFIPILL_1.0.15_x64-setup.exe`. Tras terminar el cazador, el usuario pidió reinstalar: NSIS `/S` exit 0, `ProductVersion=1.0.15` verificado en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe`, app relanzada y `netsh` viendo 8 redes.
 
+### SESIÓN 2026-11-23 (cont. 23) — PLAN IA SIN PASOS FALSOS
+- Log del usuario: plan de 7 pasos con `trigger_handshake` (veredicto negativo), `inspect_hash`/`crack_hash` sobre `/path/to/hash.22000` → errores de ruta, y deauth correcto pero sin EAPOL. El veredicto decía 4 correctos / 3 fallidos por pasos que nunca debieron ejecutarse.
+- Fix: (1) `trigger_handshake` **retirado de la lista de herramientas que se ofrecen a Ollama** (sigue accesible desde consola, pero el modelo ya no lo propone); (2) `pathOk` rechaza rutas de ejemplo (`/path/to/`, `placeholder`, `SAMPLE`); (3) el orquestador omite `inspect_hash`/`crack_hash` cuando no hay `.22000` real y omite `trigger_handshake` con mensaje claro, sin contarlos como fallos. Verificado CDP con plan que contenía esos 4 pasos: 3 omitidos con motivo, `deauth_burst` ejecutado, veredicto 1 correcto / 0 fallidos.
+- NSIS 1.0.15 recompilado/reinstalado; lint verdes. Límite insalvable: sin cliente asociado al AP no hay EAPOL ni PMKID; el TX y el crack (OpenCL) están verificados.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

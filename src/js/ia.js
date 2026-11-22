@@ -138,7 +138,9 @@ window.iaValidateTool = function (name, args) {
   const reBssid = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
   const reGuid = /^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$/;
   const pathOk = (v) => typeof v === 'string' && v.length > 0 && v.length < 600 &&
-    /\.(pcap|pcapng|22000)$/i.test(v) && !/[\x00-\x1f;|`]/.test(v) && !/\.\.[\\/]/.test(v);
+    /\.(pcap|pcapng|22000)$/i.test(v) && !/[\x00-\x1f;|`]/.test(v) && !/\.\.[\\/]/.test(v) &&
+    // El modelo rellena rutas de ejemplo: NO son archivos reales.
+    !/(^|[/\\])path(to)?([/\\]|$)|placeholder|\/path\/to|SAMPLE/i.test(v);
   if (name === 'generate_dictionary') {
     if (!String(a.ssid || '').trim() && !String(a.bssid || '').trim()) return { ok: false, error: 'SSID o BSSID requerido' };
     if (String(a.ssid || '').length > 64 || String(a.bssid || '').length > 32 || String(a.hints || '').length > 300) return { ok: false, error: 'Parámetro demasiado largo' };
