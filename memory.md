@@ -2687,6 +2687,10 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix aprobado: si tras el reintento el plan sigue corto (<3 pasos o sin herramienta de acción), el orquestador **añade pasos mínimos con herramientas IA** (`profile_target`/`deauth_burst`/`inspect_hash`/`crack_hash`; con material previo solo `inspect_hash`/`crack_hash`). Se anota en el log: «Plan insuficiente tras el reintento: orquestador añade N paso(s) mínimo(s) con herramientas IA». **No se vuelve al pipeline determinista**. `ACTION_TOOLS` incluye ahora `deauth_burst`/`trigger_handshake`.
 - Verificado CDP con `ollama_tools` forzado a 1 paso: retry → «orquestador añade 3 pasos» → plan de 4 herramientas → ejecutadas `profile_target`, `deauth_burst` (args reales BSSID/CH4), `inspect_hash`, `crack_hash`. Guardia actualizado en `audit-wiring.cjs`; lint/NSIS verdes. Antena devuelta a managed; app relanzada sin stubs.
 
+### SESIÓN 2026-11-22 (cont. 19) — BUMP DE VERSIÓN A 1.0.14
+- Petición del usuario: «sube el número de versión». Actualizado en los 7 sitios de build: `package.json`, `package-lock.json` (2 entradas), `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json` y los 2 badges de `index.html`. `AGENTS.md` apunta ahora a 1.0.14 con todo el trabajo de la sesión commiteado.
+- NSIS recompilado como `UIFIPILL_1.0.14_x64-setup.exe`, reinstalado `/S`; verificado `ProductVersion=1.0.14` en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe` y badge de la UI. Sin cambios funcionales respecto a 1.0.13.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
