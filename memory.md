@@ -2663,6 +2663,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **E0-21 (continuación)**: barrido PMF de los **14 canales** (5 s/canal) → 9 APs con RSN, **0 con MFPR=1**; único con PMF opcional: `MIWIFI_APUM` (88:0F:A2:49:39:A4, CH11, MFPC=1/MFPR=0). No hay objetivo con el que probar enforcement.
 - **Barrido pasivo de STAs** (14 canales, 5 s/canal, BSSID+addr2): **0 clientes detectados** en ningún AP. Sin clientes no hay handshake que capturar aunque el TX funcione. Necesitamos que el usuario indique un AP propio con clientes activos (o conecte un cliente mientras atacamos). Antena devuelta a managed.
 
+### SESIÓN 2026-11-22 (cont. 14) — ATAQUE REAL A LA FORY 3H (AUTORIZADO POR EL USUARIO)
+- El usuario autorizó explícitamente atacar `La Fory 3H` (`D8:A7:56:31:BF:13`, CH6) para ver si se podía conseguir la clave. Ejecutado con app instalada + CDP: monitor RT73 en CH6, `usb_raw_tx_preflight` → `ok:true`, 4 pasadas × 2 frames con **TXDONE success=true** cada una, watcher → **273 paquetes en 45 s, 0 EAPOL**, sin `.22000`.
+- Análisis del pcap: `parse_pmf` para ese BSSID → **33 beacons**, `MFPC=false MFPR=false` (AP presente en CH6 y sin PMF); conteo de STAs por addr3/addr1 + addr2 → **0 clientes**. Conclusión: el TX funciona y el AP está ahí, pero no hay ningún cliente asociado visible al que forzar la reconexión; sin EAPOL no hay handshake. No es fallo de código.
+- RF devuelta a managed. Commit/push de esta bitácora: ver `git log`.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
