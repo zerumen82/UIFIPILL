@@ -2703,7 +2703,7 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 
 ### SESIÓN 2026-11-23 (cont. 22) — CAZADOR EN SEGUNDO PLANO + VERSIÓN 1.0.15
 - El usuario pidió dejar un cazador de handshake con parada por EAPOL **o por pulsar Detener**. Script CDP temporal `%TEMP%\uifipill-hunt.cjs` (5 ciclos máx, `window._simpleStop` como señal de Detener). Resultado: **2 ciclos** con preflight CH4 OK, watcher 972 y 1338 paquetes, **0 EAPOL**; el usuario pulsó Detener → `FIN DETENIDO POR USUARIO`. Vuelve a confirmarse: sin cliente asociado no hay material, aunque TX/channel funcionen.
-- Petición del usuario: bump de versión + recompilar instalable + commit + push. Versión **1.0.15** en los 7 sitios (package.json/lock ×2, Cargo.toml/lock, tauri.conf, 2 badges de index.html) y `AGENTS.md`. Instalable recompilado como `UIFIPILL_1.0.15_x64-setup.exe`. **No se reinstaló la app** para no interrumpir el cazador (ya terminado); el exe en uso sigue siendo 1.0.14 hasta que se instale el nuevo.
+- Petición del usuario: bump de versión + recompilar instalable + commit + push. Versión **1.0.15** en los 7 sitios (package.json/lock ×2, Cargo.toml/lock, tauri.conf, 2 badges de index.html) y `AGENTS.md`. Instalable recompilado como `UIFIPILL_1.0.15_x64-setup.exe`. Tras terminar el cazador, el usuario pidió reinstalar: NSIS `/S` exit 0, `ProductVersion=1.0.15` verificado en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe`, app relanzada y `netsh` viendo 8 redes.
 
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
