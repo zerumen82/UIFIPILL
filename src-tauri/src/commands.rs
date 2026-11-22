@@ -1743,17 +1743,22 @@ pub async fn ollama_tools(prompt: String, model: Option<String>) -> OllamaToolsR
     };
     let model = model.unwrap_or_else(|| "hermes3:8b".to_string());
 
-    // Herramientas disponibles para la IA (mapean a comandos del orquestador).
+    // Lista blanca de herramientas del Modo IA (E0-18). Solo pasos del pipeline
+    // que pueden ejecutarse de verdad en Windows. NO incluir `deauth` ni
+    // `wps_pin`: Npcap no inyecta (err 31/203, medido) y la IA perdería tiempo.
     let tools = serde_json::json!([
         {"type":"function","function":{"name":"scan_networks","description":"Escanea redes WiFi cercanas","parameters":{"type":"object","properties":{}}}},
-        {"type":"function","function":{"name":"activate_monitor","description":"Activa modo monitor en la antena","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"channel":{"type":"integer"}},"required":["iface_guid"]}}},
-        {"type":"function","function":{"name":"capture_handshake","description":"Captura handshake/EAPOL/PMKID","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"duration_seconds":{"type":"integer"},"bssid":{"type":"string"}},"required":["iface_guid"]}}},
-        {"type":"function","function":{"name":"convert_pcap","description":"Convierte pcap a hash .22000","parameters":{"type":"object","properties":{"pcap_path":{"type":"string"}},"required":["pcap_path"]}}},
-        {"type":"function","function":{"name":"crack_hash","description":"Lanza plan de crack sobre un .22000","parameters":{"type":"object","properties":{"hash_file":{"type":"string"},"ssid":{"type":"string"},"bssid":{"type":"string"}},"required":["hash_file"]}}},
+        {"type":"function","function":{"name":"profile_target","description":"Perfilado informativo del BSSID objetivo","parameters":{"type":"object","properties":{"bssid":{"type":"string"}},"required":["bssid"]}}},
         {"type":"function","function":{"name":"keygen_detect","description":"Detecta keygen de fabricante (Thomson/Comtrend)","parameters":{"type":"object","properties":{"ssid":{"type":"string"}},"required":["ssid"]}}},
-        {"type":"function","function":{"name":"deauth","description":"Envía deauth para forzar handshake","parameters":{"type":"object","properties":{"bssid":{"type":"string"},"count":{"type":"integer"}},"required":["bssid"]}}},
-        {"type":"function","function":{"name":"wash_scan","description":"Escanea WPS (wash) en un canal","parameters":{"type":"object","properties":{"iface":{"type":"string"},"channel":{"type":"integer"}},"required":["iface"]}}},
-        {"type":"function","function":{"name":"wps_pin","description":"Prueba PIN WPS (reaver)","parameters":{"type":"object","properties":{"bssid":{"type":"string"},"iface":{"type":"string"},"channel":{"type":"integer"}},"required":["bssid","iface"]}}}
+        {"type":"function","function":{"name":"detect_adapters","description":"Lista adaptadores WiFi y su GUID para Npcap","parameters":{"type":"object","properties":{}}}},
+        {"type":"function","function":{"name":"activate_monitor","description":"Activa modo monitor en la antena","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"channel":{"type":"integer"}},"required":["iface_guid"]}}},
+        {"type":"function","function":{"name":"capture_packets","description":"Captura paquetes 802.11 en pasivo (pcap) durante duration_seconds","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"},"duration_seconds":{"type":"integer"}},"required":["iface_guid"]}}},
+        {"type":"function","function":{"name":"convert_pcap","description":"Convierte un pcap/pcapng a hash .22000","parameters":{"type":"object","properties":{"pcap_path":{"type":"string"}},"required":["pcap_path"]}}},
+        {"type":"function","function":{"name":"inspect_hash","description":"Inspecciona un .22000 (PMKID/handshake/ESSID)","parameters":{"type":"object","properties":{"hash_path":{"type":"string"}},"required":["hash_path"]}}},
+        {"type":"function","function":{"name":"crack_hash","description":"Lanza el plan de crack sobre un .22000 real","parameters":{"type":"object","properties":{"hash_file":{"type":"string"},"ssid":{"type":"string"},"bssid":{"type":"string"}},"required":["hash_file"]}}},
+        {"type":"function","function":{"name":"restore_managed","description":"Devuelve la antena a modo managed al terminar","parameters":{"type":"object","properties":{"iface_guid":{"type":"string"}},"required":["iface_guid"]}}},
+        {"type":"function","function":{"name":"deauth_burst","description":"Rafaga de deauth por USB crudo (RT3070) contra el BSSID, con preflight de canal y watcher EAPOL","parameters":{"type":"object","properties":{"bssid":{"type":"string"},"channel":{"type":"integer"},"target_mac":{"type":"string"}},"required":["bssid","channel"]}}},
+        {"type":"function","function":{"name":"generate_dictionary","description":"Genera un diccionario real de candidatos del objetivo en tools/wordlists/ y devuelve ruta y numero de lineas","parameters":{"type":"object","properties":{"ssid":{"type":"string"},"bssid":{"type":"string"},"hints":{"type":"string"}},"required":["ssid"]}}}
     ]);
 
     // Hermes XML: inyectar tools en system prompt (fallback para modelos sin native tool calling).

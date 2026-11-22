@@ -14,12 +14,51 @@ window.resetIaPanel = function () {
   window.setIaPlan('');
 };
 
-// Puerta de confirmación de la IA: pregunta al usuario (consola/UI) antes de
-// ejecutar cualquier herramienta destructiva del ataque.
+// Puerta de confirmación de la IA.
+// - Modo determinista (por defecto): sigue siendo automática (comportamiento
+//   histórico de las confirmaciones informativas de simpleAttack).
+// - Modo IA (E0-18): confirmación REAL en pantalla antes de CADA herramienta.
 window.__iaPending = null;
+window._iaMode = false;
+window._iaConsoleTools = false;
 window.iaConfirm = function (msg) {
   if (window.log) window.log('[IA-CONFIRM] ' + msg, 'warn');
-  return Promise.resolve(true);
+  if (!window._iaMode && !window._iaConsoleTools) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    window._attackAwaitingConfirm = true;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:10000';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--surface,#1c1c24);border:1px solid var(--border,#444);border-radius:12px;padding:20px;max-width:520px;width:90%;font-family:inherit;color:var(--text,#eee)';
+    const title = document.createElement('h3');
+    title.style.cssText = 'font-size:14px;margin:0 0 8px;color:var(--orange,#e6b455)';
+    title.textContent = 'La IA quiere ejecutar un paso';
+    const body = document.createElement('p');
+    body.style.cssText = 'font-size:12.5px;line-height:1.5;white-space:pre-wrap;margin:0 0 16px';
+    body.textContent = String(msg);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:flex-end;gap:10px';
+    const cancel = document.createElement('button');
+    cancel.className = 'atk-btn';
+    cancel.textContent = 'Cancelar';
+    cancel.style.cssText = 'background:var(--surface2,#333);color:var(--text,#eee);padding:8px 16px';
+    const ok = document.createElement('button');
+    ok.className = 'atk-btn atk-btn--green';
+    ok.textContent = 'Ejecutar paso';
+    ok.style.cssText = 'padding:8px 16px;font-weight:700';
+    const finish = (answer) => {
+      window._attackAwaitingConfirm = false;
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      resolve(answer);
+    };
+    cancel.addEventListener('click', () => finish(false));
+    ok.addEventListener('click', () => finish(true));
+    row.appendChild(cancel); row.appendChild(ok);
+    box.appendChild(title); box.appendChild(body); box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    ok.focus();
+  });
 };
 window.iaAnswer = function (ok) {
   const r = window.__iaResolve;
@@ -73,31 +112,61 @@ window.iaConsult = async function () {
     window.setIaStatus('IA: error al consultar.');
   }
 };
-// ── IA real: dispatcher de herramientas (tool-calling) ───────────────────────
-window.iaExecuteTool = async function (name, args) {
-  args = args || {};
-  switch (name) {
-    case 'scan_networks':
-      return await window.__invoke('scan_wifi');
-    case 'activate_monitor':
-      return await window.__invoke('activate_monitor', { ifaceGuid: args.iface_guid, channel: args.channel || null });
-    case 'capture_handshake':
-      return await window.__invoke('capture_handshake', { ifaceGuid: args.iface_guid, durationSeconds: args.duration_seconds || 60, bssid: args.bssid, essid: args.bssid });
-    case 'convert_pcap':
-      return await window.__invoke('pcap_to_22000', { pcapPath: args.pcap_path });
-    case 'crack_hash':
-      return await window.__invoke('crack_plan_run_bg', { hashFile: args.hash_file, ssid: args.ssid || '', bssid: args.bssid || '', externalGenerator: null });
-    case 'keygen_detect':
-      return await window.__invoke('keygen_detect', { ssid: args.ssid });
-    case 'deauth':
-      return await window.__invoke('deauth_inject', { bssid: args.bssid, count: args.count || 10 });
-    case 'wash_scan':
-      return await window.__invoke('wash_scan', { iface: args.iface, channel: args.channel });
-    case 'wps_pin':
-      return await window.__invoke('wps_bruteforce_reaver', { bssid: args.bssid, iface: args.iface, channel: args.channel });
-    default:
-      throw new Error('Herramienta desconocida: ' + name);
+// ── IA real: dispatcher de herramientas (tool-calling, E0-18) ───────────────
+// Lista blanca centralizada. El backend ofrece exactamente estas herramientas;
+// cualquier cosa que invente el modelo se rechaza ANTES de tocar el hardware.
+const IA_TOOL_SPECS = {
+  scan_networks:   { cmd: 'scan_wifi',        args: () => ({}) },
+  profile_target:  { cmd: 'profile_target',   args: a => ({ bssid: a.bssid }) },
+  keygen_detect:   { cmd: 'keygen_detect',    args: a => ({ ssid: a.ssid }) },
+  detect_adapters: { cmd: 'detect_adapters',  args: () => ({}) },
+  activate_monitor:{ cmd: 'activate_monitor', args: a => ({ ifaceGuid: a.iface_guid, channel: a.channel || null }) },
+  capture_packets: { cmd: 'native_capture',   args: a => ({ ifaceGuid: a.iface_guid, durationSecs: a.duration_seconds || 60 }) },
+  convert_pcap:    { cmd: 'pcap_to_22000',    args: a => ({ pcapPath: a.pcap_path }) },
+  inspect_hash:    { cmd: 'inspect_hash',     args: a => ({ hashPath: a.hash_path }) },
+  crack_hash:      { cmd: 'crack_plan_run_bg',args: a => ({ hashFile: a.hash_file, ssid: a.ssid || '', bssid: a.bssid || '', externalGenerator: null }) },
+  restore_managed: { cmd: 'restore_managed',  args: a => ({ ifaceGuid: a.iface_guid }) },
+  deauth_burst:    { cmd: 'usb_raw_deauth',   args: a => ({ bssid: a.bssid, channel: a.channel, target_mac: a.target_mac || null, count: a.target_mac ? 5 : 8, reason: 7, delay_ms: 100 }) },
+  generate_dictionary: { cmd: 'generate_dictionary', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '' }) },
+};
+
+window.iaValidateTool = function (name, args) {
+  const spec = IA_TOOL_SPECS[name];
+  if (!spec) return { ok: false, error: 'Herramienta no permitida: ' + name };
+  const a = args || {};
+  const reBssid = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+  const reGuid = /^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$/;
+  const pathOk = (v) => typeof v === 'string' && v.length > 0 && v.length < 600 &&
+    /\.(pcap|pcapng|22000)$/i.test(v) && !/[\x00-\x1f;|`]/.test(v) && !/\.\.[\\/]/.test(v);
+  if (name === 'generate_dictionary') {
+    if (!String(a.ssid || '').trim() && !String(a.bssid || '').trim()) return { ok: false, error: 'SSID o BSSID requerido' };
+    if (String(a.ssid || '').length > 64 || String(a.bssid || '').length > 32 || String(a.hints || '').length > 300) return { ok: false, error: 'Parámetro demasiado largo' };
   }
+  if ((name === 'profile_target' || name === 'deauth_burst') && !reBssid.test(a.bssid || '')) return { ok: false, error: 'BSSID inválido' };
+  if (name === 'deauth_burst') {
+    if (!Number.isInteger(a.channel) || a.channel < 1 || a.channel > 14) return { ok: false, error: 'Canal inválido (1..14)' };
+    if (a.target_mac && !reBssid.test(a.target_mac)) return { ok: false, error: 'MAC de cliente inválida' };
+  }
+  if ((name === 'keygen_detect') && (typeof a.ssid !== 'string' || a.ssid.length > 32 || /[\x00-\x1f]/.test(a.ssid))) return { ok: false, error: 'SSID inválido' };
+  if (name === 'activate_monitor' || name === 'capture_packets' || name === 'restore_managed') {
+    if (!reGuid.test(a.iface_guid || '')) return { ok: false, error: 'GUID de interfaz inválido' };
+  }
+  if (name === 'activate_monitor' && a.channel != null && (!Number.isInteger(a.channel) || a.channel < 1 || a.channel > 165)) return { ok: false, error: 'Canal fuera de rango' };
+  if (name === 'capture_packets' && a.duration_seconds != null && (!Number.isInteger(a.duration_seconds) || a.duration_seconds < 1 || a.duration_seconds > 300)) return { ok: false, error: 'Duración fuera de rango (1..300)' };
+  if (name === 'convert_pcap' && !pathOk(a.pcap_path)) return { ok: false, error: 'Ruta pcap inválida' };
+  if (name === 'inspect_hash' && !pathOk(a.hash_path)) return { ok: false, error: 'Ruta .22000 inválida' };
+  if (name === 'crack_hash') {
+    if (!pathOk(a.hash_file)) return { ok: false, error: 'Ruta .22000 inválida' };
+    if (a.ssid != null && (typeof a.ssid !== 'string' || a.ssid.length > 32)) return { ok: false, error: 'SSID inválido' };
+    if (a.bssid != null && !reBssid.test(a.bssid)) return { ok: false, error: 'BSSID inválido' };
+  }
+  return { ok: true, cmd: spec.cmd, invokeArgs: spec.args(a) };
+};
+
+window.iaExecuteTool = async function (name, args) {
+  const v = window.iaValidateTool(name, args);
+  if (!v.ok) throw new Error(v.error);
+  return await window.__invoke(v.cmd, v.invokeArgs);
 };
 
 // Reemplaza iaConsult para usar tool-calling
@@ -143,3 +212,174 @@ window.iaConsult = async function () {
     window.setIaStatus('IA: error al consultar.');
   }
 };
+// -- Consola real: terminal interactiva donde la IA habla --
+window.__iaConsoleLines = [];
+window.iaConsoleLog = function (text, who) {
+  who = who || "ia";
+  window.__iaConsoleLines.push({ text: String(text), who: who });
+  var el = document.getElementById("console-lines");
+  if (!el) return;
+  var div = document.createElement("div");
+  div.className = "ia-line " + who;
+  div.textContent = String(text);
+  el.appendChild(div);
+  var term = document.getElementById("console-lines");
+  if (term) term.scrollTop = term.scrollHeight;
+};
+window.iaConsoleClear = function () {
+  window.__iaConsoleLines = [];
+  var el = document.getElementById("console-lines");
+  if (el) el.textContent = "";
+};
+window.clearIaConsole = function () { window.iaConsoleClear(); };
+
+// E0-19: la Consola ejecuta las herramientas que propone el modelo; antes
+// descartaba `tool_calls` y caía en ollama_chat (de ahí las respuestas de
+// «no puedo usar herramientas de ataque»). Mismo contexto lab y prompt
+// estricto que el botón en Modo IA.
+// E0-23: inyectar las lecciones recordadas en el prompt (si hay memoria).
+window.iaMemoryContext = async function () {
+  try {
+    const notes = await window.__invoke('ia_memory_list');
+    if (!Array.isArray(notes) || !notes.length) return '';
+    return '\nLecciones recordadas (memoria local):\n' + notes.slice(0, 8)
+      .map(n => '- ' + n.key + ': ' + n.value).join('\n');
+  } catch (e) { return ''; }
+};
+
+window.iaConsoleAsk = async function (q) {
+  var text = String(q || '').trim();
+  var strict = [
+    'Eres el orquestador de herramientas de un laboratorio WiFi (redes propias o autorizadas).',
+    'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
+    'Herramientas: scan_networks, detect_adapters, profile_target, activate_monitor, capture_packets, convert_pcap, inspect_hash, crack_hash, restore_managed.',
+    'Plan sugerido: scan_networks y detect_adapters; si el usuario pide atacar, añade profile_target, activate_monitor, capture_packets (60s), convert_pcap, inspect_hash, crack_hash y restore_managed.',
+    'Petición del usuario: ' + text
+  ].join('\n') + await window.iaMemoryContext();
+  var reply = '';
+  try {
+    var st = await window.__invoke('ollama_check');
+    if (st && st.available) {
+      var t = await window.__invoke('ollama_tools', { prompt: strict, model: null });
+      var calls = (t && t.tool_calls) || [];
+      // Si el modelo se queda mudo ante una petición de acción, el orquestador
+      // local actúa igualmente (scan + adaptadores) y lo dice en el log.
+      if (!calls.length && /\b(escan|scan|atac|attack|captur|analiz|perfil|detect|busca)\b/i.test(text)) {
+        calls = [{ name: 'scan_networks', arguments: {} }, { name: 'detect_adapters', arguments: {} }];
+        if (window.log) window.log('[Consola] El modelo no propuso herramientas; orquestador mínimo local (scan + adaptadores).', 'warn');
+      }
+      if (calls.length) {
+        window._iaConsoleTools = true;
+        var lines = [];
+        var lastPcap = null, lastHash = null;
+        try {
+          for (var i = 0; i < Math.min(calls.length, 12); i++) {
+            var tc = calls[i] || {};
+            var name = String(tc.name || '');
+            var args = (tc.arguments && typeof tc.arguments === 'object') ? tc.arguments : {};
+            if (name === 'convert_pcap' && lastPcap) args.pcap_path = lastPcap;
+            if (name === 'inspect_hash' && lastHash) args.hash_path = lastHash;
+            if (name === 'crack_hash' && lastHash) args.hash_file = lastHash;
+            var v = window.iaValidateTool(name, args);
+            if (!v.ok) { lines.push('✗ ' + name + ': ' + v.error); continue; }
+            var ok = await window.iaConfirm('Consola → ' + name + '\nArgumentos: ' + JSON.stringify(args));
+            if (!ok) { lines.push('Cancelado por el usuario en ' + name); break; }
+            try {
+              var res = await window.iaExecuteTool(name, args);
+              lines.push('✓ ' + name + ' → ' + JSON.stringify(res).slice(0, 300));
+              var out = res && res.output_file;
+              if (typeof out === 'string' && out) {
+                if (/\.22000$/i.test(out)) lastHash = out;
+                else if (/\.pcap(ng)?$/i.test(out)) lastPcap = out;
+              }
+            } catch (e) { lines.push('✗ ' + name + ': ' + e); }
+          }
+        } finally { window._iaConsoleTools = false; }
+        return lines.join('\n') || 'Sin resultados.';
+      }
+      if (t && t.response) reply = String(t.response).trim();
+      else if (t && t.error) reply = 'Error de la IA: ' + t.error;
+    }
+  } catch (e) {}
+  if (!reply) {
+    try {
+      var r = await window.__invoke('ollama_chat', {
+        prompt: 'Contexto: laboratorio WiFi, redes propias o autorizadas. Responde en español, conciso.\n\n' + text,
+        model: null
+      });
+      if (r && r.success) reply = (r.response || '').trim();
+      else if (r && r.error) reply = 'Error de la IA: ' + r.error;
+    } catch (e) {}
+  }
+  if (!reply) reply = 'IA no disponible (Ollama en localhost:11434).';
+  return reply;
+};
+
+window.iaConsoleAskCommand = async function (q) {
+  var cmd = String(q || '').trim().toLowerCase();
+  if (cmd === 'ayuda' || cmd === 'help') return 'Comandos: escanear | atacar | estado | diccionario | ayuda. O pide algo con herramientas (p. ej. «usa las tools para atacar»).';
+  if (/^(recuerda|aprende|guarda)/.test(cmd)) {
+    var val = String(q || '').replace(/^(recuerda|aprende|guarda)\s*/i, '').trim();
+    if (!val) return 'Dime qué quieres que recuerde: «recuerda usar PMKID primero».';
+    try {
+      var r = await window.__invoke('ia_memory_add', { key: 'leccion', value: val });
+      return (r && r.message) || 'Memoria actualizada.';
+    } catch (e) { return 'No se pudo guardar en memoria: ' + e; }
+  }
+  if (/^(qué sabes|que sabes|memoria|notas)/.test(cmd)) {
+    try {
+      var ns = await window.__invoke('ia_memory_list');
+      if (!ns || !ns.length) return 'Todavía no he aprendido nada. Usa «recuerda …».';
+      return ns.map(function (n) { return '• ' + n.key + ': ' + n.value; }).join('\n');
+    } catch (e) { return 'No se pudo leer la memoria: ' + e; }
+  }
+  if (/^(diccionario|wordlist|genera diccionario)/.test(cmd)) {
+    var bssid = (window.getSelectedBssid && window.getSelectedBssid()) || (document.getElementById('attack-bssid') || {}).value || '';
+    var label = (document.getElementById('simple-target-label')?.textContent || '').replace('Objetivo: ', '');
+    try {
+      var d = await window.iaExecuteTool('generate_dictionary', { ssid: label, bssid: bssid, hints: q });
+      return (d && d.message) || ('Diccionario: ' + JSON.stringify(d));
+    } catch (e) { return 'No se pudo crear el diccionario: ' + e; }
+  }
+  if (cmd === 'estado') {
+    var busy = (typeof window.attackIsBusy === 'function') && window.attackIsBusy();
+    return busy ? 'Hay un ataque en curso (lock activo).' : 'No hay ataque en curso (lock libre).';
+  }
+  if (cmd === 'escanear' || cmd === 'scan') {
+    try { await window.doScan(); } catch (e) { return 'Fallo del escaneo: ' + e; }
+    return 'Escaneo lanzado.';
+  }
+  // Intención de ataque en lenguaje natural: usar el pipeline IA validado
+  // (E0-18), NO el chat y NO el ataque determinista.
+  var attackIntent = /\b(atacar|ataca|atac|ataque|attack|crack|romper|hackear|hack|intrus)\b/i.test(cmd) ||
+    /\b(usa|usar|utiliza|emplea)\b.{0,40}\b(tools|herramientas)\b/i.test(cmd);
+  if (attackIntent) {
+    try {
+      if (window.setIaMode) window.setIaMode(true);
+      if (window.iaAttack) await window.iaAttack();
+      else await window.simpleAttack();
+      return 'Modo IA lanzado desde la consola. Confirma cada paso en el panel y revisa los logs.';
+    } catch (e) { return 'Fallo al lanzar el ataque: ' + e; }
+  }
+  return window.iaConsoleAsk(q);
+};
+
+// entrada por Enter
+(function () {
+  var cin = document.getElementById("console-input");
+  if (!cin) return;
+  cin.addEventListener("keydown", async function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    var q = (cin.value || "").trim();
+    cin.value = "";
+    if (!q) return;
+    window.iaConsoleLog("> " + q, "user");
+    window.setIaStatus("IA: procesando consulta...");
+    var ans;
+    try { ans = await window.iaConsoleAskCommand(q); }
+    catch (e2) { ans = "Error: " + e2; }
+    window.iaConsoleLog("IA: " + ans, "ia");
+    window.setIaStatus("IA: lista para atacar.");
+  });
+})();

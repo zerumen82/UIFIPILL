@@ -1,12 +1,16 @@
 # AGENTS.md — UIFIPILL Project
 
-> **ACTUALIZACIÓN DE ESTADO 2026-11-21 (lee esto primero):** versión **1.0.12**,
-> HEAD `db56ee5` (fix `269ae9d`), push a `origin/master` hecho. Arreglados los 3
-> bugs del botón Atacar/Auto; gatillo EAPOL y código muerto eliminados. El estado
-> operativo real, los comandos de verificación, las deudas abiertas y el checklist
-> de traspaso están en **`memory.md` §6 (TRASPASO / HANDOFF)**. El resto de este
-> archivo conserva las reglas (vigentes) y el estado histórico a 2026-10-06;
-> donde choque con §6, manda §6 + `git log`.
+> **ACTUALIZACIÓN DE ESTADO 2026-11-22 (lee esto primero):** versión de trabajo
+> **1.0.13 instalada, SIN commitear**. HEAD commiteado `db56ee5` (docs) / fix
+> `269ae9d` (1.0.12). Cambios 2026-11-22: CSP desactivada (botones inline),
+> Consola con tool-calling, Modo IA con validación/contexto/watchdog, y **E0-20**
+> (gate PMF fail-closed + read-back de canal RT3070 + ráfaga deauth real con
+> watcher EAPOL). Medido con dos dongles: TX real 8 frames con TXDONE en CH4;
+> 0 EAPOL porque el objetivo no tenía clientes. El estado operativo real, los
+> comandos de verificación, las deudas abiertas (D-07/D-08/D-09/E0-21) y el
+> checklist están en **`memory.md` §6 + sesiones 2026-11-22 (cont. 1-9)**.
+> El resto de este archivo conserva las reglas (vigentes) y el estado histórico a
+> 2026-10-06; donde choque con §6, manda §6 + `git log`.
 
 > **Reglas, objetivos, arquitectura y estado VIGENTE** (última revisión 2026-10-06).
 > La historia vive en **`memory.md`**: §1 bitácora de sesiones (2026-09-13 → 2026-10-05),

@@ -13,6 +13,7 @@ use std::ffi::{c_void, CStr, CString};
 use std::os::raw::{c_char, c_int, c_uchar};
 use std::ptr;
 use tauri::command;
+use tauri::Emitter;
 
 #[repr(C)]
 struct PcapPkthdr {
@@ -251,6 +252,139 @@ pub async fn native_capture(
             datalink_name: name.into(),
             message,
         }
+    }
+}
+
+// ── E0-20 fase 2: watcher EAPOL ────────────────────────────────────────────
+#[derive(Debug, Clone, Serialize)]
+pub struct EapolCaptureResult {
+    pub success: bool,
+    pub output_file: String,
+    pub packets: u64,
+    pub eapol: bool,
+    pub message: String,
+}
+
+/// Un frame 802.11 data contiene EAPOL si lleva LLC/SNAP con ethertype 0x888E
+/// (o el ethertype directo en A-MSDU). Filtramos por BSSID (addr3) para no
+/// reaccionar a la red del vecino.
+fn frame_has_eapol(wifi: &[u8], target: &[u8; 6]) -> bool {
+    if wifi.len() < 24 { return false; }
+    let fc = u16::from_le_bytes([wifi[0], wifi[1]]);
+    if (fc >> 2) & 0x03 != 2 { return false; } // solo data
+    if wifi.get(16..22) != Some(target) { return false; }
+    const SNAP_EAPOL: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e];
+    if wifi.windows(8).any(|w| w == SNAP_EAPOL) { return true; }
+    wifi.get(24..).map(|b| b.windows(2).any(|w| w == [0x88, 0x8e])).unwrap_or(false)
+}
+
+fn parse_bssid(s: &str) -> Option<[u8; 6]> {
+    let p: Vec<&str> = s.split([':', '-']).collect();
+    if p.len() != 6 { return None; }
+    let mut o = [0u8; 6];
+    for (i, x) in p.iter().enumerate() { o[i] = u8::from_str_radix(x, 16).ok()?; }
+    Some(o)
+}
+
+/// Captura hasta ver EAPOL del BSSID o agotar `duration_secs`. Emite el evento
+/// `eapol-detected` en cuanto aparece EAPOL para que la IA PARE la ráfaga de
+/// deauth inmediatamente (si sigue, rompe M3/M4 y llena el pcap de M1 repetidos).
+#[command]
+pub async fn capture_until_eapol(
+    app: tauri::AppHandle,
+    iface_guid: String,
+    bssid: String,
+    duration_secs: Option<u64>,
+) -> EapolCaptureResult {
+    let fail = |m: String| EapolCaptureResult { success: false, output_file: String::new(), packets: 0, eapol: false, message: m };
+    let target = match parse_bssid(&bssid) { Some(b) => b, None => return fail("BSSID inválido".into()) };
+    let dur = duration_secs.unwrap_or(30).clamp(5, 300);
+    let w = match unsafe { Wpcap::load() } { Ok(w) => w, Err(e) => return fail(e) };
+    let guid = {
+        let s = iface_guid.trim();
+        if let (Some(a), Some(b)) = (s.find('{'), s.find('}')) {
+            if b > a { s[a + 1..b].to_string() } else { s.to_string() }
+        } else { s.trim_start_matches("NPF_").to_string() }
+    };
+    if guid.is_empty() { return fail("GUID de interfaz vacío.".into()); }
+    let dev = format!(r"\Device\NPF_WIFI_{{{}}}", guid);
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs()).unwrap_or(0);
+    let out = format!("npcap_watch_{}.pcap", ts);
+
+    unsafe {
+        let dev_c = match CString::new(dev.clone()) { Ok(c) => c, Err(_) => return fail("GUID con bytes nulos.".into()) };
+        let mut errbuf = [0 as c_char; 256];
+        let handle = (w.open_live)(dev_c.as_ptr(), 65536, 1, 1000, errbuf.as_mut_ptr());
+        if handle.is_null() {
+            return fail(format!("No se pudo abrir {}: {}", dev, CStr::from_ptr(errbuf.as_ptr()).to_string_lossy()));
+        }
+        let dlt = (w.datalink)(handle);
+        if dlt == 1 { (w.close)(handle); return fail("Adaptador NO está en modo monitor (DLT 1).".into()); }
+        let out_c = match CString::new(out.clone()) {
+            Ok(c) => c,
+            Err(_) => { (w.close)(handle); return fail("Ruta de salida inválida.".into()); }
+        };
+        let dumper = (w.dump_open)(handle, out_c.as_ptr());
+        if dumper.is_null() {
+            let e = w.err_str(handle); (w.close)(handle);
+            return fail(format!("No se pudo crear {out}: {e}"));
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(dur);
+        let mut pkts: u64 = 0;
+        let mut eapol = false;
+        while std::time::Instant::now() < deadline {
+            let mut hdr: *mut PcapPkthdr = ptr::null_mut();
+            let mut data: *const c_uchar = ptr::null();
+            match (w.next_ex)(handle, &mut hdr, &mut data) {
+                1 => {
+                    if hdr.is_null() || data.is_null() { continue; }
+                    let caplen = (*hdr).caplen as usize;
+                    let bytes = std::slice::from_raw_parts(data, caplen);
+                    let wifi = if dlt == 127 {
+                        if bytes.len() < 8 { continue; }
+                        let rt = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+                        if rt < 8 || rt > bytes.len() { continue; }
+                        &bytes[rt..]
+                    } else { bytes };
+                    (w.dump)(dumper, hdr as *const PcapPkthdr, data);
+                    pkts += 1;
+                    if !eapol && frame_has_eapol(wifi, &target) {
+                        eapol = true;
+                        let _ = app.emit("eapol-detected", serde_json::json!({
+                            "bssid": bssid.to_uppercase(), "output_file": out, "packets": pkts
+                        }));
+                        break; // parar la captura; la ráfaga debe parar YA
+                    }
+                }
+                0 => continue,
+                _ => break,
+            }
+        }
+        (w.dump_close)(dumper);
+        (w.close)(handle);
+        let msg = if eapol {
+            format!("⚡ EAPOL de {bssid} detectado tras {pkts} paquetes → {out}. Deauth detenido.")
+        } else {
+            format!("Sin EAPOL de {bssid} en {dur}s ({pkts} paquetes) → {out}.")
+        };
+        EapolCaptureResult { success: true, output_file: out, packets: pkts, eapol, message: msg }
+    }
+}
+
+#[cfg(test)]
+mod eapol_tests {
+    use super::*;
+    #[test]
+    fn detects_eapol_only_for_target_bssid() {
+        let mut f = vec![0u8; 24];
+        f[0] = 0x08; // data
+        f[16..22].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+        f.extend_from_slice(&[0xaa, 0xaa, 0x03, 0, 0, 0, 0x88, 0x8e]);
+        assert!(frame_has_eapol(&f, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]));
+        assert!(!frame_has_eapol(&f, &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
+        let mut mgmt = f.clone(); mgmt[0] = 0x80;
+        assert!(!frame_has_eapol(&mgmt, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]));
     }
 }
 

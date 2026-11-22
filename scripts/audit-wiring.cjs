@@ -96,5 +96,103 @@ if (/\bmod\s+wpa2_trigger\b|wpa2_trigger::/.test(lib)) {
   bad++;
 }
 
+// Tauri inyecta hashes sha256 en el CSP declarado en tauri.conf.json. En cuanto
+// hay hashes, el navegador IGNORA 'unsafe-inline' y bloquea TODOS los
+// onclick="..." del HTML (Atacar, Detener, pestañas...): medido 2026-11-22 en
+// el WebView con CDP. La app es lab-only y no carga contenido remoto, así que
+// el CSP se desactiva explícitamente (csp: null). No volver a poner un string.
+const tauriConf = JSON.parse(fs.readFileSync(path.join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+if (tauriConf?.app?.security?.csp !== null) {
+  console.error('REGRESSION: app.security.csp no es null en tauri.conf.json — Tauri inyecta hashes y bloquea los onclick inline (botones muertos).');
+  bad++;
+}
+if (/http-equiv=["']Content-Security-Policy["']/i.test(html)) {
+  console.error('REGRESSION: vuelve a haber una meta CSP en index.html — bloquea los onclick inline y el IPC (ipc.localhost) de Tauri.');
+  bad++;
+}
+if (/alert\(\s*['"]click['"]\s*\)/.test(html)) {
+  console.error('REGRESSION: queda un alert de diagnóstico en un onclick de index.html — bloquea el clic en la app.');
+  bad++;
+}
+
+// ── E0-18: Modo IA (tool-calling total) ────────────────────────────────────
+const iaSrc = fs.readFileSync(path.join(ROOT, 'src', 'js', 'ia.js'), 'utf8');
+const cmdsSrc = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'commands.rs'), 'utf8');
+if (!/id="ia-mode-toggle"/.test(html)) {
+  console.error('REGRESSION: falta el interruptor #ia-mode-toggle en index.html (Modo IA E0-18).'); bad++;
+}
+if (!/window\._iaMode\s*=\s*false/.test(iaSrc)) {
+  console.error('REGRESSION: _iaMode no arranca en false — el ataque pasaría a modo IA sin querer.'); bad++;
+}
+if (!/if \(window\._iaMode\) return window\.iaAttack\(\);/.test(appSrc)) {
+  console.error('REGRESSION: simpleAttack no deriva al Modo IA cuando está activo.'); bad++;
+}
+if (!/window\.iaAttack\s*=\s*async function/.test(appSrc) || !/IA_TOOL_SPECS/.test(iaSrc)) {
+  console.error('REGRESSION: falta la ejecución IA o su lista blanca (E0-18).'); bad++;
+}
+if (!/GUID real inyectado/.test(appSrc) || !/ctx\.ssid/.test(appSrc)) {
+  console.error('REGRESSION: falta la inyección de GUID/SSID reales en los pasos de la IA (los marcadores `?` rompen el plan).'); bad++;
+}
+if (!/Plan SIN RESULTADOS/.test(appSrc)) {
+  console.error('REGRESSION: veredicto deshonesto — el plan debe decir CUÁNTOS pasos fallaron.'); bad++;
+}
+if (!/window\._attackAwaitingConfirm/.test(appSrc) || !/window\._attackAwaitingConfirm/.test(iaSrc)) {
+  console.error('REGRESSION: el watchdog no se pausa mientras espera confirmación (lock liberado a los 10 min).'); bad++;
+}
+if (!/hasAction\(\)/.test(appSrc) || !/Plan sin pasos de ataque/.test(appSrc)) {
+  console.error('REGRESSION: se aceptan planes solo informativos (sin monitor/captura/crack).'); bad++;
+}
+
+const toolsBlock = cmdsSrc.slice(cmdsSrc.indexOf('let tools = serde_json::json!(['), cmdsSrc.indexOf(']);', cmdsSrc.indexOf('let tools = serde_json::json!([')));
+
+// ── E0-20 fase 1: gate PMF + read-back de canal TX ──────────────────────────
+if (!/id="pmf-gate-note"/.test(html) || !/window\._pmfBlocked/.test(appSrc)) {
+  console.error('REGRESSION: falta el gate PMF visible/bloqueante en la UI (E0-20).'); bad++;
+}
+if (!/checkPmfGate/.test(appSrc) || !/__invoke\('parse_pmf'/.test(appSrc)) {
+  console.error('REGRESSION: no se consulta el RSN IE antes de atacar (E0-20).'); bad++;
+}
+const usbRawSrc = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'usb_raw.rs'), 'utf8');
+const usbTxToml = fs.readFileSync(path.join(ROOT, 'driver_re', 'usb_tx', 'Cargo.toml'), 'utf8');
+if (!/usb_raw_tx_preflight/.test(lib) || !/rt3070_chan_preflight/.test(usbRawSrc) || !/rt3070_chan_preflight/.test(usbTxToml)) {
+  console.error('REGRESSION: falta el preflight de canal TX con read-back (E0-20).'); bad++;
+}
+if (!/capture_until_eapol/.test(lib) || !/eapol-detected/.test(appSrc) || !/window\.iaDeauthBurst/.test(appSrc)) {
+  console.error('REGRESSION: falta el watcher EAPOL o la ráfaga deauth (E0-20 fase 2).'); bad++;
+}
+if (!/deauth_burst/.test(toolsBlock) || !/deauth_burst/.test(iaSrc)) {
+  console.error('REGRESSION: deauth_burst no está ofrecido/validado para la IA.'); bad++;
+}
+if (!/crack_backend_check/.test(lib) || !/crack_backend_check/.test(appSrc)) {
+  console.error('REGRESSION: falta el preflight OpenCL al arrancar (D-07).'); bad++;
+}
+// E0-22: generador de diccionarios con fichero real
+if (!/generate_dictionary/.test(lib) || !/generate_dictionary/.test(iaSrc) || !/generate_dictionary/.test(toolsBlock)) {
+  console.error('REGRESSION: falta la herramienta generadora de diccionarios (E0-22).'); bad++;
+}
+if (!/ia_memory_list/.test(lib) || !/iaMemoryContext/.test(iaSrc) || !/iaMemoryContext/.test(appSrc)) {
+  console.error('REGRESSION: falta la memoria local de la IA inyectada en el prompt (E0-23).'); bad++;
+}
+if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
+  console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
+}
+if (/"name":"(deauth|wps_pin)"/.test(toolsBlock)) {
+  console.error('REGRESSION: deauth/wps_pin ofrecidos como herramientas de IA — Npcap no inyecta en Windows (medido).'); bad++;
+}
+if (!/capture_packets/.test(toolsBlock) || !/restore_managed/.test(toolsBlock)) {
+  console.error('REGRESSION: faltan herramientas del pipeline en ollama_tools (E0-18).'); bad++;
+}
+
+// ── E0-19: Consola con tool-calling real ────────────────────────────────────
+if (!/t\.tool_calls/.test(iaSrc) || !/window\.iaConsoleAsk\s*=\s*async function/.test(iaSrc)) {
+  console.error('REGRESSION: la Consola vuelve a ignorar tool_calls (caerá en chat y el modelo se negará).'); bad++;
+}
+if (!/window\._iaConsoleTools/.test(iaSrc)) {
+  console.error('REGRESSION: falta la confirmación interactiva de la Consola (E0-19).'); bad++;
+}
+if (!/Contexto: laboratorio WiFi/.test(iaSrc)) {
+  console.error('REGRESSION: falta el contexto lab-only en el chat de la Consola (E0-19).'); bad++;
+}
+
 if (bad) { console.error('audit: ' + bad + ' issue(s)'); process.exit(1); }
 console.log('audit-wiring: OK (' + invokes.size + ' invokes, ' + onclicks.size + ' onclicks)');

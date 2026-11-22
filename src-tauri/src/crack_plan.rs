@@ -60,7 +60,8 @@ fn hashcat_prog() -> Result<String, String> {
 fn hashcat_major() -> Option<u32> {
     let prog = hashcat_prog().ok()?;
     for args in [["--version"].as_slice(), ["-V"].as_slice()] {
-        if let Ok(out) = std::process::Command::new(&prog).args(args).output() {
+        let wd = Path::new(&prog).parent().unwrap_or_else(|| Path::new("."));
+        if let Ok(out) = std::process::Command::new(&prog).current_dir(wd).args(args).output() {
             let s = String::from_utf8_lossy(&out.stdout);
             let s = if s.trim().is_empty() { String::from_utf8_lossy(&out.stderr) } else { s };
             // Ej.: "v8.0.0", "hashcat (v7.1.2) starting..."
@@ -476,7 +477,8 @@ async fn run_hashcat(
     let prog = match hashcat_prog() { Ok(p) => p, Err(e) => return (-1, String::new(), e) };
     let shell = app.shell();
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, child) = match shell.command(&prog).args(&arg_refs).spawn() {
+    let wd = Path::new(&prog).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let (mut rx, child) = match shell.command(&prog).current_dir(wd).args(&arg_refs).spawn() {
         Ok(r) => r,
         Err(e) => return (-1, String::new(), e.to_string()),
     };

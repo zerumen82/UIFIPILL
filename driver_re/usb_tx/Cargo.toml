@@ -24,6 +24,10 @@ name = "rt3070_deauth"
 path = "src/deauth.rs"
 
 [[bin]]
+name = "rt3070_chan_preflight"
+path = "src/rt3070_chan_preflight.rs"
+
+[[bin]]
 name = "rt3070_sniff"
 path = "src/sniff.rs"
 

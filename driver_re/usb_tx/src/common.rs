@@ -219,12 +219,23 @@ pub const EFUSE_DATA3: u16 = 0x059C;
 // Tabla de canales 2.4GHz para RF3070 (rt2800lib.c rf_vals_3x[] = Ralink
 // FreqItems3020 — idéntica, verificado 2026-10-01):
 // { canal, N (→RFCSR2), R (→RFCSR6[1:0]), K (→RFCSR3[3:0]) }
+#[allow(dead_code)]
 const RF_VALS_3X: [(u8, u8, u8, u8); 14] = [
     (1, 241, 2, 2), (2, 241, 2, 7), (3, 242, 2, 2), (4, 242, 2, 7),
     (5, 243, 2, 2), (6, 243, 2, 7), (7, 244, 2, 2), (8, 244, 2, 7),
     (9, 245, 2, 2), (10, 245, 2, 7), (11, 246, 2, 2), (12, 246, 2, 7),
     (13, 247, 2, 2), (14, 248, 2, 4),
 ];
+
+/// Canal 2.4 GHz derivado de los RFCSR leídos del chip (E0-20 read-back).
+/// N va en RFCSR2, R en RFCSR6[1:0], K en RFCSR3[3:0].
+pub fn channel_from_rf(n: u8, r: u8, k: u8) -> Option<u8> {
+    let r = r & 0x03;
+    let k = k & 0x0f;
+    RF_VALS_3X.iter()
+        .find(|(_, n2, r2, k2)| *n2 == n && *r2 == r && *k2 == k)
+        .map(|(ch, _, _, _)| *ch)
+}
 
 /// Construye TXWI de 20 bytes (4 palabras) con el layout REAL del driver:
 ///   w0: MCS bits16-22 | PHYMODE bits30-31 (CCK=1)
@@ -1180,6 +1191,13 @@ pub fn init_radio(h: &rusb::DeviceHandle<rusb::Context>, channel: u8, _fw_path: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_from_rf_maps_known_values() {
+        assert_eq!(channel_from_rf(242, 2, 7), Some(4)); // N=242,R=2,K=7 -> CH4
+        assert_eq!(channel_from_rf(246, 2, 2), Some(11));
+        assert_eq!(channel_from_rf(0, 0, 0), None);
+    }
 
     /// URB sintético con el layout MEDIDO en vendor.pcap:
     /// [4 len][RXWI 16][802.11 @20] y len+8 == n (111/111 URBs reales).

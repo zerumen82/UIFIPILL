@@ -135,6 +135,48 @@ pub async fn filter_hash(
     })
 }
 
+/// Preflight del backend de crack (D-07): hashcat sin OpenCL agota etapas con
+/// `./OpenCL/: No such file or directory`. Avisar al arrancar, no a mitad.
+#[derive(Debug, Clone, Serialize)]
+pub struct CrackBackend {
+    pub ready: bool,
+    pub hashcat: String,
+    pub opencl: bool,
+    pub message: String,
+}
+
+#[command]
+pub async fn crack_backend_check() -> CrackBackend {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (found, hc, _) = resolve_tool("hashcat.exe");
+        if !found {
+            return CrackBackend { ready: false, hashcat: String::new(), opencl: false,
+                message: "hashcat.exe no encontrado en tools/. El crack no está disponible.".into() };
+        }
+        // hashcat busca `./OpenCL/` relativo al CWD: hay que lanzarlo desde tools/.
+        let wd = std::path::Path::new(&hc).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let out = std::process::Command::new(&hc).arg("-I").current_dir(wd).output();
+        let (text, ok) = match out {
+            Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr), o.status.success()),
+            Err(e) => (format!("spawn: {e}"), false),
+        };
+        // Ojo: `./OpenCL/: No such file or directory` CONTIENE "OpenCL" pero
+        // significa exactamente lo contrario. Solo cuenta un Platform/Device real.
+        let broken = text.contains("./OpenCL/: No such file") || text.contains("No devices found") || text.contains("No platforms");
+        let listed = text.contains("Platform #") || text.contains("Device #");
+        let opencl = listed && !broken;
+        let ready = ok && opencl;
+        let message = if ready {
+            "Backend OpenCL disponible: el crack puede ejecutarse.".into()
+        } else {
+            format!("Sin backend OpenCL (hashcat v7.x sin runtime). Las etapas fallarán con './OpenCL/: No such file or directory'. Instala hashcat v8+ con OpenCL; hasta entonces el éxito del pipeline es un .22000 válido guardado. {text}")
+        };
+        CrackBackend { ready, hashcat: hc, opencl, message }
+    }).await.unwrap_or_else(|_| CrackBackend {
+        ready: false, hashcat: String::new(), opencl: false, message: "preflight error".into()
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CrackAssets {
     pub hashcat:  String,
@@ -179,10 +221,12 @@ pub async fn list_crack_assets() -> CrackAssets {
     .into_iter()
     .flatten()
     {
-        for name in ls(&extra, "txt").into_iter().chain(ls(&extra, "dict")) {
-            let full = extra.join(&name).display().to_string();
-            if !wordlists.contains(&full) {
-                wordlists.push(full);
+        for d in [extra.clone(), extra.join("wordlists")] {
+            for name in ls(&d, "txt").into_iter().chain(ls(&d, "dict")) {
+                let full = d.join(&name).display().to_string();
+                if !wordlists.contains(&full) {
+                    wordlists.push(full);
+                }
             }
         }
     }
@@ -295,6 +339,9 @@ pub async fn crack_custom(
         "-a".into(), attack.to_string(),
         "-o".into(), cracked_out.clone(),
         "--force".into(), "--status".into(), "--status-timer=10".into(),
+        // Sin esto, un hash ya presente en hashcat.potfile se omite y NO se
+        // escribe .cracked: perderíamos la evidencia real exigida por el proyecto.
+        "--potfile-disable".into(),
         "--session".into(), session.unwrap_or_else(|| "uifipill".into()),
     ];
     if attack == 0 {
@@ -328,8 +375,13 @@ pub async fn crack_custom(
         _ => unreachable!(),
     }
 
+    // hashcat resuelve ./OpenCL/ y los kernels respecto a su CWD: lanzarlo
+    // desde tools/ evita el error "./OpenCL/: No such file or directory".
+    let hc_prog = resolve_tool("hashcat.exe").1;
+    let wd = std::path::Path::new(&hc_prog).parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let out = match shell
-        .command("hashcat")
+        .command(&hc_prog)
+        .current_dir(wd)
         .args(args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
         .output()
         .await
@@ -343,17 +395,19 @@ pub async fn crack_custom(
         }
     };
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    let pw = stdout
-        .lines()
-        .find(|l| l.contains(':') && !l.starts_with('#'))
-        .map(|s| s.to_string());
+    // Éxito REAL = fichero .cracked escrito por hashcat. Buscar la contraseña
+    // en stdout daba falsos positivos (p. ej. "* Device #1: CUDA...").
+    let cracked = std::fs::read_to_string(&cracked_out).ok().and_then(|s| {
+        s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).last()
+    });
+    let pw = cracked.as_ref().and_then(|l| l.rsplit(':').next()).filter(|s| !s.is_empty());
     let found = pw.is_some();
     let body = match pw {
         Some(p) => format!("PASSWORD: {}\n\n{}", p, stdout),
         None => format!("Sin resultado aún.\nHash: {}  Ataque: -a{}\n\n{}", hash_file, attack, stdout),
     };
     CmdResponse {
-        success: found || out.status.success(),
+        success: found,
         output: body,
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         exit_code: out.status.code(),

@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self' http://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline';" />
+  <!-- CSP desactivada (lab-only): Tauri inyecta hashes que bloquean los onclick
+       inline y el default-src bloquea el IPC de ipc.localhost. Sin meta, todo
+       el cableado existente (botones + eventosTauri) funciona. -->
   <title>UIFIPILL</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F4F6;</text></svg>">
 </head>
@@ -15,7 +16,7 @@
       <div class="logo-wrap">
         <div class="logo">◈</div>
         <span class="brand">UIFIPILL</span>
-        <span style="font-size:10px;color:var(--muted);margin-left:6px">v1.0.12</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:6px">v1.0.13</span>
       </div>
 
       <div class="nav-group">
@@ -38,6 +39,11 @@
 
       <!-- ─── Main panel ─────────────────────────────────────────── -->
       <main class="panel">
+        <header class="app-header" id="app-header">
+          <div class="logo">◈</div>
+          <span class="brand">UIFIPILL</span>
+          <span class="version-badge" id="app-version">v1.0.13</span>
+        </header>
         <!-- SCAN TAB -->
         <section id="tab-scan" class="tab active">
           <header class="phead">
@@ -149,10 +155,15 @@
               <button id="simple-attack-btn" class="atk-btn atk-btn--green" onclick="simpleAttack()" style="padding:12px 22px;font-size:14px;font-weight:700">&#9889; Atacar</button>
               <button id="simple-stop-btn" class="atk-btn atk-stop" onclick="simpleStop()" style="padding:12px 22px;font-size:14px;font-weight:700;background:var(--red)">&#9632; Detener</button>
               <button id="simple-pwnagotchi-btn" class="atk-btn" onclick="simplePwnagotchiKit()" style="background:var(--surface2);color:var(--text);padding:8px 14px;font-size:12px" title="Guía para capturar con Pwnagotchi (RPi, externo) y crackear aquí">Kit Pwnagotchi</button>
+              <label id="ia-mode-label" title="Si está activo, Atacar usa solo tool-calling de Ollama; cada paso exige confirmación" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface2)">
+                <input type="checkbox" id="ia-mode-toggle" onchange="setIaMode(this.checked)" />
+                <span>Modo IA</span>
+              </label>
               <div style="display:flex;flex-direction:column;gap:2px;min-width:220px">
                 <span id="simple-target-label" style="font-size:12.5px;font-weight:600">Objetivo: —</span>
                 <span id="simple-target-meta" style="font-size:11px;color:var(--muted)">Selecciona una red en Escanear (clic en la fila). Si no, se intentará la más fuerte. Si indicas un .22000/.pcap en la tarjeta oculta, se usará ese material.</span>
               </div>
+              <span id="pmf-gate-note" style="font-size:11px;color:var(--muted);max-width:260px"></span>
               <span id="simple-stage" style="margin-left:auto;font-size:11px;color:var(--muted)"></span>
             </div>
 
@@ -166,23 +177,23 @@
               <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
                 <div id="progress-bar" style="background:var(--accent);height:100%;width:0%;transition:width 0.3s;text-align:center;font-size:11px;color:#fff;line-height:20px">0%</div>
               </div>
-              <pre id="live-cv" class="live-view" style="margin-top:8px;min-height:180px;max-height:360px">─ Logs en tiempo real (stdout/stderr) ─</pre>
-              <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-                <button id="live-toggle" onclick="toggleLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#x1F4FA; Ocultar verbose</button>
-                <button onclick="clearLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#10005; Limpiar vivo</button>
-                <button onclick="copyLive()" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:inherit">&#128203; Copiar</button>
-              </div>
-            </div>
-
-            <div style="padding:0 0 14px">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <strong style="font-size:12.5px">Historial (logs completos)</strong>
-                <span style="flex:1"></span>
-                <button class="scan-btn sm" style="background:#3a3a52" onclick="clearConsole()">&#10005; Limpiar</button>
-                <button class="scan-btn sm" style="background:#3a3a52" onclick="copyConsole()">&#128203; Copiar</button>
-              </div>
-              <div class="console-wrap" style="margin:0">
-                <pre id="cv" class="console-view" style="max-height:320px"></pre>
+              <!-- Consola ÚNICA: verbose en vivo + historial + terminal IA en un solo panel -->
+              <div class="console-term console-unified" id="console-term" style="margin-top:8px">
+                <div class="console-toolbar">
+                  <strong style="font-size:12.5px">Consola · logs + IA</strong>
+                  <span style="flex:1"></span>
+                  <button id="live-toggle" class="console-tool" onclick="toggleLive()">&#x1F4FA; Ocultar verbose</button>
+                  <button class="console-tool" onclick="clearAllConsoles()">&#10005; Limpiar</button>
+                  <button class="console-tool" onclick="copyAllConsoles()">&#128203; Copiar</button>
+                </div>
+                <div id="console-lines" class="console-view ia-view console-scroll">
+                  <pre id="live-cv" class="console-inline">─ Logs en tiempo real (stdout/stderr) ─</pre>
+                  <pre id="cv" class="console-inline"></pre>
+                </div>
+                <div class="console-input-row">
+                  <span class="console-prompt">❯</span>
+                  <input id="console-input" class="console-input" type="text" placeholder="Pregunta o comando para la IA (Enter)…" autocomplete="off" spellcheck="false" />
+                </div>
               </div>
             </div>
           </div>

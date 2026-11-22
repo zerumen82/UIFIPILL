@@ -11,6 +11,9 @@ mod tools_detect;
 mod wifi_adapter;
 mod monitor_mode;
 mod pcap_convert;
+mod pmf;
+mod dictionary;
+mod ia_memory;
 mod wpa3;
 mod wsl;
 mod usb_raw;
@@ -84,15 +87,22 @@ pub fn run() {
             monitor_mode::monitor_status,
             // captura nativa Npcap (wpcap.dll, sin binarios externos)
             capture::native_capture,
+            capture::capture_until_eapol,
             capture::check_injection_capability,
             // pcap converter nativo (reemplaza hcxpcapngtool)
             pcap_convert::pcap_to_22000,
+            pmf::parse_pmf,
+            dictionary::generate_dictionary,
+            ia_memory::ia_memory_add,
+            ia_memory::ia_memory_list,
+            ia_memory::ia_memory_clear,
             // perfilador de objetivo (solo lectura)
             profiler::profile_target,
             // estrategia de crack (hashcat -m 22000, corre en Windows)
             crack::inspect_hash,
             crack::filter_hash,
             crack::list_crack_assets,
+            crack::crack_backend_check,
             crack::crack_custom,
             crack_plan::crack_plan_preview,
             crack_plan::crack_plan_run_bg,
@@ -158,6 +168,7 @@ pub fn run() {
             usb_raw::usb_raw_restore,
             usb_raw::usb_raw_diag,
             usb_raw::usb_raw_scan,
+            usb_raw::usb_raw_tx_preflight,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

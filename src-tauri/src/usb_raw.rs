@@ -34,6 +34,7 @@ fn usb_tx_dir() -> Option<std::path::PathBuf> {
             dirs.push(p.join("_up_").join("driver_re").join("usb_tx"));
             dirs.push(p.join("resources").join("_up_").join("driver_re").join("usb_tx"));
             dirs.push(p.join("resources").join("usb_tx"));
+            dirs.push(p.join("resources")); // NSIS aplana los resources a esta carpeta
         }
     }
     // 2) Workspace (dev): <repo>/driver_re/usb_tx
@@ -154,7 +155,14 @@ pub async fn usb_raw_tx_beacon(ssid: String, channel: u8, count: u32) -> UsbRawR
 
 /// Deauth dirigido al BSSID objetivo por USB crudo (requiere init previo).
 #[command]
-pub async fn usb_raw_deauth(bssid: String, channel: u8, count: u32) -> UsbRawResult {
+pub async fn usb_raw_deauth(
+    bssid: String,
+    channel: u8,
+    count: u32,
+    target_mac: Option<String>,
+    reason: Option<u8>,
+    delay_ms: Option<u32>,
+) -> UsbRawResult {
     tauri::async_runtime::spawn_blocking(move || {
         let chan = channel.clamp(1, 14);
         let exe = match usb_tx_exe("rt3070_deauth.exe") {
@@ -168,17 +176,35 @@ pub async fn usb_raw_deauth(bssid: String, channel: u8, count: u32) -> UsbRawRes
             return UsbRawResult { success: false, message: format!("BSSID inválido: {bssid}"), output: String::new() };
         }
         let n = count.clamp(1, 500).to_string();
-        let r = run_usb_tool(&exe, &[&b, &chan.to_string(), &n]);
+        let da = match target_mac {
+            Some(m) => {
+                let m = m.trim().to_uppercase();
+                let ok = m.len() == 17 && m.chars().enumerate().all(|(i, c)| i % 3 == 2 || c.is_ascii_hexdigit());
+                if !ok {
+                    return UsbRawResult { success: false, message: format!("MAC de cliente inválida: {m}"), output: String::new() };
+                }
+                m
+            }
+            None => "broadcast".to_string(),
+        };
+        let reason = reason.unwrap_or(7).min(255).to_string();
+        let delay = delay_ms.unwrap_or(100).clamp(20, 1000).to_string();
+        let r = run_usb_tool(&exe, &[&b, &chan.to_string(), &n, &da, &reason, &delay]);
         let written = r.output.lines().find(|l| l.contains("deauth frames escritos")).map(|s| s.to_string());
         let txdone = r.output.lines().filter(|l| l.contains("TXDONE")).count();
         let txdone_ok = r.output.lines().any(|l| l.contains("TXDONE success=true"));
-        let had_written = written.is_some();
+        // `contains("0/")` daba TRUE para "0/8" y FALSE para "2/8": invertido.
+        let n_ok = written.as_deref()
+            .and_then(|s| s.split_whitespace().next())
+            .and_then(|x| x.split('/').next())
+            .and_then(|x| x.parse::<u32>().ok())
+            .unwrap_or(0);
         let mut msg = written.unwrap_or_else(|| r.message.clone());
         if txdone > 0 {
             msg.push_str(&format!(" | TXDONE: {txdone} confirmaciones{}", if txdone_ok { " (TX al aire OK)" } else { " (FALLOS de TX)" }));
         }
         UsbRawResult {
-            success: r.success && had_written && r.output.contains("0/"),
+            success: r.success && n_ok > 0 && txdone_ok,
             message: msg,
             output: r.output,
         }
@@ -443,9 +469,64 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
     }).await.unwrap_or_else(|_| UsbRawScanResult { success: false, message: "join error".into(), networks: vec![] })
 }
 
+// ── E0-20 fase 1: preflight de TX (canal del RT3070 con read-back) ───────────
+#[derive(Serialize)]
+pub struct TxPreflightResult {
+    pub ok: bool,
+    pub requested: u8,
+    pub actual: Option<u8>,
+    pub monitor_channel: Option<u8>,
+    pub message: String,
+}
+
+/// Fija el canal del RT3070 (WinUSB) al del objetivo y lo lee de vuelta desde
+/// RFCSR2/3/6. Si no coincide con el canal REAL del monitor RT73, aborta:
+/// transmitir en otro canal es quemar frames a ciegas. Nunca kick FIRMWARE(8).
+#[command]
+pub async fn usb_raw_tx_preflight(channel: u8, monitor_channel: Option<u8>) -> TxPreflightResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let requested = channel.clamp(1, 14);
+        let exe = match usb_tx_exe("rt3070_chan_preflight.exe") {
+            Ok(e) => e,
+            Err(e) => return TxPreflightResult { ok: false, requested, actual: None, monitor_channel, message: e },
+        };
+        let r = run_usb_tool(&exe, &[&requested.to_string()]);
+        let line = r.output.lines().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
+        #[derive(serde::Deserialize)]
+        struct R { ok: Option<bool>, actual: Option<u8>, error: Option<String>, message: Option<String> }
+        let parsed: Option<R> = serde_json::from_str(line.trim()).ok();
+        let actual = parsed.as_ref().and_then(|p| p.actual);
+        let bin_ok = parsed.as_ref().and_then(|p| p.ok).unwrap_or(false) && r.success;
+        let mon_ok = monitor_channel.map(|m| Some(m) == actual).unwrap_or(true);
+        let ok = bin_ok && mon_ok;
+        let detail = parsed.as_ref().and_then(|p| p.error.clone().or_else(|| p.message.clone())).unwrap_or_default();
+        let message = if !bin_ok {
+            format!("❌ No se pudo fijar/leer el canal del RT3070 (pedido {requested}). {detail} {}",
+                if r.output.is_empty() { String::new() } else { r.output.lines().take(2).collect::<Vec<_>>().join(" ") })
+        } else if !mon_ok {
+            format!("❌ Canal TX {actual:?} ≠ canal monitor {monitor_channel:?}. Abortando ráfaga: el deauth iría al aire equivocado.")
+        } else {
+            format!("✅ RT3070 en CH{} (pedido {requested}), coincide con el monitor. Listo para TX.", actual.unwrap_or(requested))
+        };
+        TxPreflightResult { ok, requested, actual, monitor_channel, message }
+    }).await.unwrap_or_else(|_| TxPreflightResult {
+        ok: false, requested: channel, actual: None, monitor_channel, message: "join error".into()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_chan_preflight_json() {
+        #[derive(serde::Deserialize)]
+        struct R { ok: Option<bool>, actual: Option<u8>, error: Option<String>, message: Option<String> }
+        let line = "{\"ok\":true,\"requested\":4,\"actual\":4,\"n\":242,\"r\":2,\"k\":7}";
+        let p: R = serde_json::from_str(line).unwrap();
+        assert_eq!(p.actual, Some(4));
+        assert_eq!(p.ok, Some(true));
+    }
 
     #[test]
     fn sniff_frames_from_final_summary() {

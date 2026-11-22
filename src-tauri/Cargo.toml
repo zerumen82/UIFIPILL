@@ -1,6 +1,6 @@
 [package]
 name = "uifipill"
-version = "1.0.12"
+version = "1.0.13"
 description = "UIFIPILL - WiFi suite desktop for Windows"
 edition = "2021"
 rust-version = "1.77.2"
