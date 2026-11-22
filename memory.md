@@ -2691,6 +2691,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Petición del usuario: «sube el número de versión». Actualizado en los 7 sitios de build: `package.json`, `package-lock.json` (2 entradas), `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json` y los 2 badges de `index.html`. `AGENTS.md` apunta ahora a 1.0.14 con todo el trabajo de la sesión commiteado.
 - NSIS recompilado como `UIFIPILL_1.0.14_x64-setup.exe`, reinstalado `/S`; verificado `ProductVersion=1.0.14` en `%LOCALAPPDATA%\UIFIPILL\uifipill.exe` y badge de la UI. Sin cambios funcionales respecto a 1.0.13.
 
+### SESIÓN 2026-11-22 (cont. 20) — MODO IA: FORZAR DEAUTH Y FIJAR CANAL ANTES DE CAPTURAR
+- Log del usuario: plan de 3 pasos sin acción → retry (otro minuto) → plan de 11 herramientas que eligió `activate_monitor`+`capture_packets` en 60 s, **sin `deauth_burst`**, y `activate_monitor` dejó la radio en CH1 aunque se pidió CH4. Causa: el prompt aún contenía la frase heredada «No uses deauth ni WPS: Npcap no puede inyectar» (obsoleta desde que existe `deauth_burst` por RT3070).
+- Fix en `app.js`: (1) prompt actualizado — usar `deauth_burst`/`trigger_handshake` para generar tráfico; (2) `hasForced()` exige una herramienta generadora de tráfico cuando no hay material; si falta, se añade al plan mínimo con las demás; (3) se elimina el reintento a Ollama (ahorro ~1 min) y se completa el plan de inmediato; (4) `set_monitor_channel` se llama **tras activate_monitor** y **antes de capture_packets** con el canal del objetivo.
+- Verificado CDP (ollama_tools forzado): plan de 3 informativos → «orquestador añade 4 pasos» → `profile_target`, `deauth_burst` (BSSID/CH4 reales), `inspect_hash`, `crack_hash`. Con plan de `activate_monitor`+`capture_packets`+scan → se añade deauth y se ejecutan las llamadas de fijación de canal. Lint/NSIS verdes; RF sin cambios; app relanzada sin stubs.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

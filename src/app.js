@@ -1190,7 +1190,7 @@ window.iaAttack = async function () {
       'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
       'Devuelve un plan COMPLETO de al menos 3 herramientas: NUNCA solo profile_target. El objetivo ya está validado en el último scan.',
       'Usa únicamente los nombres de las funciones disponibles y argumentos JSON reales. Máximo ' + IA_MAX_STEPS + ' pasos.',
-      'No uses deauth ni WPS: Npcap no puede inyectar en Windows. No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
+      'Para forzar tráfico usa deauth_burst (RT3070 WinUSB) o trigger_handshake (si no hay clientes): SÍ están disponibles y funcionan. No propongas herramientas que no existan (ni wps_pin ni deauth por Npcap). No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
       'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
       'Si no hay clientes conectados al AP, usa trigger_handshake (auto-gatillo M1/M2 con la propia radio managed) con SSID/BSSID/canal para generar material crackeable.',
@@ -1201,16 +1201,13 @@ window.iaAttack = async function () {
     let steps = Array.isArray(plan.tool_calls) ? plan.tool_calls : [];
     const ACTION_TOOLS = ['activate_monitor', 'capture_packets', 'deauth_burst', 'trigger_handshake', 'crack_hash'];
     const hasAction = () => steps.some(s => ACTION_TOOLS.includes(String((s && s.name) || '')));
-    if (steps.length < 3 || !hasAction()) {
-      log('[IA] Plan ' + (steps.length < 3 ? 'demasiado corto' : 'sin pasos de ataque') + ' (' + steps.length + ' pasos); repitiendo la consulta con instrucción más estricta…', 'warn');
-      const retry = prompt + '\nIMPORTANTE: tu plan debe incluir OBLIGATORIAMENTE deauth_burst o trigger_handshake (con BSSID/canal reales), además de los pasos informativos. No devuelvas solo scan/detect/keygen/profile.';
-      plan = await window.__invoke('ollama_tools', { prompt: retry, model });
-      if (plan && plan.success && Array.isArray(plan.tool_calls) && plan.tool_calls.length) steps = plan.tool_calls;
-    }
-    // Plan mínimo obligatorio: si el modelo sigue quedándose corto, el
-    // orquestador completa el plan CON HERRAMIENTAS IA (nunca el pipeline
-    // determinista antiguo). Se anota en el log para no fingir que fue la IA.
-    if (steps.length < 3 || !hasAction()) {
+    // Sin material hace falta UNA herramienta que GENERE tráfico (deauth o
+    // gatillo). "activar monitor + capturar" por sí solos no producen EAPOL.
+    const hasForced = () => steps.some(s => ['deauth_burst', 'trigger_handshake'].includes(String((s && s.name) || '')));
+    // Plan mínimo obligatorio: si el modelo se queda corto o solo propone
+    // consultas/capturas, completar YA (sin otro viaje a Ollama) con
+    // HERRAMIENTAS IA (nunca el pipeline determinista). Se anota en el log.
+    if (steps.length < 3 || !hasAction() || (!material && !hasForced())) {
       const have = new Set(steps.map(s => String((s && s.name) || '')));
       const minimal = (material
         ? [
@@ -1223,7 +1220,7 @@ window.iaAttack = async function () {
             { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
             { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
           ]).filter(x => !have.has(x.name));
-      log('[IA] Plan insuficiente tras el reintento: orquestador añade ' + minimal.length + ' paso(s) mínimo(s) con herramientas IA.', 'warn');
+      log('[IA] Plan insuficiente (' + steps.length + ' pasos, sin acción): orquestador añade ' + minimal.length + ' paso(s) mínimo(s) con herramientas IA.', 'warn');
       steps.push(...minimal);
     }
     if (!steps.length) throw new Error('La IA no propuso herramientas válidas. Respuesta: ' + String(plan.response || '(vacía)').slice(0, 300));
@@ -1278,11 +1275,29 @@ window.iaAttack = async function () {
       log(`[IA] Ejecutando ${name}…`, 'info');
       let result;
       try {
+        // Antes de capturar, FIJAR el canal: activate_monitor deja el driver
+        // en CH1 aunque aceptara el OID (medido en el log del usuario).
+        if (name === 'capture_packets' && (args.iface_guid || ctx.guid) && ch) {
+          try {
+            const sc = await window.__invoke('set_monitor_channel', {
+              ifaceGuid: args.iface_guid || ctx.guid, channel: parseInt(args.channel) || ch,
+            });
+            log('[IA] canal monitor antes de capturar: ' + ((sc && sc.message) || 'sin confirmación'), (sc && sc.success) ? 'ok' : 'warn');
+          } catch (e) { log('[IA] set_monitor_channel: ' + e, 'warn'); }
+        }
         result = name === 'deauth_burst'
           ? await window.iaDeauthBurst(args)
           : name === 'trigger_handshake'
             ? await window.iaTriggerHandshake(args)
             : await window.iaExecuteTool(name, args);
+        if (name === 'activate_monitor' && result && result.success && (args.iface_guid || ctx.guid)) {
+          try {
+            const sc = await window.__invoke('set_monitor_channel', {
+              ifaceGuid: args.iface_guid || ctx.guid, channel: parseInt(args.channel) || ch,
+            });
+            log('[IA] canal monitor tras activar: ' + ((sc && sc.message) || 'sin confirmación'), (sc && sc.success) ? 'ok' : 'warn');
+          } catch (e) { log('[IA] set_monitor_channel: ' + e, 'warn'); }
+        }
         if (name === 'crack_hash') {
           const done = await waitForAttack('crack_plan', 10 * 60 * 1000);
           result = { ...(result || {}), finished: done ? (done.p || {}) : { success: false } };
