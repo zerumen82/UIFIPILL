@@ -2673,6 +2673,10 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **Medición real (La Fory 3H, autorizada)**: `netsh connect` con perfil falso → «solicitud completada», captura managed **336 paquetes**, **0 EAPOL**, solo 2 beacons del AP. Conclusión: el stack Windows/RT73 **no entrega los frames del 4-way handshake de su propia asociación** a Npcap; el auto-gatillo no produce material aquí. No se simula éxito: el conversor devuelve «No se encontró un M1+M2 EAPOL válido».
 - RF devuelta a managed; NSIS reinstalado; veredicto registrado en `spec/02 E0-24`. Siguiente vía fiable: cliente real conectado al AP + deauth (TX ya verificado).
 
+### SESIÓN 2026-11-22 (cont. 16) — FIX EMPAQUETADO rt3070_scan.exe
+- Log del usuario: netsh vio 0 redes justo tras restaurar managed y el fallback USB crudo falló con `rt3070_scan.exe no encontrado en <inst>/_up_/driver_re/usb_tx`. Causa: el NSIS no incluía ese binario (ni `rt3070_sniff.exe`). Añadidos a `tauri.conf.json` resources; NSIS recompilado/reinstalado, exit 0, ambos exes presentes en `<inst>/_up_/driver_re/usb_tx/target/release`.
+- Verificado CDP: `usb_raw_scan` ya **ejecuta** el binario (adiós «exe not found») y devuelve veredicto honesto «Sin redes en 12s…». Incluso tras `usb_raw_init` (MCU vivo, sin kick FIRMWARE(8), radio ON CH11) sigue dando 0 redes: coherente con la RX sorda measured del RT3070 en crudo. El escaneo normal por netsh sí ve redes cuando la radio ya está asentada (13 en mediciones anteriores). Sin commit de artefactos, solo config/docs.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
