@@ -16,6 +16,7 @@ mod dictionary;
 mod ia_memory;
 mod eapol_convert;
 mod assoc_pmkid;
+mod process_util;
 mod wpa3;
 mod wsl;
 mod usb_raw;

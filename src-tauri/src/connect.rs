@@ -238,7 +238,7 @@ pub async fn wifi_reset_admin(iface_name: Option<String>) -> CmdResponse {
         let cmd = format!(
             "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{path}','-AdapterName','{name}') -Verb RunAs -Wait"
         );
-        let out = std::process::Command::new("powershell.exe")
+        let out = crate::process_util::hidden_command("powershell.exe")
             .args(["-NoProfile", "-Command", &cmd])
             .output();
         match out {

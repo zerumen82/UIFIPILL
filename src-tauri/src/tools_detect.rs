@@ -98,7 +98,7 @@ fn install_dirs() -> Vec<std::path::PathBuf> {
 
 fn get_version(exe: &str) -> String {
     for args in [&["--version"][..], &["-V"][..], &["-h"][..]] {
-        let out = std::process::Command::new(exe).args(args).output();
+        let out = crate::process_util::hidden_command(exe).args(args).output();
         match out {
             Ok(ref o) if o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty() => {
                 let mut s = String::from_utf8_lossy(&o.stdout).trim().to_string();

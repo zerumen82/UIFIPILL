@@ -2730,6 +2730,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix: `stopHunter` marca `window._hunterStopRequested=true`; `iaDeauthBurst` aborta su bucle si `args._hunter && _hunterStopRequested` (sin tocar `_simpleStop`, que pertenece al ataque manual). El cazador llama con `_hunter:true, sustained:true` y `maxPasses=20` para enviar deauth durante todo el watcher de 45 s, no solo 8 frames.
 - Verificado CDP: `HUNT_STUB {"bssid":...,"channel":4,"target_mac":null,"_hunter":true,"sustained":true}`; aviso de parada y estado vacío tras Detener. Lint/NSIS verdes; app relanzada.
 
+### SESIÓN 2026-11-23 (cont. 28) — OCULTAR CONSOLAS DE LOS SUBPROCESOS
+- El usuario reportó que al lanzar deauth se abría una ventana de consola Windows. Causa: `run_usb_tool` (y hashcat/netsh/powershell) usaban `std::process::Command` directo; los bins usb_tx son de subsistema consola y Windows les crea ventana. El plugin de shell de Tauri ya aplica CREATE_NO_WINDOW, pero esas llamadas no pasaban por él.
+- Fix: `src/process_util.rs` con `hidden_command()` que aplica `creation_flags(0x08000000)` (CREATE_NO_WINDOW) en Windows. Sustituidos todos los `Command::new` de producción: `usb_raw.rs` (bins usb_tx + powershell de elevación), `crack.rs`/`crack_plan.rs` (hashcat), `tools_detect.rs` (detección de versiones), `wifi_adapter.rs` (powershell), `connect.rs` (reset elevado). Los tests de `capture.rs` no se tocaron.
+- Además, si se pulsa Detener a mitad de un ciclo del cazador, el log dice «ciclo abortado por Detener» en vez de «sin material». Lint/NSIS verdes; app reinstalada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

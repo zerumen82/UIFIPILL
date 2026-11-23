@@ -155,7 +155,7 @@ pub async fn crack_backend_check() -> CrackBackend {
         }
         // hashcat busca `./OpenCL/` relativo al CWD: hay que lanzarlo desde tools/.
         let wd = std::path::Path::new(&hc).parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let out = std::process::Command::new(&hc).arg("-I").current_dir(wd).output();
+        let out = crate::process_util::hidden_command(&hc).arg("-I").current_dir(wd).output();
         let (text, ok) = match out {
             Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr), o.status.success()),
             Err(e) => (format!("spawn: {e}"), false),

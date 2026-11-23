@@ -198,7 +198,7 @@ Get-NetAdapter 2>$null | Where-Object { $_.MediaType -eq 'Native 802.11' } |
 Select-Object Name, InterfaceDescription, Status, MacAddress, InterfaceGuid, PnPDeviceID |
 ConvertTo-Csv -NoTypeInformation
 "#;
-    let out = std::process::Command::new("powershell")
+    let out = crate::process_util::hidden_command("powershell")
         .args(["-NoProfile", "-Command", ps])
         .output();
     let mut adapters = match out {

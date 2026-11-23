@@ -68,8 +68,7 @@ fn usb_tx_exe(name: &str) -> Result<String, String> {
 
 /// Ejecuta un binario usb_tx de forma síncrona y captura salida.
 fn run_usb_tool(exe: &str, args: &[&str]) -> UsbRawResult {
-    use std::process::Command;
-    let out = Command::new(exe).args(args).output();
+    let out = crate::process_util::hidden_command(exe).args(args).output();
     match out {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -364,7 +363,7 @@ pub async fn usb_raw_restore() -> UsbRawResult {
          '-NoProfile','-ExecutionPolicy','Bypass','-File','{}' -Verb RunAs",
         script_s
     );
-    let spawn = std::process::Command::new("powershell.exe")
+    let spawn = crate::process_util::hidden_command("powershell.exe")
         .args(["-NoProfile", "-Command", &cmd])
         .spawn();
     match spawn {

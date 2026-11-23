@@ -849,7 +849,8 @@ async function hunterCycle() {
       stopHunter('material capturado');
       return;
     }
-    log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
+    if (window._hunterStopRequested) log('[cazador] ciclo ' + cy + ' abortado por Detener.', 'warn');
+    else log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
   } catch (e) {
     log('[cazador] error en ciclo ' + cy + ': ' + e, 'error');
   } finally {
