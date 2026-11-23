@@ -2770,6 +2770,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Crack real sobre el handshake de MIWIFI_APUM: plan automático se quedó en máscara de 10 dígitos (10¹⁰, inviable); cancelado. `crack_custom` con `rockyou.txt` → sin coincidencia, sin `.cracked`. Falta información/candidatas dirigidas (clave del router, wordlist propia, reglas). Veredicto honesto: material válido capturado, contraseña NO obtenida.
 - RF: RT3070 sigue en netr28ux (experimento dos radios); cazador inactivo hasta revertir a WinUSB.
 
+### SESIÓN 2026-11-23 (cont. 36) — CIERRE DEL INTENTO DE CRACK Y BÚSQUEDA EN INTERNET
+- Ataques dirigidos ejecutados sobre el `.22000` válido: `rockyou.txt`, diccionario generado (253 candidatas MIWIFI_APUM) + `dive.rule`, `rockyou.txt` + `best66.rule`. **Ninguno escribió `.cracked`**. Máscara de 10 dígitos descartada por inviable (10¹⁰).
+- Búsqueda web (fuentes en la conversación): el keygen público de Movistar es solo para SSID `WLAN_XXXX`/`JAZZTEL_XXXX` (Comtrend ADSL, 2010, SSID+MAC). RouterKeygen no soporta `MIWIFI_XXXX`; Movistar indica que la clave por defecto está en la etiqueta del router. Conclusión: no hay algoritmo público para este SSID; la clave parece aleatoria de fábrica. Sin etiqueta/wordlist propia no hay atajo.
+- RF: RT3070 sigue en `netr28ux` (experimento dos radios), cazador detenido; el handshake ya conseguido está persistido en `npcap_capture_1795439368.22000`. Veredicto final honesto: **material capturado, clave NO obtenida**.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
