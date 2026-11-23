@@ -129,6 +129,7 @@ const IA_TOOL_SPECS = {
   deauth_burst:    { cmd: 'usb_raw_deauth',   args: a => ({ bssid: a.bssid, channel: a.channel, target_mac: a.target_mac || null, count: a.target_mac ? 5 : 8, reason: 7, delay_ms: 100 }) },
   generate_dictionary: { cmd: 'generate_dictionary', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '' }) },
   trigger_handshake:  { cmd: 'wifi_probe_trigger', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || null, duration_seconds: 15 }) },
+  pmkid_probe:        { cmd: 'usb_raw_assoc', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || 11 }) },
 };
 
 window.iaValidateTool = function (name, args) {
@@ -144,6 +145,11 @@ window.iaValidateTool = function (name, args) {
   if (name === 'generate_dictionary') {
     if (!String(a.ssid || '').trim() && !String(a.bssid || '').trim()) return { ok: false, error: 'SSID o BSSID requerido' };
     if (String(a.ssid || '').length > 64 || String(a.bssid || '').length > 32 || String(a.hints || '').length > 300) return { ok: false, error: 'Parámetro demasiado largo' };
+  }
+  if (name === 'pmkid_probe') {
+    if (!String(a.ssid || '').trim()) return { ok: false, error: 'SSID requerido para provocar PMKID' };
+    if (!reBssid.test(a.bssid || '')) return { ok: false, error: 'BSSID inválido' };
+    if (a.channel != null && (!Number.isInteger(a.channel) || a.channel < 1 || a.channel > 14)) return { ok: false, error: 'Canal inválido' };
   }
   if (name === 'trigger_handshake') {
     if (!String(a.ssid || '').trim()) return { ok: false, error: 'SSID requerido para el auto-gatillo' };
@@ -340,6 +346,13 @@ window.iaConsoleAskCommand = async function (q) {
       if (!ns || !ns.length) return 'Todavía no he aprendido nada. Usa «recuerda …».';
       return ns.map(function (n) { return '• ' + n.key + ': ' + n.value; }).join('\n');
     } catch (e) { return 'No se pudo leer la memoria: ' + e; }
+  }
+  if (/^(pmkid|provocar pmkid)/.test(cmd)) {
+    var b = (window.getSelectedBssid && window.getSelectedBssid()) || (document.getElementById('attack-bssid') || {}).value || '';
+    var s = (document.getElementById('simple-target-label')?.textContent || '').replace('Objetivo: ', '');
+    if (!b || !s) return 'Selecciona primero una red objetivo.';
+    try { var r = await window.iaPmkidProbe({ ssid: s, bssid: b, channel: null }); return (r && r.message) || JSON.stringify(r); }
+    catch (e) { return 'pmkid_probe falló: ' + e; }
   }
   if (/^(gatillo|trigger|auto.?gatillo)/.test(cmd)) {
     var b = (window.getSelectedBssid && window.getSelectedBssid()) || (document.getElementById('attack-bssid') || {}).value || '';

@@ -177,6 +177,10 @@ if (!/ia_memory_list/.test(lib) || !/iaMemoryContext/.test(iaSrc) || !/iaMemoryC
 if (!/wifi_probe_trigger/.test(lib) || !/convert_ethernet_eapol/.test(lib) || !/iaTriggerHandshake/.test(appSrc)) {
   console.error('REGRESSION: falta el auto-gatillo M1/M2 o su conversor (E0-24).'); bad++;
 }
+// E0-25: PMKID provocado por Association Request
+if (!/usb_raw_assoc/.test(lib) || !/convert_assoc_pmkid/.test(lib) || !/iaPmkidProbe/.test(appSrc) || !/rt3070_assoc/.test(usbTxToml)) {
+  console.error('REGRESSION: falta el provocador de PMKID por USB crudo (E0-25).'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }

@@ -28,6 +28,10 @@ name = "rt3070_chan_preflight"
 path = "src/rt3070_chan_preflight.rs"
 
 [[bin]]
+name = "rt3070_assoc"
+path = "src/rt3070_assoc.rs"
+
+[[bin]]
 name = "rt3070_sniff"
 path = "src/sniff.rs"
 

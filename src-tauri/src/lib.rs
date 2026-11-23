@@ -15,6 +15,7 @@ mod pmf;
 mod dictionary;
 mod ia_memory;
 mod eapol_convert;
+mod assoc_pmkid;
 mod wpa3;
 mod wsl;
 mod usb_raw;
@@ -98,6 +99,7 @@ pub fn run() {
             ia_memory::ia_memory_list,
             ia_memory::ia_memory_clear,
             eapol_convert::convert_ethernet_eapol,
+            assoc_pmkid::convert_assoc_pmkid,
             // perfilador de objetivo (solo lectura)
             profiler::profile_target,
             // estrategia de crack (hashcat -m 22000, corre en Windows)
@@ -172,6 +174,7 @@ pub fn run() {
             usb_raw::usb_raw_diag,
             usb_raw::usb_raw_scan,
             usb_raw::usb_raw_tx_preflight,
+            usb_raw::usb_raw_assoc,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

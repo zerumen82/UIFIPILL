@@ -2710,6 +2710,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix: (1) `trigger_handshake` **retirado de la lista de herramientas que se ofrecen a Ollama** (sigue accesible desde consola, pero el modelo ya no lo propone); (2) `pathOk` rechaza rutas de ejemplo (`/path/to/`, `placeholder`, `SAMPLE`); (3) el orquestador omite `inspect_hash`/`crack_hash` cuando no hay `.22000` real y omite `trigger_handshake` con mensaje claro, sin contarlos como fallos. Verificado CDP con plan que contenía esos 4 pasos: 3 omitidos con motivo, `deauth_burst` ejecutado, veredicto 1 correcto / 0 fallidos.
 - NSIS 1.0.15 recompilado/reinstalado; lint verdes. Límite insalvable: sin cliente asociado al AP no hay EAPOL ni PMKID; el TX y el crack (OpenCL) están verificados.
 
+### SESIÓN 2026-11-23 (cont. 24) — E0-25: PMKID FABRICADO, VEREDICTO NEGATIVO
+- Implementado: `rt3070_assoc` (Auth Request open + Assoc Request con SSID IE y RSN IE WPA2-PSK/PMKID=0), `usb_raw_assoc` (init antes del TX), `convert_assoc_pmkid` (extrae PMKID del RSN IE de (Re)Association Response → `WPA*01*` con SSID real), herramienta IA `pmkid_probe`, comando de consola `pmkid`, recurso NSIS del exe. 45 tests unitarios verdes.
+- **Medición real**: TX confirmado (`Assoc Request 84 bytes`, TXDONE), el AP contesta con ACKs, pero la captura del RT73 en CH4 contiene **188 frames ACK (1/13), 0 Association Response, 0 PMKID**. Ajustes probados: ACK en TXWI, capabilities ESS+Privacy, listen interval 10, init previo. Sin respuesta útil.
+- Conclusión: este AP no devuelve PMKID a una asociación fabricada desde una MAC ajena. No se simula éxito: `pmkid_probe` devuelve «La Association Response no incluyó PMKID». Verdict en `spec/02 E0-25`. RF devuelta a managed; app relanzada; sin commit de artefactos.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

@@ -60,6 +60,7 @@
       "../driver_re/usb_tx/target/release/rt3070_chan_preflight.exe",
       "../driver_re/usb_tx/target/release/rt3070_probe.exe",
       "../driver_re/usb_tx/target/release/rt3070_init.exe",
+      "../driver_re/usb_tx/target/release/rt3070_assoc.exe",
       "../driver_re/usb_tx/target/release/rt3070_scan.exe",
       "../driver_re/usb_tx/target/release/rt3070_sniff.exe",
       "../driver_re/usb_tx/rt2870.bin"

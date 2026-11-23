@@ -469,6 +469,33 @@ pub async fn usb_raw_scan(duration_secs: Option<u32>) -> UsbRawScanResult {
     }).await.unwrap_or_else(|_| UsbRawScanResult { success: false, message: "join error".into(), networks: vec![] })
 }
 
+/// E0-25: enviar Authentication + Association Request por USB crudo para
+/// provocar que el AP devuelva un PMKID en su Association Response.
+#[command]
+pub async fn usb_raw_assoc(ssid: String, bssid: String, channel: u8) -> UsbRawResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let exe = match usb_tx_exe("rt3070_assoc.exe") {
+            Ok(e) => e,
+            Err(e) => return UsbRawResult { success: false, message: e, output: String::new() },
+        };
+        let b = bssid.trim().to_uppercase();
+        let hex_ok = b.len() == 17 && b.chars().enumerate().all(|(i, c)| i % 3 == 2 || c.is_ascii_hexdigit());
+        if !hex_ok || ssid.trim().is_empty() {
+            return UsbRawResult { success: false, message: "SSID o BSSID inválido".into(), output: String::new() };
+        }
+        let chan = channel.clamp(1, 14).to_string();
+        // Igual que el deauth: sin init previo el FIFO TX hace timeout.
+        let init = usb_tx_exe("rt3070_init.exe").ok()
+            .map(|i| run_usb_tool(&i, &[&chan]))
+            .unwrap_or(UsbRawResult { success: false, message: "init no encontrado".into(), output: String::new() });
+        let mut out = init.output;
+        let r = run_usb_tool(&exe, &[ssid.trim(), &b, &chan]);
+        out.push_str("\n--- assoc ---\n");
+        out.push_str(&r.output);
+        UsbRawResult { success: r.success, message: r.message, output: out }
+    }).await.unwrap_or_else(|_| UsbRawResult { success: false, message: "join error".into(), output: String::new() })
+}
+
 // ── E0-20 fase 1: preflight de TX (canal del RT3070 con read-back) ───────────
 #[derive(Serialize)]
 pub struct TxPreflightResult {
