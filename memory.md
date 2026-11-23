@@ -2764,6 +2764,12 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Resultado: `pcap_to_22000` → `hash_count=1, handshake_count=1`; `inspect_hash` → `total=1, challenge=1`; fichero `WPA*02*…*880fa24939a4*00c0ca59a7d8*4d49574946495f4150554d(ESSID)*ANONCE*EAPOL*00`. Crack lanzado; primer fallo «No hashes loaded» por ruta relativa con hashcat en `current_dir(tools/)` → corregido resolviendo a absoluta en `run_stage`. Ahora hashcat carga el hash (`exit 1` = agotado).
 - Estado: cazador temporalmente roto (RT3070 ya no es WinUSB) y plan de crack en curso. Lint/cargo tests/build verdes.
 
+### SESIÓN 2026-11-23 (cont. 35) — INDICADOR DE PROGRESO Y CRACK Del HANDSHAKE
+- El usuario pidió que la UI indique que está trabajando durante el crack. Añadido: `attack-stage` desde `crack_plan.rs` (índice/total/etapa/segundos), cronómetro en `#attack-status-label`, barra animada mientras no hay % real y etiqueta de etapa en `#simple-stage`. Verificado CDP: barra de estado visible, etapa «Probando contraseñas (plan dirigido)…» y progreso 65%.
+- Un hashcat huérfano (pid 12012, de una prueba manual) bloqueó varias etapas con «Already an instance running». Eliminado; las etapas volvieron a correr (exit 1 = agotado, no error de instancia).
+- Crack real sobre el handshake de MIWIFI_APUM: plan automático se quedó en máscara de 10 dígitos (10¹⁰, inviable); cancelado. `crack_custom` con `rockyou.txt` → sin coincidencia, sin `.cracked`. Falta información/candidatas dirigidas (clave del router, wordlist propia, reglas). Veredicto honesto: material válido capturado, contraseña NO obtenida.
+- RF: RT3070 sigue en netr28ux (experimento dos radios); cazador inactivo hasta revertir a WinUSB.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

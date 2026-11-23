@@ -723,7 +723,16 @@ pub async fn crack_plan_run_bg(
             cracked = true;
             lines.push(format!("Ya crackeado: {}", read_cracked(&hash_file).unwrap_or_default()));
         } else {
-            for st in &plan.stages {
+            let started = std::time::Instant::now();
+            for (st_idx, st) in plan.stages.iter().enumerate() {
+                // Progreso visible en la UI: etapa actual, total y tiempo.
+                let _ = app2.emit("attack-stage", serde_json::json!({
+                    "id": attack_id,
+                    "index": st_idx + 1,
+                    "total": stages_count,
+                    "label": st.label,
+                    "elapsed": started.elapsed().as_secs(),
+                }));
                 if cancel.load(Ordering::Relaxed) {
                     lines.push("Plan cancelado.".into());
                     break;

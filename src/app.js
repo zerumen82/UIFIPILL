@@ -1193,8 +1193,36 @@ function armAttackWatchdog() {
   }, ATTACK_WATCHDOG_MS);
 }
 
+// Indicador de "trabajando": cronómetro + barra animada hasta que llegue un
+// porcentaje real ( Muchas etapas de hashcat no emiten % ).
+let _attackElapsedTimer = null;
+let _attackStartTs = 0;
+let _attackHasRealProgress = false;
+let _attackBaseLabel = '';
+function fmtElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
 function setAttackRunning(on, label) {
   _attackBusy = !!on;
+  if (_attackElapsedTimer) { clearInterval(_attackElapsedTimer); _attackElapsedTimer = null; }
+  if (on) {
+    _attackStartTs = Date.now();
+    _attackBaseLabel = label || 'Ataque en curso…';
+    _attackHasRealProgress = false;
+    _attackElapsedTimer = setInterval(() => {
+      const lbl = $('attack-status-label');
+      if (lbl) lbl.textContent = _attackBaseLabel + ' · ⏱ ' + fmtElapsed(Date.now() - _attackStartTs);
+      if (!_attackHasRealProgress) {
+        const bar = $('progress-bar');
+        if (bar) {
+          const pct = 8 + (Math.floor(Date.now() / 700) % 10) * 1.2;
+          bar.style.width = pct.toFixed(0) + '%';
+          bar.textContent = 'TRABAJANDO… ' + fmtElapsed(Date.now() - _attackStartTs);
+        }
+      }
+    }, 1000);
+  }
   if (_attackWatchdog) { clearTimeout(_attackWatchdog); _attackWatchdog = null; }
   const tab = document.getElementById('tab-attack');
   if (tab) tab.classList.toggle('attack-running', _attackBusy);
@@ -3467,6 +3495,20 @@ function _flushEvents() {
     updateProgress(pct, `${mp[3]} frames · ${Math.round(+mp[4] / 1024)} KB · ${mp[1]}/${mp[2]}s`);
   }
 }
+
+// Etapas del plan de crack: porcentaje real + etiqueta + tiempo transcurrido.
+listen('attack-stage', (event) => {
+  try {
+    const d = event.payload || {};
+    if (d.id && currentAttackId && d.id !== currentAttackId) return;
+    if (typeof d.elapsed === 'number') _attackStartTs = Date.now() - d.elapsed * 1000;
+    _attackHasRealProgress = true;
+    const txt = 'Etapa ' + d.index + '/' + d.total + ': ' + (d.label || 'crackeando…');
+    updateProgress(Math.min(95, Math.round((d.index / Math.max(1, d.total)) * 100)), txt);
+    const st = $('simple-stage'); if (st) st.textContent = txt;
+    const lbl = $('attack-status-label'); if (lbl) lbl.textContent = txt + ' · ⏱ ' + fmtElapsed(Date.now() - _attackStartTs);
+  } catch {}
+});
 
 listen('attack-progress', (event) => {
   const { id, type, data } = event.payload;
