@@ -2735,6 +2735,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix: `src/process_util.rs` con `hidden_command()` que aplica `creation_flags(0x08000000)` (CREATE_NO_WINDOW) en Windows. Sustituidos todos los `Command::new` de producción: `usb_raw.rs` (bins usb_tx + powershell de elevación), `crack.rs`/`crack_plan.rs` (hashcat), `tools_detect.rs` (detección de versiones), `wifi_adapter.rs` (powershell), `connect.rs` (reset elevado). Los tests de `capture.rs` no se tocaron.
 - Además, si se pulsa Detener a mitad de un ciclo del cazador, el log dice «ciclo abortado por Detener» en vez de «sin material». Lint/NSIS verdes; app reinstalada.
 
+### SESIÓN 2026-11-23 (cont. 29) — REVISIÓN DE LOG: RECUPERACIÓN UAC NO BLOQUEANTE
+- Log revisado: arranque con radio en monitor → `restore_managed` + reintento fallaron → reparación elevada → **recuperada 6 redes**, cazador reanudado y abortado correctamente por «ataque manual». Sin EAPOL (esperado: AP sin clientes).
+- Fallo detectado: la recuperación tardó **20 min** (11:02:31→11:22:29) porque `wifi_reset_admin` usaba `.output()` con `Start-Process -Verb RunAs -Wait`: la app se queda esperando a que el usuario acepte el UAC.
+- Fix: sin `-Wait` y con `.spawn()` en `connect.rs`; el comando devuelve enseguida «Reparación elevada lanzada; acepta UAC; la app reescanea en unos segundos». El frontend ya espera 9 s y reescanea. Lint/NSIS verdes; app reinstalada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

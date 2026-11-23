@@ -235,18 +235,20 @@ pub async fn wifi_reset_admin(iface_name: Option<String>) -> CmdResponse {
         };
         let name = iface_name.unwrap_or_default().replace('\'', "''");
         let path = script.to_string_lossy().replace('\'', "''");
+        // Sin -Wait y con spawn(): si el usuario tarda en aceptar el UAC, la
+        // app NO se queda bloqueada (medido: 20 min colgada con .output()).
         let cmd = format!(
-            "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{path}','-AdapterName','{name}') -Verb RunAs -Wait"
+            "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{path}','-AdapterName','{name}') -Verb RunAs"
         );
-        let out = crate::process_util::hidden_command("powershell.exe")
+        match crate::process_util::hidden_command("powershell.exe")
             .args(["-NoProfile", "-Command", &cmd])
-            .output();
-        match out {
-            Ok(o) => {
-                let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
-                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
-                CmdResponse { success: o.status.success(), output: stdout, stderr, exit_code: o.status.code() }
-            }
+            .spawn()
+        {
+            Ok(_) => CmdResponse {
+                success: true,
+                output: "Reparación elevada lanzada. Acepta el UAC; la app reescanea en unos segundos.".into(),
+                stderr: String::new(), exit_code: Some(0),
+            },
             Err(e) => CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None },
         }
     }).await.unwrap_or_else(|_| CmdResponse { success: false, output: String::new(), stderr: "join error".into(), exit_code: None })
