@@ -834,6 +834,7 @@ function stopHunter(reason) {
 }
 // Pausa temporal mientras hay un ataque manual: NO es un "Detener" del usuario.
 function pauseHunterForAttack() {
+  if (window._hunterPaused) return; // simpleAttack deriva a iaAttack: una sola pausa
   if (!window._hunterActive && !window._hunterRunning) return;
   window._hunterActive = false;
   window._hunterStopRequested = true;
@@ -882,7 +883,8 @@ async function hunterCycle() {
       stopHunter('material capturado');
       return;
     }
-    if (window._hunterStopRequested) log('[cazador] ciclo ' + cy + ' abortado por Detener.', 'warn');
+    if (window._hunterPaused) log('[cazador] ciclo ' + cy + ' abortado por inicio de ataque (pausa).', 'info');
+    else if (window._hunterStopRequested) log('[cazador] ciclo ' + cy + ' abortado por Detener.', 'warn');
     else log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
   } catch (e) {
     log('[cazador] error en ciclo ' + cy + ': ' + e, 'error');
