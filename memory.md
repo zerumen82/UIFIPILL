@@ -2725,6 +2725,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Ciclo: `iaDeauthBurst` (4 pasadas × 2 frames + watcher 45 s) → si hay EAPOL/`.22000` con hashes, log `⚡ HANDSHAKE CAPTURADO` y parada; si no, log `[cazador] ciclo N sin material` y reintento a los 15 s. Todo por `log()` en la consola única; estado en `#hunter-status`. **Detener** llama a `stopHunter('Detener')` y aborta el ciclo (flag `_simpleStop`); un ataque manual también lo detiene para no solapar TX.
 - Verificado CDP: al seleccionar objetivo → `[cazador] ACTIVO…`, `ciclo 1`, estado «🐺 cazando…»; al pulsar Detener → `[cazador] detenido (Detener)` y estado vacío. Lint/NSIS verdes; app relanzada.
 
+### SESIÓN 2026-11-23 (cont. 27) — CAZADOR: LOGS VISIBLES, ENVÍO SOSTENIDO Y PARADA REAL
+- El usuario preguntó si el cazador dejaba logs: **sí**, `[cazador]` se escribe con `log()` en la consola única (él los pegó). Lo que estaba mal: al pulsar Atacar, `stopHunter('ataque manual')` paraba el temporizador pero la ráfaga en curso seguía transmitiendo frames (solapamiento de TX).
+- Fix: `stopHunter` marca `window._hunterStopRequested=true`; `iaDeauthBurst` aborta su bucle si `args._hunter && _hunterStopRequested` (sin tocar `_simpleStop`, que pertenece al ataque manual). El cazador llama con `_hunter:true, sustained:true` y `maxPasses=20` para enviar deauth durante todo el watcher de 45 s, no solo 8 frames.
+- Verificado CDP: `HUNT_STUB {"bssid":...,"channel":4,"target_mac":null,"_hunter":true,"sustained":true}`; aviso de parada y estado vacío tras Detener. Lint/NSIS verdes; app relanzada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

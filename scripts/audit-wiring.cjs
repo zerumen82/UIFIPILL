@@ -187,6 +187,9 @@ if (!/wifi_reset_admin/.test(lib) || !/wifi_reset_admin/.test(appSrc) || !/reset
 if (!/startHunter/.test(appSrc) || !/maybeAutoHunter/.test(appSrc) || /hunter-btn/.test(html)) {
   console.error('REGRESSION: el cazador automático debe estar integrado sin botón y con logs en consola.'); bad++;
 }
+if (!/_hunterStopRequested/.test(appSrc) || !/sustained/.test(appSrc)) {
+  console.error('REGRESSION: el cazador debe abortar su rafaga al detener y mantener el envio sostenido.'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }

