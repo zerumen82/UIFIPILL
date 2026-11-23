@@ -2753,6 +2753,10 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix: `pauseHunterForAttack()` (marca `_hunterPaused`, aborta la ráfaga en curso pero conserva objetivo) y `resumeHunterIfPaused()` en el `finally` de ambos ataques, tras `restoreRadioAfterAttack()`. `selectNetwork` reinicia el cazador si cambia el BSSID y actualiza el objetivo guardado si estaba pausado. `Detener` sigue siendo parada definitiva.
 - Lint/NSIS verdes; app 1.0.16 reinstalada. Verificación completa del ciclo pausa→reanudar pendiente de prueba CDP (código revisado y guardias añadidas).
 
+### SESIÓN 2026-11-23 (cont. 33) — LOGS DEL CAZADOR MÁS HONESTOS
+- Revisión de log: cambio de objetivo (CA:C9…→88:0F…) reinicia la caza, pausa por ataque y reanudación al terminar funcionan. Dos mensajes engañosos: el ciclo interrumpido por pausa decía «abortado por Detener», y aparecía «PAUSADO» dos veces (simpleAttack→iaAttack).
+- Fix: `pauseHunterForAttack` corta si ya está pausado; el log distingue «abortado por inicio de ataque (pausa)» de «abortado por Detener». NSIS 1.0.16 recompilado/reinstalado; commit `96b474a`. Sin EAPOL (AP sin clientes, veredicto ya documentado).
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
