@@ -222,7 +222,17 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   renderTargetBar();
   if (window.setIaStatus) window.setIaStatus('Objetivo seleccionado: ' + (ssid||'red') + ' · CH ' + (channel||'?') + '. Listo para atacar.');
   window.checkPmfGate(bssid, channel).then((ok) => {
-    if (ok && !window._hunterActive) startHunter(bssid, ssid, channel);
+    if (!ok) return;
+    const prev = window._hunterTarget;
+    if (window._hunterActive && prev && String(prev.bssid).toUpperCase() !== String(bssid).toUpperCase()) {
+      log('[cazador] objetivo cambiado a ' + bssid + ': reiniciando caza.', 'info');
+      stopHunter('cambio de objetivo');
+    }
+    if (!window._hunterActive && !window._hunterPaused) startHunter(bssid, ssid, channel);
+    else if (window._hunterTarget) {
+      window._hunterTarget = { bssid, ssid: ssid || '', channel: parseInt(channel) || 0 };
+      saveHunterTarget(bssid, ssid, channel);
+    }
   });
 
   window.showTab('attack');
@@ -816,10 +826,29 @@ function saveHunterTarget(bssid, ssid, channel) {
 function stopHunter(reason) {
   if (!window._hunterActive && !window._hunterRunning) return;
   window._hunterActive = false;
+  window._hunterPaused = false;
   window._hunterStopRequested = true; // aborta también la ráfaga en curso
   if (window._hunterTimer) { clearTimeout(window._hunterTimer); window._hunterTimer = null; }
   hunterStatus('');
   log('[cazador] detenido' + (reason ? ' (' + reason + ')' : '') + '.', 'warn');
+}
+// Pausa temporal mientras hay un ataque manual: NO es un "Detener" del usuario.
+function pauseHunterForAttack() {
+  if (!window._hunterActive && !window._hunterRunning) return;
+  window._hunterActive = false;
+  window._hunterStopRequested = true;
+  window._hunterPaused = true;
+  if (window._hunterTimer) { clearTimeout(window._hunterTimer); window._hunterTimer = null; }
+  hunterStatus('⏸ pausado por ataque');
+  log('[cazador] PAUSADO durante el ataque; se reanudará al terminar.', 'info');
+}
+function resumeHunterIfPaused() {
+  if (!window._hunterPaused) return;
+  window._hunterPaused = false;
+  const t = window._hunterTarget;
+  if (!t || !t.bssid) return;
+  log('[cazador] reanudando tras el ataque contra ' + t.bssid + '…', 'info');
+  setTimeout(() => startHunter(t.bssid, t.ssid, t.channel), 1200);
 }
 function startHunter(bssid, ssid, channel) {
   if (!bssid) { log('[cazador] sin objetivo: no arranca.', 'warn'); return; }
@@ -1262,7 +1291,7 @@ window.setIaMode = function (on) {
 
 window.iaAttack = async function () {
   if (!claimAttack('ia_attack')) return;
-  stopHunter('ataque manual');
+  pauseHunterForAttack();
   setAttackRunning(true, 'IA: planificando ataque…');
   window._simpleOrchestrating = true;
   window._simpleStop = false;
@@ -1482,6 +1511,7 @@ window.iaAttack = async function () {
     setAttackRunning(false);
     showProgress(false);
     await restoreRadioAfterAttack();
+    resumeHunterIfPaused();
     log('Modo IA finalizado.', 'warn');
   }
 };
@@ -2604,7 +2634,7 @@ window.simpleAttack = async function () {
       return;
     }
   }
-  stopHunter('ataque manual');
+  pauseHunterForAttack();
   // E0-20 fase 1: gate PMF antes de cualquier ataque con objetivo RF.
   const pmfBssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
   if (pmfBssid && !(await window.checkPmfGate(pmfBssid, selectedChannel()))) return;
@@ -2848,6 +2878,7 @@ const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '
     showProgress(false);
     updateProgress(cracked ? 100 : 0, cracked ? 'Clave encontrada' : (stopped ? 'Detenido' : 'Fin'));
     await restoreRadioAfterAttack();
+    resumeHunterIfPaused();
     log(cracked ? '✅ Ataque finalizado: clave encontrada (ver logs/.cracked).' : (stopped ? '⏹ Ataque detenido.' : 'Ataque finalizado. Revisa los logs: captura/hash/candidatas determinan el resultado.'), cracked ? 'ok' : 'warn');
   }
 };

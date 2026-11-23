@@ -2748,6 +2748,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 ### SESIÓN 2026-11-23 (cont. 31) — BUMP A 1.0.16
 - Petición del usuario: «un número nuevo» tras los últimos fixes (cazador sin consola, UAC no bloqueante, TX serializado, init fallido). Versión 1.0.16 en los 7 sitios de build y en `AGENTS.md`. Instalable `UIFIPILL_1.0.16_x64-setup.exe` recompilado, instalado y verificado (`ProductVersion`, bundle JS de `dist/` incrustado).
 
+### SESIÓN 2026-11-23 (cont. 32) — CAZADOR PAUSA/REANUDA (NO "DETENER")
+- El usuario reportó que él no pulsó Detener pero el log decía «cazador detenido (ataque manual)». Causa: `simpleAttack`/`iaAttack` llamaban a `stopHunter('ataque manual')`.
+- Fix: `pauseHunterForAttack()` (marca `_hunterPaused`, aborta la ráfaga en curso pero conserva objetivo) y `resumeHunterIfPaused()` en el `finally` de ambos ataques, tras `restoreRadioAfterAttack()`. `selectNetwork` reinicia el cazador si cambia el BSSID y actualiza el objetivo guardado si estaba pausado. `Detener` sigue siendo parada definitiva.
+- Lint/NSIS verdes; app 1.0.16 reinstalada. Verificación completa del ciclo pausa→reanudar pendiente de prueba CDP (código revisado y guardias añadidas).
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

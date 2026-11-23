@@ -190,6 +190,9 @@ if (!/startHunter/.test(appSrc) || !/maybeAutoHunter/.test(appSrc) || /hunter-bt
 if (!/_hunterStopRequested/.test(appSrc) || !/sustained/.test(appSrc)) {
   console.error('REGRESSION: el cazador debe abortar su rafaga al detener y mantener el envio sostenido.'); bad++;
 }
+if (!/pauseHunterForAttack/.test(appSrc) || !/resumeHunterIfPaused/.test(appSrc)) {
+  console.error('REGRESSION: el cazador debe pausarse y reanudarse automaticamente tras un ataque.'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }
