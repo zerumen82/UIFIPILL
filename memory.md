@@ -2720,6 +2720,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - El usuario aprobó hacerlo automático. Implementado: `scripts/reset_wifi.ps1` (busca adaptador Ralink/RT73 si no se pasa nombre, disable/enable, log en `%TEMP%\uifipill_wifi_reset.log`), recurso NSIS, comando `wifi_reset_admin` que lanza `Start-Process -Verb RunAs -Wait`, y `recoverScanIfMonitor` ampliado: restore OID → reintento → si falla, reset elevado (UAC) → espera 9 s → reescaneo. Guardia en `audit-wiring.cjs`. Instalable 1.0.15 recompilado con el script dentro de `_up_/scripts/`.
 - Nota: el intento de forzar la prueba dejando la radio en monitor no llegó a disparar el camino elevado porque el scan volvió a ver 6 redes; el reset elevado en sí ya estaba medido (8 redes). Lint/NSIS verdes; app relanzada.
 
+### SESIÓN 2026-11-23 (cont. 26) — CAZADOR AUTOMÁTICO INTEGRADO (SIN BOTÓN)
+- El usuario rechazó el botón: debe ser automático. Implementado en `app.js`: al **seleccionar objetivo** (previo gate PMF) se guarda el objetivo en `localStorage` y arranca el cazador; al **abrir la app** se reanuda si había objetivo guardado. Sin botón (se quitó `#hunter-btn`).
+- Ciclo: `iaDeauthBurst` (4 pasadas × 2 frames + watcher 45 s) → si hay EAPOL/`.22000` con hashes, log `⚡ HANDSHAKE CAPTURADO` y parada; si no, log `[cazador] ciclo N sin material` y reintento a los 15 s. Todo por `log()` en la consola única; estado en `#hunter-status`. **Detener** llama a `stopHunter('Detener')` y aborta el ciclo (flag `_simpleStop`); un ataque manual también lo detiene para no solapar TX.
+- Verificado CDP: al seleccionar objetivo → `[cazador] ACTIVO…`, `ciclo 1`, estado «🐺 cazando…»; al pulsar Detener → `[cazador] detenido (Detener)` y estado vacío. Lint/NSIS verdes; app relanzada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

