@@ -2740,6 +2740,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fallo detectado: la recuperación tardó **20 min** (11:02:31→11:22:29) porque `wifi_reset_admin` usaba `.output()` con `Start-Process -Verb RunAs -Wait`: la app se queda esperando a que el usuario acepte el UAC.
 - Fix: sin `-Wait` y con `.spawn()` en `connect.rs`; el comando devuelve enseguida «Reparación elevada lanzada; acepta UAC; la app reescanea en unos segundos». El frontend ya espera 9 s y reescanea. Lint/NSIS verdes; app reinstalada.
 
+### SESIÓN 2026-11-23 (cont. 30) — SERIARIZAR TX Y FRENAR INIT FALLIDO
+- Log revisado: 3 streams de deauth solapados (cazador reiniciado por `selectNetwork` mientras el ataque IA transmitía), y `rt3070_init` con `exit Some(101)` repetido. Riesgo real de TX concurrente y desgaste del chip.
+- Fix en `app.js`: (1) `_deauthRunning` como cerrojo global en `iaDeauthBurst` — si ya hay ráfaga, la nueva se omite con log; se libera en `finally`. (2) `startHunter` no arranca si `attackIsBusy()` o `_simpleOrchestrating` (guarda el objetivo igualmente). (3) Si `usb_raw_init` falla, se registran las últimas 3 líneas de salida, se omite la ráfaga de esa pasada y tras 3 fallos se deja de transmitir con aviso de power-cycle del RT3070.
+- Lint/NSIS verdes; app reinstalada. Sin EAPOL (AP sin clientes, veredicto ya documentado).
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

