@@ -181,6 +181,9 @@ if (!/wifi_probe_trigger/.test(lib) || !/convert_ethernet_eapol/.test(lib) || !/
 if (!/usb_raw_assoc/.test(lib) || !/convert_assoc_pmkid/.test(lib) || !/iaPmkidProbe/.test(appSrc) || !/rt3070_assoc/.test(usbTxToml)) {
   console.error('REGRESSION: falta el provocador de PMKID por USB crudo (E0-25).'); bad++;
 }
+if (!/wifi_reset_admin/.test(lib) || !/wifi_reset_admin/.test(appSrc) || !/reset_wifi\.ps1/.test(JSON.stringify(tauriConf))) {
+  console.error('REGRESSION: falta la recuperación elevada de la radio (E-26).'); bad++;
+}
 if (!tauriConf?.bundle?.resources?.some(r => /rt3070_deauth\.exe/.test(r))) {
   console.error('REGRESSION: el instalador no incluye rt3070_deauth.exe (la IA no podría transmitir).'); bad++;
 }

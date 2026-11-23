@@ -822,8 +822,19 @@ async function recoverScanIfMonitor() {
     await new Promise(r => setTimeout(r, 2500));
     const retry = await window.__invoke('scan_wifi');
     const nets = (retry && retry.networks) || [];
-    if (nets.length) log('[scan] recuperado: ' + nets.length + ' redes tras restore_managed.', 'ok');
-    return nets.length ? nets : null;
+    if (nets.length) { log('[scan] recuperado: ' + nets.length + ' redes tras restore_managed.', 'ok'); return nets; }
+    // El driver puede quedar sordo aunque el OID dijera OK: reset elevado
+    // (disable/enable) con UAC. Es la única recuperación fiable medida.
+    log('[scan] el driver sigue sordo; lanzando reparación elevada (puede salir UAC)…', 'warn');
+    try {
+      const reset = await window.__invoke('wifi_reset_admin', { ifaceName: ad.name });
+      if (!(reset && reset.success)) log('[scan] reparación elevada falló: ' + ((reset && reset.stderr) || '?'), 'error');
+      await new Promise(r => setTimeout(r, 9000));
+      const again = await window.__invoke('scan_wifi');
+      const finalNets = (again && again.networks) || [];
+      if (finalNets.length) { log('[scan] recuperado: ' + finalNets.length + ' redes tras reset elevado.', 'ok'); return finalNets; }
+    } catch (e) { log('[scan] reparación elevada: ' + e, 'error'); }
+    return null;
   } catch (e) { return null; }
 }
 

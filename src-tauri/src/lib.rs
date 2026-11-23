@@ -121,6 +121,7 @@ pub fn run() {
             // Conexión a la red atacada (lab): perfil netsh + keygen Comtrend
             connect::wifi_connect,
             connect::wifi_probe_trigger,
+            connect::wifi_reset_admin,
             connect::wifi_disconnect,
             keygen::keygen_detect,
             keygen::keygen_run,

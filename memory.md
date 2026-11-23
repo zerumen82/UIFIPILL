@@ -2715,6 +2715,11 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - **Medición real**: TX confirmado (`Assoc Request 84 bytes`, TXDONE), el AP contesta con ACKs, pero la captura del RT73 en CH4 contiene **188 frames ACK (1/13), 0 Association Response, 0 PMKID**. Ajustes probados: ACK en TXWI, capabilities ESS+Privacy, listen interval 10, init previo. Sin respuesta útil.
 - Conclusión: este AP no devuelve PMKID a una asociación fabricada desde una MAC ajena. No se simula éxito: `pmkid_probe` devuelve «La Association Response no incluyó PMKID». Verdict en `spec/02 E0-25`. RF devuelta a managed; app relanzada; sin commit de artefactos.
 
+### SESIÓN 2026-11-23 (cont. 25) — E-26 RECUPERACIÓN AUTOMÁTICA CON UAC
+- Log del usuario: arranque con adaptador en monitor → `recoverScanIfMonitor` restauró managed pero el reescaneo siguió con 0 redes → fallback USB crudo (sordo). Repetimos reset elevado manual: disable/enable → 8 redes visibles.
+- El usuario aprobó hacerlo automático. Implementado: `scripts/reset_wifi.ps1` (busca adaptador Ralink/RT73 si no se pasa nombre, disable/enable, log en `%TEMP%\uifipill_wifi_reset.log`), recurso NSIS, comando `wifi_reset_admin` que lanza `Start-Process -Verb RunAs -Wait`, y `recoverScanIfMonitor` ampliado: restore OID → reintento → si falla, reset elevado (UAC) → espera 9 s → reescaneo. Guardia en `audit-wiring.cjs`. Instalable 1.0.15 recompilado con el script dentro de `_up_/scripts/`.
+- Nota: el intento de forzar la prueba dejando la radio en monitor no llegó a disparar el camino elevado porque el scan volvió a ver 6 redes; el reset elevado en sí ya estaba medido (8 redes). Lint/NSIS verdes; app relanzada.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

@@ -214,6 +214,44 @@ pub async fn wifi_disconnect(app: AppHandle) -> CmdResponse {
     }
 }
 
+/// E-26: lanzar el reset elevado (disable/enable) del adaptador WiFi cuando
+/// restore_managed por OID no despierta el stack de scan. Muestra UAC.
+#[command]
+pub async fn wifi_reset_admin(iface_name: Option<String>) -> CmdResponse {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(p) = exe.parent() {
+                dirs.push(p.join("scripts"));
+                dirs.push(p.join("_up_").join("scripts"));
+                dirs.push(p.join("resources"));
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() { dirs.push(cwd.join("scripts")); }
+        let script = match dirs.into_iter().find(|d| d.join("reset_wifi.ps1").exists()) {
+            Some(d) => d.join("reset_wifi.ps1"),
+            None => return CmdResponse { success: false, output: String::new(),
+                stderr: "No se encontró scripts/reset_wifi.ps1 (debe ir en el instalador).".into(), exit_code: None },
+        };
+        let name = iface_name.unwrap_or_default().replace('\'', "''");
+        let path = script.to_string_lossy().replace('\'', "''");
+        let cmd = format!(
+            "Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{path}','-AdapterName','{name}') -Verb RunAs -Wait"
+        );
+        let out = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", &cmd])
+            .output();
+        match out {
+            Ok(o) => {
+                let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
+                CmdResponse { success: o.status.success(), output: stdout, stderr, exit_code: o.status.code() }
+            }
+            Err(e) => CmdResponse { success: false, output: String::new(), stderr: e.to_string(), exit_code: None },
+        }
+    }).await.unwrap_or_else(|_| CmdResponse { success: false, output: String::new(), stderr: "join error".into(), exit_code: None })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
