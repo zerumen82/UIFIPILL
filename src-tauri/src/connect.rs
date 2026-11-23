@@ -59,7 +59,7 @@ async fn netsh(app: &AppHandle, args: &[&str]) -> Result<(bool, String), String>
 
 /// Comando: conecta a un SSID con clave (perfil temporal, se deja instalado).
 #[command]
-pub async fn wifi_connect(app: AppHandle, ssid: String, password: String) -> CmdResponse {
+pub async fn wifi_connect(app: AppHandle, ssid: String, password: String, iface_name: Option<String>) -> CmdResponse {
     if ssid.trim().is_empty() || password.is_empty() {
         return CmdResponse {
             success: false, output: String::new(),
@@ -93,7 +93,13 @@ pub async fn wifi_connect(app: AppHandle, ssid: String, password: String) -> Cmd
     }
     // Conectar por nombre de perfil (= SSID).
     let profile = ssid.trim();
-    let (ok_con, out_con) = match netsh(&app, &["wlan", "connect", &format!("name=\"{}\"", profile)]).await {
+    let mut cargs: Vec<String> = vec!["wlan".into(), "connect".into(), format!("name=\"{profile}\"")];
+    if let Some(i) = iface_name {
+        let i = i.trim();
+        if !i.is_empty() { cargs.push(format!("interface=\"{i}\"")); }
+    }
+    let refs: Vec<&str> = cargs.iter().map(|s| s.as_str()).collect();
+    let (ok_con, out_con) = match netsh(&app, &refs).await {
         Ok(r) => r,
         Err(e) => return CmdResponse { success: false, output: out_add, stderr: e, exit_code: None },
     };

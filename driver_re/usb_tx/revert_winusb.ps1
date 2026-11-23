@@ -42,4 +42,4 @@ if ($drv -match 'netr28|802\.11|Ralink|MediaTek') {
 } else {
     Log "AVISO: revisa el driver en el Administrador de dispositivos si no es netr28ux."
 }
-Log "Log completo en $log"
+Log ("Log completo en " + $log)

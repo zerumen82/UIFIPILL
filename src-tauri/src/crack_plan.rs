@@ -537,6 +537,15 @@ async fn run_stage(
     cancel: &std::sync::Arc<AtomicBool>,
 ) -> Result<(bool, String), String> {
     if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
+    // hashcat se lanza con current_dir(tools/): una ruta relativa como
+    // "./captura.22000" no existe allí → "No hashes loaded". Resolverla
+    // respecto al CWD de la app antes de pasarla a hashcat.
+    let hash_file_abs = if Path::new(hash_file).is_absolute() {
+        hash_file.to_string()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(hash_file).to_string_lossy().into_owned()
+    };
+    let hash_file = hash_file_abs.as_str();
     if let Some(pw) = read_cracked(hash_file) { return Ok((true, format!("Ya crackeado: {}", pw))); }
 
     let cracked_out = format!("{}.cracked", hash_file);

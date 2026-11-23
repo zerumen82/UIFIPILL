@@ -92,18 +92,23 @@ pub struct ConvertResult {
 
 /// Comando Tauri: convierte .pcap → .22000 (reemplaza hcxpcapngtool.exe)
 #[command]
-pub async fn pcap_to_22000(pcap_path: String, output_dir: Option<String>) -> ConvertResult {
+pub async fn pcap_to_22000(pcap_path: String, output_dir: Option<String>, ssid: Option<String>) -> ConvertResult {
     let out_dir = output_dir.as_deref().unwrap_or(".");
     let stem = std::path::Path::new(&pcap_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("out");
     let output_path = format!("{}/{}.22000", out_dir, stem);
-    convert_pcap_to_22000(pcap_path, output_path).await
+    convert_pcap_to_22000_with_ssid(pcap_path, output_path, ssid.as_deref()).await
 }
 
-/// Convierte un archivo pcap a hashcat .22000
+/// Convierte un archivo pcap a hashcat .22000 (sin ESSID conocido).
 pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> ConvertResult {
+    convert_pcap_to_22000_with_ssid(pcap_path, output_path, None).await
+}
+
+/// Igual, pero escribe el ESSID real en la línea 22000 (lo necesita hashcat).
+pub async fn convert_pcap_to_22000_with_ssid(pcap_path: String, output_path: String, ssid: Option<&str>) -> ConvertResult {
     let data = match std::fs::read(&pcap_path) {
         Ok(d) => d,
         Err(e) => return ConvertResult {
@@ -196,7 +201,7 @@ pub async fn convert_pcap_to_22000(pcap_path: String, output_path: String) -> Co
         out_lines.push(line);
     }
     for (_key, hs) in &handshakes {
-        if let Some(line) = build_hash_line(hs) {
+        if let Some(line) = build_hash_line(hs, ssid.as_deref()) {
             out_lines.push(line);
         }
     }
@@ -256,10 +261,14 @@ fn process_80211_frame(
     let _ = (ftype, fsub, da, sa, bssid);
 
     // EAPOL (Data frame, subtype 0x00 o QoS-Data 0x01)
-    if ftype == 2 && (fsub == 0 || fsub == 1) {
+    // Data (0..7) y QoS Data (8..15): los handshakes reales suelen venir como
+    // QoS Data (subtipo 8), que antes se descartaba aquí.
+    if ftype == 2 {
         // After 802.11 header (24 bytes min), look for LLC/SNAP + EAPOL
         // Check for QoS (FC byte 1, bit 7)
-        let qos = (fc >> 15) & 1 != 0;
+        // QoS Data son los subtipos 8..15 (dan 2 bytes extra de cabecera).
+        // El bit 15 del FC es "Order", NO el indicador de QoS.
+        let qos = fsub >= 8;
         let hdr_len = if qos { 26 } else { 24 };
         let llc_off = fc_off + hdr_len;
 
@@ -274,7 +283,9 @@ fn process_80211_frame(
         let eapol_len = u16::from_be_bytes([pkt[eapol_off+2], pkt[eapol_off+3]]) as usize;
         if eapol_off + 4 + eapol_len > pkt.len() { return }
 
-        if eapol_type != 2 { return } // EAPOL-Key only
+        // EAPOL-Key es tipo 3 (2 es EAPOL-Logoff). El filtro antiguo !=2
+        // descartaba TODOS los handshakes reales.
+        if eapol_type != 3 { return } // EAPOL-Key only
         if eapol_len < 95 { return }   // minimum EAPOL-Key size
 
         let key_off = eapol_off + 4;
@@ -383,7 +394,7 @@ fn process_80211_frame(
 /// Formato (hcxpcapngtool): WPA*02*MIC*MAC_AP*MAC_STA*ESSID_HEX*ANONCE*EAPOL_MIC_CERO*MP
 /// - EAPOL = mensaje completo (header EAPOL + Key) con los 16 bytes del MIC a 0.
 /// - MP 00 = M1+M2 con EAPOL tomado de M2 (challenge).
-fn build_hash_line(hs: &HandshakeState) -> Option<String> {
+fn build_hash_line(hs: &HandshakeState, ssid: Option<&str>) -> Option<String> {
     let m1 = hs.eapol_m1.as_ref()?;
     let m2 = hs.eapol_m2.as_ref()?;
     let anonce = hs.anonce.as_ref()?;
@@ -403,7 +414,9 @@ fn build_hash_line(hs: &HandshakeState) -> Option<String> {
     }
 
     let mic_hex = hex(&eapol[mic_off..mic_off + 16]); // cero a cero tras el wipe (hashcat recalcula)
-    let essid_hex = String::new(); // ESSID desconocido en capturas crudas
+    // hashcat necesita el ESSID para derivar el PMK; si el caller lo conoce,
+    // lo escribe en el campo 6 de la línea 22000.
+    let essid_hex = ssid.map(|s| hex(s.as_bytes())).unwrap_or_default();
     let _ = m1;
 
     Some(format!(

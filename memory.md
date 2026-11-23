@@ -2757,6 +2757,13 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Revisión de log: cambio de objetivo (CA:C9…→88:0F…) reinicia la caza, pausa por ataque y reanudación al terminar funcionan. Dos mensajes engañosos: el ciclo interrumpido por pausa decía «abortado por Detener», y aparecía «PAUSADO» dos veces (simpleAttack→iaAttack).
 - Fix: `pauseHunterForAttack` corta si ya está pausado; el log distingue «abortado por inicio de ataque (pausa)» de «abortado por Detener». NSIS 1.0.16 recompilado/reinstalado; commit `96b474a`. Sin EAPOL (AP sin clientes, veredicto ya documentado).
 
+### SESIÓN 2026-11-23 (cont. 34) — HITO: HANDSHAKE REAL CON DOS RADIOS
+- El usuario pidió forzar la asociación en vez de conectar cliente real. Revertimos RT3070 a `netr28ux` (`revert_winusb.ps1`; el script del repo tenía un error de comillas, se usó wrapper ASCII): Windows vio **dos radios** — `Wi-Fi 3` RT73 (monitor) y `Wi-Fi 5` RT3070 (cliente falso, MAC 00:c0:ca:59:a7:d8).
+- Con RT73 en monitor CH11 y `netsh wlan connect name=MIWIFI_APUM interface="Wi-Fi 5"` (perfil con clave falsa) se capturó `npcap_capture_1795439368.pcap`: **30 frames del cliente falso, 13 EAPOL, Association Response del AP**. El conversor NO extraía nada por tres bugs propios: (1) filtraba `eapol_type != 2` siendo EAPOL-Key tipo **3**; (2) detectaba QoS con el bit 15 del FC en vez de subtipo>=8 → SNAP buscado en offset 24 en vez de 26; (3) solo aceptaba data subtypes 0/1, no QoS Data 8. Corregidos.
+- Además `classify_line` esperaba message pair `0` y el conversor escribía `00`; y el `.22000` salía con ESSID vacío. Corregidos: normalizar `00`→`0` y nuevo parámetro `ssid` en `pcap_to_22000` → `convert_pcap_to_22000_with_ssid`.
+- Resultado: `pcap_to_22000` → `hash_count=1, handshake_count=1`; `inspect_hash` → `total=1, challenge=1`; fichero `WPA*02*…*880fa24939a4*00c0ca59a7d8*4d49574946495f4150554d(ESSID)*ANONCE*EAPOL*00`. Crack lanzado; primer fallo «No hashes loaded» por ruta relativa con hashcat en `current_dir(tools/)` → corregido resolviendo a absoluta en `run_stage`. Ahora hashcat carga el hash (`exit 1` = agotado).
+- Estado: cazador temporalmente roto (RT3070 ya no es WinUSB) y plan de crack en curso. Lint/cargo tests/build verdes.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

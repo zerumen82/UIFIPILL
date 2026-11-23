@@ -34,7 +34,10 @@ pub fn classify_line(line: &str) -> Option<(HashKind, Option<String>)> {
     match f[1] {
         "01" => Some((HashKind::Pmkid, essid)),
         "02" => {
-            let pair = f.last().unwrap_or(&"").trim();
+            let raw = f.last().unwrap_or(&"").trim();
+            // El conversor escribe "00"; otros: "0".."5". Normalizar a un dígito.
+            let norm = raw.trim_start_matches('0');
+            let pair = if norm.is_empty() { "0" } else { norm };
             // Bits 2,1,0 del message pair: 000 = challenge (M1+M2), resto = authorized.
             let kind = match pair {
                 "0" => HashKind::EapolChallenge,
