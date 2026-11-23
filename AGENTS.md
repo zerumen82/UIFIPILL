@@ -1,6 +1,6 @@
 # AGENTS.md — UIFIPILL Project
 
-> **ACTUALIZACIÓN DE ESTADO 2026-11-23 (lee esto primero):** versión **1.0.15**. Todo el trabajo de 2026-11-22 está commiteado y
+> **ACTUALIZACIÓN DE ESTADO 2026-11-23 (lee esto primero):** versión **1.0.16**. Todo el trabajo de 2026-11-22 está commiteado y
 > pusheado: CSP desactivada (botones inline), consola única con tool-calling,
 > Modo IA con validación/contexto/watchdog/plan mínimo, E0-20 (gate PMF,
 > read-back RT3070 y ráfaga deauth con watcher EAPOL), E0-22/E0-23 (diccionarios

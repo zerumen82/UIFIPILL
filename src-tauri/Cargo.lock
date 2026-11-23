@@ -4290,7 +4290,7 @@ checksum = "40ce102ab67701b8526c123c1bab5cbe42d7040ccfd0f64af1a385808d2f43de"
 
 [[package]]
 name = "uifipill"
-version = "1.0.15"
+version = "1.0.16"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

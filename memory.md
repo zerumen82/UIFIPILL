@@ -2745,6 +2745,9 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Fix en `app.js`: (1) `_deauthRunning` como cerrojo global en `iaDeauthBurst` — si ya hay ráfaga, la nueva se omite con log; se libera en `finally`. (2) `startHunter` no arranca si `attackIsBusy()` o `_simpleOrchestrating` (guarda el objetivo igualmente). (3) Si `usb_raw_init` falla, se registran las últimas 3 líneas de salida, se omite la ráfaga de esa pasada y tras 3 fallos se deja de transmitir con aviso de power-cycle del RT3070.
 - Lint/NSIS verdes; app reinstalada. Sin EAPOL (AP sin clientes, veredicto ya documentado).
 
+### SESIÓN 2026-11-23 (cont. 31) — BUMP A 1.0.16
+- Petición del usuario: «un número nuevo» tras los últimos fixes (cazador sin consola, UAC no bloqueante, TX serializado, init fallido). Versión 1.0.16 en los 7 sitios de build y en `AGENTS.md`. Instalable `UIFIPILL_1.0.16_x64-setup.exe` recompilado, instalado y verificado (`ProductVersion`, bundle JS de `dist/` incrustado).
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
