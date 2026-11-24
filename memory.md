@@ -2871,6 +2871,10 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Log del usuario: seleccionó `Galaxy A13 F7DD` (hotspot móvil) y el gate PMF dio fail-closed «No se vieron beacons» → el cazador no arrancó. Usuario: «no estás pensando en ataques universales que sirvan para cualquier red; la IA debe pensarlo también».
 - Fix M-15: (a) `checkPmfGate` captura 6 s y reintenta 12 s; si aun así no hay RSN, **no bloquea** y habilita `trigger_handshake` (asociación con dos radios, sin deauth, válida para hotspots/móviles); solo MFPR=1 confirmado sigue bloqueando. (b) Prompt de Ollama reescrito como estrategia universal, sin la contradicción «usa / no uses trigger_handshake» y sin `pmkid_probe`; incluye `generate_dictionary_ai` + `crack_custom` cuando falle el plan. (c) `hasForced` acepta `trigger_handshake`, el plan mínimo lo usa y se eliminó el `continue` que lo omitía. **Verificado**: `checkPmfGate('00:11:22:33:44:55',6)` sin beacons → `ok=true, blocked=false` (antes devolvía false y paraba el cazador). Lint/vite/NSIS verdes. Sin commit.
 
+### SESIÓN 2026-11-24 (cont. 56) — REVISIÓN A FONDO: M-16 RUTAS RELATIVAS EN crack_custom
+- Revisión del flujo completo tras el commit `b8080e1`: el preview de máscaras era correcto (`Q003…` tiene 14 chars → `sanitize_ssid_literal` descarta el literal; solo quedan 8 y 10 dígitos, y 10^10 se omite con motivo). No era un bug.
+- **Bug real encontrado**: `crack_custom` comprobaba `Path::new(&hash_file).exists()` respecto al CWD de la app, pero lanzaba hashcat con `current_dir(tools/)`. Con la ruta relativa que sugiere el placeholder (`capture_xxx.22000`) hashcat daba `No hashes loaded` y, si acertaba, escribía el `.cracked` en `tools/` en vez de junto al hash. Fix M-16: resolver a absolutos hash, wordlist y `-o` antes de pasar los args. Sin commit.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable

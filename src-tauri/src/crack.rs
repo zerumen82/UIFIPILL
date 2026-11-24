@@ -303,11 +303,21 @@ pub async fn crack_custom(
             exit_code: None,
         };
     }
-    if !std::path::Path::new(&hash_file).exists() {
+    // M-16: hashcat se lanza con current_dir(tools/). Una ruta relativa como
+    // "capture.22000" existe respecto al CWD de la app, pero hashcat la busca
+    // en tools/ → "No hashes loaded", y el .cracked acabaría en tools/ en vez
+    // de junto al hash. Resolver TODO a absoluto antes de pasar los argumentos.
+    let to_abs = |p: &str| -> String {
+        let path = std::path::Path::new(p);
+        if path.is_absolute() { p.to_string() }
+        else { std::env::current_dir().unwrap_or_default().join(path).to_string_lossy().into_owned() }
+    };
+    let hash_abs = to_abs(&hash_file);
+    if !std::path::Path::new(&hash_abs).exists() {
         return CmdResponse {
             success: false,
             output: String::new(),
-            stderr: format!("No existe el hash: {}", hash_file),
+            stderr: format!("No existe el hash: {}", hash_abs),
             exit_code: None,
         };
     }
@@ -336,7 +346,10 @@ pub async fn crack_custom(
     }
 
     let shell = app.shell();
-    let cracked_out = format!("{}.cracked", hash_file);
+    let cracked_out = format!("{}.cracked", hash_abs);
+    // Igual para la wordlist: si el usuario escribe un nombre relativo, debe
+    // resolverse respecto al CWD de la app, no al de hashcat.
+    let wordlist_abs = wordlist.as_deref().map(|w| to_abs(w));
     let mut args: Vec<String> = vec![
         "-m".into(), "22000".into(),
         "-a".into(), attack.to_string(),
@@ -369,21 +382,22 @@ pub async fn crack_custom(
             args.push(rule_path);
         }
     }
-    args.push(hash_file.clone());
+    args.push(hash_abs.clone());
+    let wl = wordlist_abs.unwrap_or_default();
     match attack {
-        0 => args.push(wordlist.unwrap()),
+        0 => args.push(wl),
         1 => {
-            args.push(wordlist.clone().unwrap());
-            args.push(wordlist.unwrap());
+            args.push(wl.clone());
+            args.push(wl);
         }
         3 => args.push(mask.unwrap()),
         6 => {
-            args.push(wordlist.unwrap());
+            args.push(wl);
             args.push(mask.unwrap());
         }
         7 => {
             args.push(mask.unwrap());
-            args.push(wordlist.unwrap());
+            args.push(wl);
         }
         _ => unreachable!(),
     }
