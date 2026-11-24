@@ -2875,6 +2875,31 @@ Petición del usuario (insistente): «el gatillo sigue, dije que lo quitaras», 
 - Revisión del flujo completo tras el commit `b8080e1`: el preview de máscaras era correcto (`Q003…` tiene 14 chars → `sanitize_ssid_literal` descarta el literal; solo quedan 8 y 10 dígitos, y 10^10 se omite con motivo). No era un bug.
 - **Bug real encontrado**: `crack_custom` comprobaba `Path::new(&hash_file).exists()` respecto al CWD de la app, pero lanzaba hashcat con `current_dir(tools/)`. Con la ruta relativa que sugiere el placeholder (`capture_xxx.22000`) hashcat daba `No hashes loaded` y, si acertaba, escribía el `.cracked` en `tools/` en vez de junto al hash. Fix M-16: resolver a absolutos hash, wordlist y `-o` antes de pasar los args. Sin commit.
 
+### SESIÓN 2026-11-24 (cont. 57) — E0-30: CLIENTE REAL, DEAUTH REAL, SIN RECONEXIÓN
+- Implementado: `client_scan.rs` (`detect_clients`) + registro Tauri + herramienta IA; cazador reescrito para NUNCA falsificar clave: detecta STAs → deauth dirigido (o broadcast en ciclos pares) → watcher 90 s → convert → auto-crack. Si no hay clientes, reintenta 3 veces y se detiene honestamente. `trigger_handshake` retirado del cazador y del plan IA.
+- RF: RT3070 revertido a WinUSB con UAC (el script `revert_winusb.ps1` dejó el device sin driver; `install_winusb.ps1` publicó el INF y `rt3070_probe` abrió el chip). Fix `usb_raw_status`: el probe ya no imprime `0x3070`, ahora detecta `USB 5263:12400` / `el chip HABLA` → `success:true`. RT73 dio 0 redes tras tantos cambios de modo; `wifi_reset_admin` (UAC) lo recuperó con 18 redes.
+- Falsos positivos del detector corregidos: multicast (33:33:xx = IPv6), otra BSS del mismo router (mismo prefijo de MAC) y tramas WDS (exigir ToDS xor FromDS). Tras eso, clientes plausibles: `50:C2:E8:D1:E1:41`, `5A:F2:03:A0:DD:E5`.
+- **Medición real**: sobre `sagemcomDEF0` CH1, deauth dirigido y BROADCAST con **TXDONE confirmado** (hasta 40 frames/tanda) y watchers de 90 s (3.388 / 3.445 paquetes capturados) → **0 EAPOL en 4 ciclos**. Los clientes detectados no se reconectan. No se fabrica cliente falso. Conclusión: el TX funciona y el material falso estaba envenenado; falta un cliente que reassocie de verdad. Sin commit de E0-30.
+
+### SESIÓN 2026-11-24 (cont. 58) — REVISIÓN A FONDO + INTERNET: POR QUÉ NO HAY EAPOL
+- Análisis del pcap real del ciclo broadcast (`npcap_watch_1795540055.pcap`, 3445 paquetes): **0 EAPOL, 0 Association Request, 0 Reassociation Request, 1 solo deauth**, 644 beacons, 247 Authentication, 117 Probe Response, 16 Probe Request. **No aparece ni una trama del STA `50:C2:E8:D1:E1:41`** durante el watcher: el «cliente» detectado 12 s antes ya no estaba. Es decir, los STAs detectados son transitorios/no asociados de verdad, no clientes reconectando.
+- Internet (DuckDuckGo, 2026-11-24): documentación de Aircrack-ng confirma que tras deauth los clientes «pueden reconectar tan rápido que no los veas» y que hay que buscar **reassociation** en la captura; aquí hay 0 reassoc. hcxdumptool/PMKID sí permite ataque **sin cliente**, pero depende de que el AP incluya PMKID en la respuesta a una Association Request — medido negativo en este AP (E0-25). Para Sagemcom, la clave WPA por defecto está en la **etiqueta**; no hay keygen público (solo Comtrend/Jazztel/WLAN_XXXX y similares).
+- Veredicto: el TX real, la detección y el watcher funcionan; el AP no tiene un cliente que reassocie y no expone PMKID. No quedaUna vía software para obtener la clave sin candidata real. Sin commit.
+
+### SESIÓN 2026-11-24 (cont. 59) — DETECTOR DE CLIENTES ENDURECIDO ( GENERAL )
+- El usuario pidió que valga «en general, para otras redes». `detect_clients` ahora: (a) solo Data/QoS con ToDS xor FromDS, (b) descarta multicast, otra BSS del mismo AP y WDS, (c) cuenta (Re)Association Request al AP, (d) **exige ≥2 tramas del mismo STA** para considerarlo cliente real. Tests verdes (52), build 0 warnings, NSIS reinstalado.
+- Validación pendiente: el escaneo pasivo de clientes por todas las redes no pudo ejecutarse porque el RT73 quedó en managed pero **netsh ve 0 redes** (driver sordo); `wifi_reset_admin` fue lanzado pero requiere que el usuario acepte UAC. Sin commit.
+
+### SESIÓN 2026-11-24 (cont. 60) — REPARACIÓN DEL SCAN Y VEREDICTO FINAL DE CLIENTES
+- **Causa del scan a 0**: `recoverScanIfMonitor` pasaba un nombre de adaptador desactualizado (`Wi-Fi`) y `reset_wifi.ps1` solo autodetectaba si el nombre venía vacío. Fix: el script hace fallback a Ralink/RT73 si el nombre no existe, y el frontend elige el adaptador `monitor_capable` (RT73) en vez del primer GUID. Verificado: **15 redes** de nuevo.
+- Escaneo pasivo de clientes en 14 redes WPA: solo 2 «con clientes», ambas falsos positivos (`48:22:54:88:29:D6` era el BSSID de TP-Link_29D6; `60:8D:26:F8:F1:4A` era otra banda del mismo Livebox). **Ninguna red tiene un cliente asociado estable.**
+- Prueba en `La Fory 3H` (autorizada): cliente detectado, deauth dirigido con **TXDONE real** en CH6, watcher 90 s → **0 EAPOL**; el pcap no contiene NI UNA trama de ese STA → era una detección transitoria, no un cliente conectado.
+- Detector final: 30 s de captura, **≥5 tramas** por STA, exclusión de BSSID conocidos, multicast/WDS/otra BSS filtrados. 52 tests verdes, build 0 warnings, NSIS reinstalado. E0-30 sigue **sin commitear**.
+
+### SESIÓN 2026-11-24 (cont. 62) — BUMP 1.0.17 → 1.0.18
+- Petición del usuario: subir número de versión tras los cambios de Path del modo Linux para el cazador. Actualizados los 7 sitios (package.json, package-lock ×2, Cargo.toml, Cargo.lock, tauri.conf, 2 badges de index.html) + `AGENTS.md`.
+- **Compilación**: `driver_re/usb_tx/cargo build --release` (rebuild de rt3070_usb_tx para tener `rt73_rx.exe`), luego tauri build de la app y NSIS recompilado. Instalado con `/S`, `ProductVersion=1.0.18` verificado. Sin commit posterior, solamente versión.
+
 # PARTE 6 — TRASPASO / HANDOFF (2026-11-21) — LEER PRIMERO SI TE RELEVAN
 
 ## 6.1 — Estado entregable
