@@ -539,6 +539,18 @@ async fn run_hashcat(
     (exit_code, stdout, stderr)
 }
 
+/// M-11: hashcat solo permite UNA instancia. Si otra instancia (por ejemplo
+/// un plan anterior colgado) tiene el lock, TODAS las etapas devolvían
+/// "agotada sin coincidencia (exit -1)" aunque no hubieran probado ni una
+/// contraseña. Detectar la causa real y abortar la etapa con veredicto honesto.
+fn check_hashcat_instance(stderr: &str) -> Result<(), String> {
+    if stderr.contains("Already an instance") || stderr.contains("running on pid") {
+        let first = stderr.trim().lines().next().unwrap_or("hashcat en uso").trim();
+        return Err(format!("FALSO NEGATIVO EVITADO: hashcat ya está en uso por otra instancia ({first}). No se probaron candidatas; mata esa instancia antes de repetir."));
+    }
+    Ok(())
+}
+
 fn emit_progress(app: &AppHandle, attack_id: &str, msg: &str) {
     let _ = app.emit("attack-progress", serde_json::json!({ "id": attack_id, "type": "stdout", "data": msg }));
 }
@@ -588,6 +600,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}: verificando {} candidato(s)…\n", stage.label, candidates.len()));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), hash_file.to_string(), tmp.to_string_lossy().into_owned()];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             let _ = std::fs::remove_file(&tmp);
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada por keygen.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
@@ -599,6 +612,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "3".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), mask];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada por máscara.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
             Ok((false, format!("Máscara agotada sin coincidencia (exit {}). {}", code, se.lines().next().unwrap_or(""))))
@@ -608,6 +622,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), wl];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada en diccionario.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
             Ok((false, format!("Diccionario agotado sin coincidencia (exit {}). {}", code, se.lines().next().unwrap_or(""))))
@@ -623,6 +638,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), wl];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada en diccionario.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
             Ok((false, format!("Diccionario agotado sin coincidencia (exit {}). {}", code, se.lines().next().unwrap_or(""))))
@@ -634,6 +650,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-r".into(), rule, "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), wl];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada con regla.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
             Ok((false, format!("Diccionario+regla agotado (exit {}). {}", code, se.lines().next().unwrap_or(""))))
@@ -642,6 +659,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "4".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string()];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if se.contains("Unknown option") || (se.contains("-a") && se.contains("4")) || se.contains("Invalid attack mode") {
                 return Err("hashcat no soporta -a 4 (PCFG) en esta instalación (etapa omitida).".into());
             }
@@ -654,6 +672,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "4".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), "hints".into(), format!("hintwords={}", hint)];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if se.contains("Unknown option") || se.contains("Invalid attack mode") || se.contains("ruleset") && se.contains("No such file") {
                 return Err("hashcat no soporta PCFG+hints en esta instalación (etapa omitida).".into());
             }
@@ -667,6 +686,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), ext.to_string()];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if read_cracked(hash_file).is_some() { return Ok((true, "Clave encontrada con wordlist externa.".into())); }
             if cancel.load(Ordering::Relaxed) { return Err("cancelado".into()); }
             Ok((false, format!("Wordlist externa agotada (exit {}). {}", code, se.lines().next().unwrap_or(""))))
@@ -677,6 +697,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] Feed externo {}…\n", ext));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "8".into(), ext.to_string(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string()];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if se.contains("Unknown option") || se.contains("Invalid attack mode") || se.contains("No such file or directory") && se.contains("feed") {
                 return Err("hashcat no soporta este feed -a 8 en esta instalación (etapa omitida).".into());
             }
@@ -690,6 +711,7 @@ async fn run_stage(
             emit_progress(app, attack_id, &format!("[plan] Generador externo {}…\n", ext));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "--slow-candidates".into(), "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), ext.to_string()];
             let (code, _so, se) = run_hashcat(app, args, attack_id, cancel).await;
+            check_hashcat_instance(&se)?;
             if se.contains("Unknown option") || se.contains("--slow-candidates") {
                 return Err("hashcat no soporta --slow-candidates: exporta las candidatas a .txt (PassGAN/PassGPT) o usa un feed -a 8 (etapa omitida).".into());
             }
@@ -783,6 +805,14 @@ pub async fn crack_plan_run_bg(
                         let line = format!("[plan] -- {} — {}", st.label, msg);
                         emit_progress(&app2, &attack_id, &format!("{}\n", line));
                         lines.push(line);
+                    }
+                    Err(e) if e.contains("FALSO NEGATIVO EVITADO") => {
+                        // No lanzar más etapas: todas caerían por el mismo lock
+                        // y el plan parecería "agotado" cuando no probó nada.
+                        let line = format!("[plan] ABORTADO {} — {}", st.label, e);
+                        emit_progress(&app2, &attack_id, &format!("{}\n", line));
+                        lines.push(line);
+                        break;
                     }
                     Err(e) if e == "cancelado" => {
                         lines.push("Plan cancelado.".into());
@@ -883,6 +913,14 @@ mod tests {
                     "las máscaras demasiado grandes deben explicar por qué se saltan");
             }
         }
+    }
+
+    #[test]
+    fn detects_stale_hashcat_instance() {
+        let se = "Already an instance D:\\tools\\hashcat.exe running on pid 2068\n";
+        assert!(check_hashcat_instance(se).is_err());
+        assert!(check_hashcat_instance("").is_ok());
+        assert!(check_hashcat_instance("No hashes loaded").is_ok());
     }
 
     #[test]

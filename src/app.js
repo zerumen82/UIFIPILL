@@ -909,6 +909,10 @@ async function autoCrackHandshake(hashFile, ssid, bssid) {
   finally {
     if (currentAttackId === 'crack_plan') currentAttackId = null;
     setAttackRunning(false);
+    // M-12: reanudar la caza dirigida tras analizar el material. Si el usuario
+    // pulsó Detener durante el crack, stopHunter ya dejó _hunterPaused=false
+    // y aquí NO se reanuda nada.
+    resumeHunterIfPaused();
   }
 }
 
@@ -955,7 +959,10 @@ async function hunterCycle() {
     if (r && r.success && r.hashes > 0) {
       log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
       hunterStatus('⚡ capturado');
-      stopHunter('material capturado');
+      // M-12: NO parar definitivamente. Pausa temporal (aborta la ráfaga) y
+      // se reanuda sobre la MISMA red cuando termina el auto-crack, salvo
+      // que el usuario haya pulsado Detener.
+      pauseHunterForAttack();
       await autoCrackHandshake(r.output_file, t.ssid, t.bssid);
       return;
     }
@@ -974,7 +981,7 @@ async function hunterCycle() {
         if (g && g.success && Number(g.hashes || 0) > 0) {
           log('[cazador] ⚡ HANDSHAKE CAPTURADO por gatillo: ' + g.output_file + ' (' + g.hashes + ' hashes)', 'ok');
           hunterStatus('⚡ capturado');
-          stopHunter('material capturado');
+          pauseHunterForAttack();
           await autoCrackHandshake(g.output_file, t.ssid, t.bssid);
           return;
         }
