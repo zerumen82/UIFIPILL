@@ -238,6 +238,7 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
     // E0-29 bis (usuario): cazador DIRIGIDO — sigue solo a la última red
     // válida. Al cambiar de objetivo se cortan barrido/auto-crack anteriores.
     if (changed) {
+      if (window._autoCrackTried) window._autoCrackTried.clear(); // M-13: nuevo objetivo → volver a intentar
       if (window._huntAllRunning) {
         window._huntAllStop = true;
         log('[cazador-masivo] parado: cambio de objetivo a ' + bssid + '.', 'info');
@@ -879,8 +880,18 @@ function resumeHunterIfPaused() {
 // E0-29 (decisión del usuario): tras capturar un handshake se lanza SOLO el
 // plan de crack acotado (M-10: wordlists/reglas + máscaras ≤10^8), sin
 // confirmación modal. Se registra todo en la consola y Detener lo corta.
+window._autoCrackTried = window._autoCrackTried || new Set();
 async function autoCrackHandshake(hashFile, ssid, bssid) {
   if (!hashFile) return null;
+  // M-13: un handshake NUEVO del MISMO AP tiene la misma contraseña (solo
+  // cambian los nonces). Repetir el plan cada captura gastaba 5 min de GPU
+  // una y otra vez sin nueva información.
+  const key = String(bssid || '').toUpperCase();
+  if (key && window._autoCrackTried.has(key)) {
+    log('[auto-crack] ' + key + ' ya analizado en esta sesión: mismo AP, misma clave. Se sigue cazando.', 'info');
+    return null;
+  }
+  if (key) window._autoCrackTried.add(key);
   log('[auto-crack] plan acotado sobre ' + hashFile, 'info');
   currentAttackId = 'crack_plan';
   setAttackRunning(true, 'Auto-crack (plan acotado)…');
@@ -1436,9 +1447,17 @@ window.checkPmfGate = async function (bssid, channel) {
         throw new Error('monitor no movido al CH' + ch + ': ' + ((cr && cr.message) || 'sin confirmación'));
       }
     }
-    const cap = await window.__invoke('native_capture', { ifaceGuid: ad.guid, durationSecs: 6 });
-    if (!(cap && cap.success && cap.output_file)) throw new Error((cap && cap.message) || 'sin captura');
-    const info = await window.__invoke('parse_pmf', { pcapPath: cap.output_file, bssid: key });
+    // M-15: captura universal. Un hotspot/móvil o un canal congestionado
+    // puede no emitir beacons en 6 s. Se reintenta con 12 s antes de decidir.
+    let info = null;
+    for (const secs of [6, 12]) {
+      const cap = await window.__invoke('native_capture', { ifaceGuid: ad.guid, durationSecs: secs });
+      if (!(cap && cap.success && cap.output_file)) continue;
+      const p = await window.__invoke('parse_pmf', { pcapPath: cap.output_file, bssid: key });
+      if (p && (p.mfpr === true || p.mfpr === false)) { info = p; break; }
+      info = p;
+    }
+    if (!info) throw new Error('sin captura PMF');
     window._pmfInfo = info;
     if (info.mfpr === true) {
       window._pmfBlocked = true;
@@ -1449,12 +1468,20 @@ window.checkPmfGate = async function (bssid, channel) {
       applyPmfGate(info.mfpc ? '✓ PMF opcional (MFPC=1): deauth permitido.' : '✓ Sin PMF: deauth permitido.');
       log('[PMF] ' + key + ': MFPC=' + (info.mfpc ? '1' : '0') + ' MFPR=0 · ' + info.beacons + ' beacon(s). Deauth permitido.', 'ok');
     } else {
-      throw new Error(info.error || 'RSN no confirmado');
+      // M-15 (decisión del usuario): modo UNIVERSAL. Si no se ven beacons no
+      // se asume PMF obligatorio: se permite la vía de asociación
+      // (trigger_handshake), que no envía deauth y sirve para CUALQUIER red.
+      // Solo se bloquea MFPR=1 CONFIRMADO.
+      window._pmfBlocked = false;
+      applyPmfGate('⚠ PMF desconocido: se usa la vía universal de handshake (sin deauth).');
+      log('[PMF] ' + key + ': RSN no confirmado (' + (info.error || 'sin beacons') +
+          '). No se bloquea: gatillo de dos radios válido para cualquier red.', 'warn');
     }
   } catch (e) {
-    window._pmfBlocked = true;
-    applyPmfGate('⛔ No se pudo confirmar PMF: ' + String(e).slice(0, 90));
-    log('[PMF] No se pudo confirmar MFPC/MFPR de ' + key + ': ' + e + '. Fail-closed: objetivo no confirmado.', 'warn');
+    // Igual que arriba: un error de medición NO puede dejar la app sin cazar.
+    window._pmfBlocked = false;
+    applyPmfGate('⚠ PMF no medido: vía universal de handshake habilitada.');
+    log('[PMF] No se pudo medir PMF de ' + key + ': ' + e + '. Se habilita el gatillo universal (solo MFPR=1 confirmado bloquea).', 'warn');
   }
   return !window._pmfBlocked;
 };
@@ -1533,10 +1560,10 @@ window.iaAttack = async function () {
       'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
       'Devuelve un plan COMPLETO de al menos 3 herramientas: NUNCA solo profile_target. El objetivo ya está validado en el último scan.',
       'Usa únicamente los nombres de las funciones disponibles y argumentos JSON reales. Máximo ' + IA_MAX_STEPS + ' pasos.',
-      'Para forzar tráfico usa deauth_burst (RT3070 WinUSB) o trigger_handshake (si no hay clientes): SÍ están disponibles y funcionan. No propongas herramientas que no existan (ni wps_pin ni deauth por Npcap). No repitas pasos. Si hay material .22000, ve directo a inspeccionar/crackear. Termina con restore_managed si activaste monitor.',
+      'ESTRATEGIA UNIVERSAL (sirve para CUALQUIER red WPA2, incluidos hotspots/móviles): usa trigger_handshake con el BSSID/SSID/canal reales — es la vía verificada con dos radios (RT73 monitor + RT3070 cliente) y NO necesita clientes ni deauth. No propongas pmkid_probe (veredicto negativo medido), ni wps_pin, ni deauth por Npcap. Con material .22000 ve directo a inspect_hash/crack_hash. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
-      'Si el objetivo es WPA2-PSK sin PMKID y no hay MFPR, incluye deauth_burst (RT3070 WinUSB) con el BSSID y canal reales para forzar un handshake.',
-      'NO uses trigger_handshake en este equipo: veredicto negativo. Para generar tráfico usa deauth_burst (RT3070) y, si el AP no tiene clientes, usa pmkid_probe (Association Request fabricada por USB crudo) para provocar PMKID.',
+      'Si el PMF no se puede medir, NO bloquees el ataque: trigger_handshake es universal y no envía deauth. Solo MFPR=1 confirmado bloquea.',
+      'genera_dictionary_ai y crack_hash también son universales: si no hay clave en wordlists conocidas, pide candidatas a Ollama y crackea con crack_custom manual.',
     ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
     const model = valOrEmpty($('ia-model')?.value) || null;
     let plan = await window.__invoke('ollama_tools', { prompt, model });
@@ -1544,12 +1571,10 @@ window.iaAttack = async function () {
     let steps = Array.isArray(plan.tool_calls) ? plan.tool_calls : [];
     const ACTION_TOOLS = ['activate_monitor', 'capture_packets', 'deauth_burst', 'trigger_handshake', 'crack_hash'];
     const hasAction = () => steps.some(s => ACTION_TOOLS.includes(String((s && s.name) || '')));
-    // Sin material hace falta UNA herramienta que GENERE tráfico (deauth o
-    // gatillo). "activar monitor + capturar" por sí solos no producen EAPOL.
-    // trigger_handshake NO cuenta: veredicto negativo medido en este HW
-    // (Windows no expone el EAPOL de su propia asociación). Solo deauth_burst
-    // genera tráfico útil aquí.
-    const hasForced = () => steps.some(s => String((s && s.name) || '') === 'deauth_burst');
+    // M-15: herramienta generadora de tráfico ÚTIL en este HW. La vía
+    // universal es trigger_handshake (dos radios, sin clientes, sin deauth);
+    // deauth_burst sigue contando cuando el RT3070 está en WinUSB.
+    const hasForced = () => steps.some(s => ['deauth_burst', 'trigger_handshake'].includes(String((s && s.name) || '')));
     // Plan mínimo obligatorio: si el modelo se queda corto o solo propone
     // consultas/capturas, completar YA (sin otro viaje a Ollama) con
     // HERRAMIENTAS IA (nunca el pipeline determinista). Se anota en el log.
@@ -1562,7 +1587,7 @@ window.iaAttack = async function () {
           ]
         : [
             { name: 'profile_target', arguments: { bssid } },
-            { name: 'deauth_burst', arguments: { bssid, channel: ch } },
+            { name: 'trigger_handshake', arguments: { bssid, channel: ch, ssid } },
             { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
             { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
           ]).filter(x => !have.has(x.name));
@@ -1617,11 +1642,8 @@ window.iaAttack = async function () {
         log(`[IA] Paso ${i + 1}/${total} omitido (${name}): la conversión dio 0 hashes; no se inspecciona/crackea un .22000 vacío.`, 'warn');
         continue;
       }
-      // El auto-gatillo tiene veredicto negativo medido en este HW: omitirlo.
-      if (name === 'trigger_handshake') {
-        log(`[IA] Paso ${i + 1}/${total} omitido (trigger_handshake): sin EAPOL en este HW; se usa deauth_burst.`, 'warn');
-        continue;
-      }
+      // M-15: trigger_handshake se EJECUTA (es la vía universal verificada
+      // con dos radios); no se omite como versión anterior.
       const v = window.iaValidateTool(name, args);
       if (!v.ok) { log(`[IA] Paso ${i + 1}/${total} rechazado (${name}): ${v.error}`, 'warn'); failCount++; continue; }
       let confirmMsg = `Paso ${i + 1}/${total}: ${name}\nArgumentos: ${JSON.stringify(args)}`;

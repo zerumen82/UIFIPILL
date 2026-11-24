@@ -349,14 +349,24 @@ pub async fn crack_custom(
     ];
     if attack == 0 {
         if let Some(r) = rule {
-            if !std::path::Path::new(&r).exists() {
-                return CmdResponse {
-                    success: false, output: String::new(),
-                    stderr: format!("No existe la regla: {}", r), exit_code: None,
-                };
-            }
+            // El desplegable de la UI devuelve SOLO el nombre ("dive.rule");
+            // crack_plan_run_bg resuelve con find_rule, pero crack_custom
+            // antes exigía una ruta ya existente y fallaba con "No existe
+            // la regla: dive.rule". Aceptar ambos: ruta absoluta o nombre.
+            let rule_path = if std::path::Path::new(&r).exists() {
+                r.clone()
+            } else {
+                match crate::crack_plan::find_rule(&r) {
+                    Some(p) => p,
+                    None => return CmdResponse {
+                        success: false, output: String::new(),
+                        stderr: format!("No existe la regla '{}' en tools/rules/. Pulsa «Assets» para recargar.", r),
+                        exit_code: None,
+                    },
+                }
+            };
             args.push("-r".into());
-            args.push(r);
+            args.push(rule_path);
         }
     }
     args.push(hash_file.clone());

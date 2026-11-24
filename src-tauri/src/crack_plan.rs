@@ -246,7 +246,7 @@ fn find_extra_wordlists(exclude: Option<&str>) -> Vec<(String, String)> {
     out
 }
 
-fn find_rule(name: &str) -> Option<String> {
+pub(crate) fn find_rule(name: &str) -> Option<String> {
     let (found, hc, _) = resolve_tool("hashcat.exe");
     let base = if found { PathBuf::from(&hc).parent().map(|p| p.to_path_buf()).unwrap_or_default() } else { PathBuf::new() };
     let p = base.join("rules").join(name);
@@ -348,16 +348,36 @@ pub fn build_plan(hash_file: &str, ssid: &str, bssid: &str, external_generator: 
                 skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) } else { None },
             });
         }
+        if let Some(rule) = find_rule("best66.rule") {
+            stages.push(PlanStage {
+                id: "rockyou_best66".into(),
+                label: "rockyou.txt + best66.rule".into(),
+                kind: "wordlist_rule".into(),
+                keyspace: Some(14_344_391u64 * 66),
+                why: format!("Wordlist {} con regla {} (mutaciones comunes, coste acotado).", wl, rule),
+                enabled: hc_ok,
+                path: None,
+                skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) } else { None },
+            });
+        }
         if let Some(rule) = find_rule("dive.rule") {
+            // M-13: rockyou (14 M) × dive (~98 k reglas) ≈ 1,4 BILLONES de
+            // combinaciones: el plan automático se quedaba aquí 5 min y se
+            // cortaba sin llegar al resto. Se omite con motivo (sigue
+            // disponible con crack_custom manual).
+            let ks = 14_344_391u64 * 100_000;
+            let too_big = ks > 1_000_000_000;
             stages.push(PlanStage {
                 id: "rockyou_dive".into(),
                 label: "rockyou.txt + dive.rule".into(),
                 kind: "wordlist_rule".into(),
-                keyspace: Some(14_344_391 * 100_000),
+                keyspace: Some(ks),
                 why: format!("Wordlist {} con regla {} (más mutaciones; puede tardar bastante).", wl, rule),
-                enabled: hc_ok,
+                enabled: hc_ok && !too_big,
                 path: None,
-                skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) } else { None },
+                skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) }
+                    else if too_big { Some("Keyspace >10^9 (demasiado lento para el plan; usar crack_custom manual)".into()) }
+                    else { None },
             });
         }
     } else {
@@ -645,7 +665,9 @@ async fn run_stage(
         }
         "wordlist_rule" => {
             let wl = find_wordlist("rockyou.txt").ok_or("rockyou.txt no encontrado")?;
-            let rule_name = if stage.id == "rockyou_dive" { "dive.rule" } else { "best64.rule" };
+            let rule_name = if stage.id == "rockyou_dive" { "dive.rule" }
+                else if stage.id == "rockyou_best66" { "best66.rule" }
+                else { "best64.rule" };
             let rule = find_rule(rule_name).ok_or(format!("{} no encontrada", rule_name))?;
             emit_progress(app, attack_id, &format!("[plan] {}…\n", stage.label));
             let args = vec!["-m".into(), "22000".into(), "-a".into(), "0".into(), "-r".into(), rule, "-o".into(), cracked_out, "--force".into(), "--potfile-disable".into(), "--status".into(), "--status-timer=10".into(), hash_file.to_string(), wl];
@@ -912,6 +934,18 @@ mod tests {
                 assert!(s.skip_reason.as_deref().unwrap_or("").contains("10^8"),
                     "las máscaras demasiado grandes deben explicar por qué se saltan");
             }
+        }
+    }
+
+    #[test]
+    fn skips_infeasible_rule_and_keeps_best66() {
+        let plan = build_plan("C:/no_existe_test.22000", "MiRed", "AA:BB:CC:DD:EE:FF", None);
+        if let Some(dive) = plan.stages.iter().find(|s| s.id == "rockyou_dive") {
+            assert!(!dive.enabled);
+            assert!(dive.skip_reason.as_deref().unwrap_or("").contains("10^9"));
+        }
+        if let Some(b66) = plan.stages.iter().find(|s| s.id == "rockyou_best66") {
+            assert!(b66.keyspace.map(|k| k <= 1_000_000_000).unwrap_or(false));
         }
     }
 
