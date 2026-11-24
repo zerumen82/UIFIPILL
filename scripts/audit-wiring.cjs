@@ -187,6 +187,14 @@ if (!/wifi_reset_admin/.test(lib) || !/wifi_reset_admin/.test(appSrc) || !/reset
 if (!/startHunter/.test(appSrc) || !/maybeAutoHunter/.test(appSrc) || /hunter-btn/.test(html)) {
   console.error('REGRESSION: el cazador automático debe estar integrado sin botón y con logs en consola.'); bad++;
 }
+// E0-29: caza masiva DINAMICA (sin listas hardcoded de SSIDs).
+if (!/huntAllNetworks/.test(appSrc) || !/autoCrackHandshake/.test(appSrc) || !/cazar todas/.test(iaSrc) || !/scan_wifi/.test(appSrc) || /_huntAllStop/.test(appSrc) === false) {
+  console.error('REGRESSION: falta el cazador masivo dinamico (E0-29) o su comando de consola.'); bad++;
+}
+// M-09: el usuario no quiere que vuelva a atacar solo tras reiniciar Windows.
+if (!/localStorage\.removeItem\(HUNTER_KEY\)/.test(appSrc) || !/beforeunload/.test(appSrc)) {
+  console.error('REGRESSION: el cazador debe borrar el objetivo guardado al arrancar y al cerrar (M-09).'); bad++;
+}
 if (!/_hunterStopRequested/.test(appSrc) || !/sustained/.test(appSrc)) {
   console.error('REGRESSION: el cazador debe abortar su rafaga al detener y mantener el envio sostenido.'); bad++;
 }

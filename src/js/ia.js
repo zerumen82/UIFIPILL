@@ -128,6 +128,7 @@ const IA_TOOL_SPECS = {
   restore_managed: { cmd: 'restore_managed',  args: a => ({ ifaceGuid: a.iface_guid }) },
   deauth_burst:    { cmd: 'usb_raw_deauth',   args: a => ({ bssid: a.bssid, channel: a.channel, target_mac: a.target_mac || null, count: a.target_mac ? 5 : 8, reason: 7, delay_ms: 100 }) },
   generate_dictionary: { cmd: 'generate_dictionary', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '' }) },
+  generate_dictionary_ai: { cmd: 'generate_dictionary_ai', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '', limit: a.limit || 400 }) },
   trigger_handshake:  { cmd: 'wifi_probe_trigger', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || null, duration_seconds: 15 }) },
   pmkid_probe:        { cmd: 'usb_raw_assoc', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || 11 }) },
 };
@@ -142,9 +143,10 @@ window.iaValidateTool = function (name, args) {
     /\.(pcap|pcapng|22000)$/i.test(v) && !/[\x00-\x1f;|`]/.test(v) && !/\.\.[\\/]/.test(v) &&
     // El modelo rellena rutas de ejemplo: NO son archivos reales.
     !/(^|[/\\])path(to)?([/\\]|$)|placeholder|\/path\/to|SAMPLE/i.test(v);
-  if (name === 'generate_dictionary') {
+  if (name === 'generate_dictionary' || name === 'generate_dictionary_ai') {
     if (!String(a.ssid || '').trim() && !String(a.bssid || '').trim()) return { ok: false, error: 'SSID o BSSID requerido' };
     if (String(a.ssid || '').length > 64 || String(a.bssid || '').length > 32 || String(a.hints || '').length > 300) return { ok: false, error: 'Parámetro demasiado largo' };
+    if (name === 'generate_dictionary_ai' && a.limit != null && (!Number.isInteger(a.limit) || a.limit < 10 || a.limit > 2000)) return { ok: false, error: 'Límite de candidatas fuera de rango (10..2000)' };
   }
   if (name === 'pmkid_probe') {
     if (!String(a.ssid || '').trim()) return { ok: false, error: 'SSID requerido para provocar PMKID' };
@@ -362,6 +364,22 @@ window.iaConsoleAskCommand = async function (q) {
       var t = await window.iaTriggerHandshake({ ssid: s, bssid: b, channel: null });
       return (t && t.message) || 'Auto-gatillo terminado.';
     } catch (e) { return 'Auto-gatillo falló: ' + e; }
+  }
+  if (/^(diccionario.?ia|wordlist.?ia|diccionario con ia|genera diccionario.?ia)/.test(cmd)) {
+    var bssid = (window.getSelectedBssid && window.getSelectedBssid()) || (document.getElementById('attack-bssid') || {}).value || '';
+    var label = (document.getElementById('simple-target-label')?.textContent || '').replace('Objetivo: ', '');
+    try {
+      var d = await window.iaExecuteTool('generate_dictionary_ai', { ssid: label, bssid: bssid, hints: q, limit: 400 });
+      return (d && d.message) || ('Diccionario IA: ' + JSON.stringify(d));
+    } catch (e) { return 'No se pudo crear el diccionario con IA: ' + e; }
+  }
+  if (/^(cazar todas|cazar todas las redes|caza todas|hunt all|buscar todas)/.test(cmd)) {
+    try {
+      if (typeof window.huntAllNetworks !== 'function') return 'Cazador masivo no disponible en esta versión.';
+      const r = await window.huntAllNetworks();
+      return '[cazador-masivo] ' + (r && r.total || 0) + ' redes · ' + (r && r.captured || 0) +
+        ' con material · ' + (r && r.failed || 0) + ' sin material.';
+    } catch (e) { return 'Cazador masivo falló: ' + e; }
   }
   if (/^(diccionario|wordlist|genera diccionario)/.test(cmd)) {
     var bssid = (window.getSelectedBssid && window.getSelectedBssid()) || (document.getElementById('attack-bssid') || {}).value || '';

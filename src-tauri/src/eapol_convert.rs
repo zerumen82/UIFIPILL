@@ -59,7 +59,10 @@ pub fn convert_pcap(pcap_path: &str, ssid: &str, bssid: &[u8; 6]) -> Vec<String>
                     let fc = u16::from_le_bytes([w[0], w[1]]);
                     let ftype = (fc >> 2) & 0x03;
                     let fsub = (fc >> 4) & 0x0f;
-                    if ftype != 2 || (fsub != 0 && fsub != 1) { None } else {
+                    // QoS Data = subtipo 8 (medido en el handshake de dos
+                    // radios: FC 0x0288/0x0188). El viejo filtro 0/1 lo
+                    // descartaba y no producía ningún .22000.
+                    if ftype != 2 || (fsub != 0 && fsub != 8) { None } else {
                         let mac = |o: usize| -> [u8; 6] {
                             let mut m = [0u8; 6];
                             if o + 6 <= w.len() { m.copy_from_slice(&w[o..o + 6]); }
@@ -74,7 +77,7 @@ pub fn convert_pcap(pcap_path: &str, ssid: &str, bssid: &[u8; 6]) -> Vec<String>
                             (false, true) => (a1, a3),
                             (true, true) => (a3, [0; 6]),
                         };
-                        let h = if (fc >> 15) & 1 == 1 { 26 } else { 24 };
+                        let h = if fsub >= 8 { 26 } else { 24 };
                         if w.len() < h + 8 || w[h..h + 8] != LLC_SNAP { None } else {
                             Some((sa.to_vec(), _da.to_vec(), &w[h + 8..]))
                         }
@@ -88,7 +91,9 @@ pub fn convert_pcap(pcap_path: &str, ssid: &str, bssid: &[u8; 6]) -> Vec<String>
             let to_ap = dst.as_slice() == bssid;   // STA→AP: DA = BSSID (M2/M4)
             if !from_ap && !to_ap { off = end; continue; }
             let sta = if from_ap { &dst } else { &src };
-            if eapol.len() < 4 + 95 || eapol[0] != 1 || eapol[1] != 2 { off = end; continue; }
+            // EAPOL-Key real = tipo 3 (no 2); versiones 1 y 2 vistas en APs
+            // distintos. El conversor histórico solo aceptaba 1/2 y perdía M1.
+            if eapol.len() < 4 + 95 || (eapol[0] != 1 && eapol[0] != 2) || (eapol[1] != 2 && eapol[1] != 3) { off = end; continue; }
             let eapol_len = u16::from_be_bytes([eapol[2], eapol[3]]) as usize;
             if eapol.len() < 4 + eapol_len { off = end; continue; }
             let k = &eapol[4..];

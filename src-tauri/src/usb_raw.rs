@@ -547,6 +547,7 @@ mod tests {
     #[test]
     fn parses_chan_preflight_json() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)] // error/message se validan en otros casos del parser
         struct R { ok: Option<bool>, actual: Option<u8>, error: Option<String>, message: Option<String> }
         let line = "{\"ok\":true,\"requested\":4,\"actual\":4,\"n\":242,\"r\":2,\"k\":7}";
         let p: R = serde_json::from_str(line).unwrap();

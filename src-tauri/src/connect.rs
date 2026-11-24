@@ -7,6 +7,13 @@ use tauri::{command, AppHandle};
 use tauri_plugin_shell::ShellExt;
 use crate::commands::CmdResponse;
 
+/// netsh identifica la interfaz por su nombre corto ("Wi-Fi 5"), no por la
+/// descripción completa que devuelve detect_adapters
+/// ("Wi-Fi 5 (802.11n USB Wireless LAN Card)"). Medido 2026-11-23.
+fn iface_short_name(name: &str) -> String {
+    name.split(" (").next().unwrap_or(name).trim().to_string()
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -145,6 +152,7 @@ pub async fn wifi_probe_trigger(
     bssid: String,
     channel: Option<u8>,
     duration_secs: Option<u64>,
+    iface_name: Option<String>,
 ) -> ProbeResult {
     let fail = |m: String| ProbeResult { success: false, output_file: String::new(), eapol: false, packets: 0, message: m };
     let ssid = ssid.trim().to_string();
@@ -152,9 +160,24 @@ pub async fn wifi_probe_trigger(
     let _ = channel; // el canal lo elige el AP; el monitor ya no se usa aquí
 
     let rep = crate::wifi_adapter::detect_adapters().await;
-    let ad = rep.adapters.iter().find(|a| !a.guid.is_empty())
-        .ok_or_else(|| "sin adaptador WiFi".to_string());
-    let guid = match ad { Ok(a) => a.guid.clone(), Err(e) => return fail(e) };
+    // Con DOS radios (RT73 en monitor + RT3070 cliente) hay que separar los
+    // papeles: la captura va en el monitor; la asociación, en el cliente.
+    // Medido 2026-11-23: `netsh wlan connect name=X` sin `interface=` falla
+    // con "Faltan uno o varios parámetros" cuando hay >=2 interfaces.
+    let capture_guid = rep.adapters.iter().find(|a| a.monitor_active && !a.guid.is_empty())
+        .or_else(|| rep.adapters.iter().find(|a| !a.guid.is_empty()))
+        .map(|a| a.guid.clone());
+    let guid = match capture_guid { Some(g) => g, None => return fail("sin adaptador WiFi para capturar".into()) };
+    let client_name = iface_name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        .or_else(|| rep.adapters.iter().find(|a| !a.monitor_active && !a.guid.is_empty() && !a.name.trim().is_empty())
+            .map(|a| a.name.trim().to_string()))
+        .or_else(|| if rep.adapters.len() == 1 && !rep.adapters[0].name.trim().is_empty() {
+            Some(rep.adapters[0].name.trim().to_string())
+        } else { None });
+    let client_name = match client_name {
+        Some(n) => iface_short_name(&n),
+        None => return fail("Hay varias interfaces y no se cuál asociar: cierra el modo monitor del cliente o indícalo con ifaceName (p. ej. 'Wi-Fi 5').".into()),
+    };
 
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() as u64 + d.as_secs()).unwrap_or(12345);
@@ -189,25 +212,39 @@ pub async fn wifi_probe_trigger(
     // que se hace await, y para entonces el EAPOL de la asociación ya pasó.
     // NPF_ (DLT 1) no entrega tramas en este driver; NPF_WIFI_ sí, incluso en
     // managed (medido: 442 paquetes durante el intento de asociación).
-    let cap_handle = tokio::spawn(crate::capture::capture_until_eapol(
-        app.clone(), guid.clone(), bssid.clone(), Some(dur), Some(true)));
-    let (ok_con, out_con) = match netsh(&app, &["wlan", "connect", &format!("name={profile}")]).await {
+    // Captura CONTINUA, no capture_until_eapol: medido 2026-11-23 que parar en
+    // el primer frame EAPOL deja solo M2 y el conversor no puede construir el
+    // .22000 (necesita M1+M2). Los 13 EAPOL del experimento de dos radios se
+    // lograron con native_capture sostenido.
+    let cap_handle = tokio::spawn(crate::capture::native_capture(guid.clone(), Some(dur), None));
+    // Ojo: el plugin shell de Tauri pasa los argumentos directamente a
+    // CreateProcess (sin cmd.exe), así que las comillas LITERALES que pondría
+    // un `netsh ... name="X"` en PowerShell aquí son parte del valor y netsh
+    // las rechaza ("Faltan uno o varios parámetros"). Sin comillas, un solo
+    // argv `interface=Wi-Fi 5` es exactamente lo que netsh recibe en PowerShell.
+    let connect_args = [ "wlan".to_string(), "connect".to_string(),
+        format!("name={profile}"), format!("interface={client_name}") ];
+    let connect_refs: Vec<&str> = connect_args.iter().map(|s| s.as_str()).collect();
+    let (ok_con, out_con) = match netsh(&app, &connect_refs).await {
         Ok(r) => r,
         Err(e) => return fail(e),
     };
-    let cap = cap_handle.await.unwrap_or_else(|e| crate::capture::EapolCaptureResult {
-        success: false, output_file: String::new(), packets: 0, eapol: false,
-        message: format!("join error: {e}"),
+    let cap = cap_handle.await.unwrap_or_else(|e| crate::capture::NativeCaptureResult {
+        success: false, output_file: String::new(), packets: 0, datalink: -1,
+        datalink_name: String::new(), message: format!("join error: {e}"),
     });
-    let _ = netsh(&app, &["wlan", "delete", "profile", &format!("name=\"{profile}\"")]).await;
+    let eapol = std::fs::read(&cap.output_file)
+        .map(|b| b.windows(2).any(|w| w == [0x88u8, 0x8eu8]))
+        .unwrap_or(false);
+    let _ = netsh(&app, &["wlan", "delete", "profile", &format!("name={profile}")]).await;
     let _ = netsh(&app, &["wlan", "disconnect"]).await;
 
     ProbeResult {
-        success: cap.success,
+        success: cap.success && !cap.output_file.is_empty(),
         output_file: cap.output_file,
-        eapol: cap.eapol,
+        eapol,
         packets: cap.packets,
-        message: format!("conectar={ok_con} · {}\n{}", out_con.trim(), cap.message),
+        message: format!("conectar={ok_con} (iface {client_name}, objetivo {bssid}) · {}\n{} (EAPOL={eapol})", out_con.trim(), cap.message),
     }
 }
 
@@ -263,6 +300,13 @@ pub async fn wifi_reset_admin(iface_name: Option<String>) -> CmdResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn iface_short_name_strips_description() {
+        assert_eq!(iface_short_name("Wi-Fi 5 (802.11n USB Wireless LAN Card)"), "Wi-Fi 5");
+        assert_eq!(iface_short_name("  Wi-Fi 3 (RT73 #2) "), "Wi-Fi 3");
+        assert_eq!(iface_short_name("Conexión de red inalámbrica"), "Conexión de red inalámbrica");
+    }
 
     #[test]
     fn xml_escapes_and_shapes() {

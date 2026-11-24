@@ -96,6 +96,7 @@ pub fn run() {
             pcap_convert::pcap_to_22000,
             pmf::parse_pmf,
             dictionary::generate_dictionary,
+            dictionary::generate_dictionary_ai,
             ia_memory::ia_memory_add,
             ia_memory::ia_memory_list,
             ia_memory::ia_memory_clear,

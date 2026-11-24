@@ -304,7 +304,10 @@ pub fn build_plan(hash_file: &str, ssid: &str, bssid: &str, external_generator: 
     masks.sort_by_key(|(m, _)| mask_keyspace(m).unwrap_or(u64::MAX));
     for (i, (m, why)) in masks.into_iter().enumerate() {
         let ks = mask_keyspace(&m);
-        let enabled = hc_ok && ks.map(|k| k > 0 && k <= 10_000_000_000u64).unwrap_or(false);
+        // M-10: acotar máscaras del plan a 10^8 (8 dígitos). 10^9/10^10 son
+        // horas de GPU y en este lab agotan el presupuesto antes de llegar a
+        // los diccionarios. Siguen disponibles manualmente con crack_custom.
+        let enabled = hc_ok && ks.map(|k| k > 0 && k <= 100_000_000u64).unwrap_or(false);
         stages.push(PlanStage {
             id: format!("mask_{}", i),
             label: format!("Máscara: {}", m),
@@ -313,7 +316,9 @@ pub fn build_plan(hash_file: &str, ssid: &str, bssid: &str, external_generator: 
             why,
             enabled,
             path: None,
-            skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) } else if !enabled { Some("Keyspace inválido o demasiado grande".into()) } else { None },
+            skip_reason: if !hc_ok { Some("hashcat.exe no disponible".into()) }
+                else if !enabled { Some("Keyspace >10^8 (demasiado lento para el plan; usar crack_custom manual)".into()) }
+                else { None },
         });
     }
 
@@ -458,6 +463,18 @@ pub fn build_plan(hash_file: &str, ssid: &str, bssid: &str, external_generator: 
             skip_reason: skip,
         });
     }
+
+    // M-10: orden por probabilidad/coste. Antes las máscaras iban primero y
+    // el plan se pasaba horas en ?d×10 antes de tocar rockyou/reglas (medido
+    // en el log de sagemcomDEF0, 2026-11-24). Orden estable: keygen →
+    // wordlists → PCFG → máscaras → externos.
+    stages.sort_by_key(|s| match s.kind.as_str() {
+        "keygen" => 0,
+        "wordlist" | "wordlist_rule" | "wordlist_path" => 1,
+        "pcfg" | "pcfg_hints" => 2,
+        "mask" => 3,
+        _ => 4,
+    });
 
     CrackPlan {
         hash_file: hash_file.to_string(),
@@ -704,6 +721,15 @@ pub async fn crack_plan_run_bg(
     if !Path::new(&hash_file).exists() {
         return Err(format!("No existe el hash: {}", hash_file));
     }
+    // M-08a: pcap_to_22000 escribe el fichero aunque no encuentre PMKID/EAPOL.
+    // No lanzar 8 etapas de hashcat contra un .22000 sin hashes (medido:
+    // "No hashes loaded" en todas las etapas del plan del log 2026-11-23).
+    let valid = std::fs::read_to_string(&hash_file).map(|s| s.lines()
+        .filter(|l| l.trim_start().starts_with("WPA*01*") || l.trim_start().starts_with("WPA*02*"))
+        .count()).unwrap_or(0);
+    if valid == 0 {
+        return Err("El .22000 no contiene líneas WPA*01/WPA*02 válidas: no hay material crackeable (no se lanza hashcat).".into());
+    }
     let attack_id = "crack_plan".to_string();
     let cancel = std::sync::Arc::new(AtomicBool::new(false));
     {
@@ -840,6 +866,23 @@ mod tests {
         assert_eq!(sanitize_hintword("Mi Red"), None);
         assert_eq!(sanitize_hintword("a,b"), None);
         assert_eq!(sanitize_hintword(""), None);
+    }
+
+    #[test]
+    fn plan_prioritizes_wordlists_and_bounds_masks() {
+        let plan = build_plan("C:/no_existe_test.22000", "MiRed", "AA:BB:CC:DD:EE:FF", None);
+        let first_mask = plan.stages.iter().position(|s| s.kind == "mask").unwrap_or(usize::MAX);
+        if let Some(wl) = plan.stages.iter().position(|s| s.kind == "wordlist" || s.kind == "wordlist_rule") {
+            assert!(wl < first_mask, "los diccionarios deben ir antes que las máscaras");
+        }
+        for s in plan.stages.iter().filter(|s| s.kind == "mask") {
+            if s.enabled {
+                assert!(s.keyspace.map(|k| k <= 100_000_000).unwrap_or(false));
+            } else {
+                assert!(s.skip_reason.as_deref().unwrap_or("").contains("10^8"),
+                    "las máscaras demasiado grandes deben explicar por qué se saltan");
+            }
+        }
     }
 
     #[test]
