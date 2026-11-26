@@ -139,8 +139,12 @@ if (!/Plan SIN RESULTADOS/.test(appSrc)) {
 if (!/window\._attackAwaitingConfirm/.test(appSrc) || !/window\._attackAwaitingConfirm/.test(iaSrc)) {
   console.error('REGRESSION: el watchdog no se pausa mientras espera confirmación (lock liberado a los 10 min).'); bad++;
 }
-if (!/hasAction\(\)/.test(appSrc) || !/paso\(s\) mínimo\(s\) con herramientas IA/.test(appSrc)) {
-  console.error('REGRESSION: falta el plan mínimo obligatorio del Modo IA tras un plan corto.'); bad++;
+// P0 (2026-11-26): el plan mínimo debe ser REACTIVO — verificar canal y detectar
+// clientes ANTES de cualquier deauth. Aceptamos tanto la guardia hasAction como
+// la nueva hasDiag, y exigimos que detect_clients esté en el plan mínimo.
+if (!/hasAction\(\)/.test(appSrc) || !/detect_clients['"]/.test(appSrc) ||
+    !/(paso\(s\) mínimo\(s\)|paso\(s\) de DIAGN[OÓ]STICO)/.test(appSrc)) {
+  console.error('REGRESSION: falta el plan mínimo REACTIVO del Modo IA (verify_channel_rf + detect_clients antes del deauth).'); bad++;
 }
 
 const toolsBlock = cmdsSrc.slice(cmdsSrc.indexOf('let tools = serde_json::json!(['), cmdsSrc.indexOf(']);', cmdsSrc.indexOf('let tools = serde_json::json!([')));

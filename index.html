@@ -16,7 +16,7 @@
       <div class="logo-wrap">
         <div class="logo">◈</div>
         <span class="brand">UIFIPILL</span>
-        <span style="font-size:10px;color:var(--muted);margin-left:6px">v1.0.18</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:6px">v1.0.24</span>
       </div>
 
       <div class="nav-group">
@@ -42,7 +42,7 @@
         <header class="app-header" id="app-header">
           <div class="logo">◈</div>
           <span class="brand">UIFIPILL</span>
-          <span class="version-badge" id="app-version">v1.0.18</span>
+          <span class="version-badge" id="app-version">v1.0.24</span>
         </header>
         <!-- SCAN TAB -->
         <section id="tab-scan" class="tab active">
@@ -155,7 +155,7 @@
               <button id="simple-attack-btn" class="atk-btn atk-btn--green" onclick="simpleAttack()" style="padding:12px 22px;font-size:14px;font-weight:700">&#9889; Atacar</button>
               <button id="simple-stop-btn" class="atk-btn atk-stop" onclick="simpleStop()" style="padding:12px 22px;font-size:14px;font-weight:700;background:var(--red)">&#9632; Detener</button>
               <button id="simple-pwnagotchi-btn" class="atk-btn" onclick="simplePwnagotchiKit()" style="background:var(--surface2);color:var(--text);padding:8px 14px;font-size:12px" title="Guía para capturar con Pwnagotchi (RPi, externo) y crackear aquí">Kit Pwnagotchi</button>
-              <label id="ia-mode-label" title="Si está activo, Atacar usa solo tool-calling de Ollama; cada paso exige confirmación" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface2)">
+              <label id="ia-mode-label" title="Si está activo, Atacar usa solo tool-calling de Ollama; los pasos se ejecutan automáticamente sin confirmación (se registran en consola)" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;padding:6px 10px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface2)">
                 <input type="checkbox" id="ia-mode-toggle" onchange="setIaMode(this.checked)" />
                 <span>Modo IA</span>
               </label>

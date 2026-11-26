@@ -2951,3 +2951,53 @@ Tras instalar con `/S`, comprobar `ProductVersion` del exe en `%LOCALAPPDATA%\UI
 
 ## 6.7 — Checklist para el agente que releva
 `git log -3` → leer §6 → `npm run lint` → `cargo test --lib` → confirmar versión instalada → Si el usuario reporta un botón muerto, **primero comprobar el CSP en la app real con CDP** (`csp:null` en tauri.conf + sin meta CSP; los `onclick` inline deben quedar como `function`; ver sesión 2026-11-22) y solo después buscar identificadores no declarados / ámbitos try/finally (fueron bugs reales de 1.0.12 pero NO la causa del clic muerto) → cualquier cambio de RF se mide y se anota → cualquier decisión de alcance se pregunta al usuario (él es el orchestrator).
+---
+
+## SESION 2026-11-26/27 - FIX EAPOL + DETECCION DE CLIENTES + MODO IA REACTIVO (v1.0.24 a 1.0.28)
+
+### Contexto
+Usuario: "NO CONSEGUIMOS EAPOL ATACANDO... ALGO ESTA MAL". Se analizaron los pcaps reales
+de %LOCALAPPDATA%\UIFIPILL\ con analizadores en %TEMP%\opencode\ (pcapscan, stascan, mgmtscan, findmac).
+
+### Causas raiz MEDIDAS (evidencia en pcaps)
+1. capture_until_eapol paraba en el PRIMER frame EAPOL -> pcaps con un M3/M1 suelto -> conversor 0 hashes.
+2. iaDeauthBurst arrancaba el watcher DESPUES de la rafaga -> se perdia M1/M2 (RT73 RX y RT3070 TX son radios distintas).
+3. pcap_convert.rs usaba offsets PMKID +81/+97/+99 -> basura (kdLen@97=8994/11437); reales: MIC+77, key_data_len+93, key_data+95.
+4. detect_clients contaba a1/a2/a3 -> hosts cableados como clientes; ademas solo contaba subtypes 0/8 -> movil en idle con Null frames (subtype 4/12) invisible.
+5. hunterCycle con "sin clientes" no emitia deauth -> cliente idle nunca reconectaba.
+6. verify_channel_rf lanzaba un throw que un catch solo logueaba -> TX seguia en canal equivocado.
+7. simpleAttack era 100% pasivo y luego hacia deauth BROADCAST (ignorado por moviles) en vez de dirigido.
+
+### Fixes aplicados (commits ee4b383, 6b974b4, c3291a5, 49b5d9e y posteriores)
+- P1/P1b: watcher concurrente + tail adaptativo en capture_until_eapol (mide tiempo entre EAPOLs, max 15s).
+- P2: offsets PMKID corregidos + guarda M2 aunque llegue antes que M1.
+- P3: STA = addr2 si ToDS / addr1 si FromDS; Null (4)/QoS Null (12) cuentan como cliente (test idle_phone_sends_null_frames_is_detected).
+- P4/P4-MEJORA: broadcast cuando no hay clientes + MAX_NO_CLIENT_CYCLES=5.
+- P5/P5-x: verify_channel_rf(bssid) cuenta beacons objetivo y aborta TX real; bssid obligatorio.
+- P6: simpleAttack -> detect_clients -> deauth DIRIGIDO a MAC real; salta captura pasiva si ya hay .22000.
+- P0 diagnostico: detect_clients cuenta PROBE-REQ por separado (probe_count_from_pcap) y distingue "sin clientes asociados pero dispositivo sondeando (probable 5 GHz)" - NO fabrica clientes.
+
+### Veredicto RF (IMPORTANTE - no es bug de codigo)
+Atacando La Fory 3H (D8:A7:56:31:BF:13, CH6), con el movil "conectado" y navegando:
+- Pcaps (npcap_watch_1795732049 etc.) contienen solo BEACON + PROBE-REQ/PROBE-RESP del movil 42:81:41:55:4F:69 + DATA broadcast del AP.
+- CERO ASSOC/AUTH/EAPOL/Null frames del movil. El movil esta en la BSS de 5 GHz del mismo router (SSID unico con band steering; el usuario no puede elegir banda).
+- RT73/RT3070 son solo 2.4 GHz -> fisicamente imposible capturar al cliente en 5 GHz ni desconectarlo con deauth en CH6.
+- Soluciones: conectar movil a BSS sin "-5G", desactivar 5 GHz en el router, usar cliente 2.4 GHz, o dongle 5 GHz (RTL8812AU/MT7612U detectados en CHIPS pero TX de deauth sigue siendo RT3070 2.4 GHz).
+- NO se cuenta PROBE-REQ como cliente: seria falso positivo y romperia la regla de no-fakes.
+
+### Decisiones del usuario (2026-11-27)
+- Modo IA SIN confirmaciones: iaConfirm resuelve true directamente y solo loguea [IA-CONFIRM] ... -> AUTO. Lista blanca (IA_TOOL_SPECS, ollama_tools) y iaValidateTool SIGUEN activas.
+- Modo IA reactivo (P0): herramientas de diagnostico verify_channel_rf, usb_raw_status, usb_raw_rx, convert_ethernet_eapol anadidas a lista blanca frontend+backend. Plan minimo = verify_channel_rf + detect_clients (+ profile_target) ANTES de cualquier deauth. iaAttack inyecta target_mac desde detect_clients y OMITE el deauth si no hay clientes.
+
+### Verificacion
+npm run lint OK - npx vite build OK - cargo test --lib 55 passed/0 failed/8 ignored - cargo build --release 0 warnings.
+Instalables: UIFIPILL_1.0.26/1.0.27/1.0.28_x64-setup.exe en src-tauri/target/release/bundle/nsis/.
+
+### Archivos cambiados
+src-tauri/src/{capture,pcap_convert,monitor_mode,client_scan,commands}.rs
+src-tauri/tests/pcap_convert_headless.rs (PENDIENTE: import fallido, debe ser use uifipill_lib)
+src/app.js, src/js/ia.js, index.html, scripts/audit-wiring.cjs, package.json, src-tauri/tauri.conf.json (v1.0.28)
+
+### Pendiente
+- Arreglar tests/pcap_convert_headless.rs para que compile (use uifipill_lib, no use pcap_convert).
+- Registrar veredicto 5 GHz / E0-30 en spec/02-REQUISITOS.md.

