@@ -1647,12 +1647,21 @@ window.iaAttack = async function () {
     // aunque no hubiera cliente (el error de las ultimas sesiones). Ahora el
     // minimo obliga a DIAGNOSTICAR primero: verify_channel_rf + detect_clients.
     // El deauth se decide en tiempo de ejecucion con el resultado real de detect_clients.
+    // FIX 2026-11-27: sin BSSID válido NO se pueden añadir pasos que lo exigen
+    // (verify_channel_rf/detect_clients/profile_target → "BSSID inválido" y
+    // el plan entero se rechazaba). En ese caso solo se ofrecen pasos sin BSSID.
+    const bssidOk = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(String(bssid || ''));
     if (steps.length < 3 || !hasAction() || (!material && !hasDiag())) {
       const have = new Set(steps.map(s => String((s && s.name) || '')));
       const minimal = (material
         ? [
             { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
             { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
+          ]
+        : !bssidOk
+        ? [
+            { name: 'scan_networks', arguments: {} },
+            { name: 'detect_adapters', arguments: {} },
           ]
         : [
             { name: 'verify_channel_rf', arguments: { guid: ctxGuidSafe(adapters), bssid, secs: 3 } },

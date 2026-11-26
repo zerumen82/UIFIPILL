@@ -3014,3 +3014,14 @@ src/app.js, src/js/ia.js, index.html, scripts/audit-wiring.cjs, package.json, sr
 - Verificado: lint OK, vite OK, cargo test 55 passed, cargo build 0 warnings.
 - Mejora pendiente detectada: probe_count_from_pcap cuenta PROBE-REQ pero no PROBE-RESP; en red Q003
   solo hay PROBE-RESP (a1=SONDEADOR, a2=AP) → el mensaje no dice "(probable 5 GHz)". No se cambió código.
+
+### SESIÓN 2026-11-27 (cont. 2) — FIX AUTO-CAZA ATASCADO (1.0.31)
+- Síntoma medido en logs: auto-caza activo pero cada ciclo abortaba "canal RF real es CH48/9/51, no CH8"
+  y el plan IA rechazaba verify_channel_rf/detect_clients con "BSSID inválido".
+- Causa 1 (REAL, backend): verify_channel_rf leía canales 5 GHz (36..253) de IEs mal alineados
+  en beacons → "canal dominante 48/184/243" → iaDeauthBurst abortaba TX cada ciclo.
+  FIX: en monitor_mode.rs solo se cuentan canales 1..14 y SOLO beacons del BSSID objetivo.
+- Causa 2 (REAL, frontend): el plan mínimo IA añadía verify_channel_rf/detect_clients/profile_target
+  con bssid='' cuando no había objetivo válido → todos rechazados → "Plan SIN RESULTADOS".
+  FIX: si bssid no es válido, el plan mínimo usa scan_networks + detect_adapters (sin BSSID).
+- Verificado: lint OK, vite OK, cargo test 55 passed, cargo build 0 warnings.
