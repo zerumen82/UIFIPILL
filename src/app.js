@@ -32,6 +32,7 @@ function el(tag, cls, html) {
 //     en marcha pintaba en un panel invisible y el hilo de UI se saturaba, así
 //     que los clics del sidebar dejaban de responder (no se podía volver).
 const LOG_MAX_LINES = 5000;   // historial y nodos máximos en #cv (verbose real: sin recorte)
+const MAX_NO_CLIENT_CYCLES = 5; // después de N cycles sin STAs detectados, se da por concluido el objetivo actual
 const LOG_PAINT_MAX = 1000;   // entradas incrementales máximas por frame
 const LOG_COLORS = { error: '#f07178', warn: '#e6b455', ok: '#7dcf8e' };
 
@@ -988,11 +989,26 @@ async function hunterCycle() {
       // deauth que fuerza su reconexión → nunca llegaba M1/M2.
       // P4 (2026-11-26): aunque no haya clientes detectados, igual emitimos
       // deauth BROADCAST para forzar la reconexión de los STAs idle/asociados.
+      // P4-MEJORA (2026-11-26): límite máximo de cycles sin clientes para no
+      // quedarse patrolando indefinitely en un objetivo sin STAs asociables.
       window._hunterNoClientCycles = (window._hunterNoClientCycles || 0) + 1;
-      broadcast = true;
+      if (window._hunterNoClientCycles >= MAX_NO_CLIENT_CYCLES) {
+        // Objetivo concluido: demasiados cycles sin STAs detectados.
+        // Detener caza y pasar al siguiente objetivo (si está en modo masivo)
+        // o informar al usuario.
+        log('[cazador] ' + ((cs && cs.message) || 'sin clientes reales') +
+            ' — ' + MAX_NO_CLIENT_CYCLES + ' cycles seguidos sin STAs. ' +
+            'Objetivo concluido sin material EAPOL.', 'warn');
+        // No establecer broadcast = true para evitar emitir deauth infinito;
+        // el ciclo actual sí lo emitirá (el contador ya alcanzó el límite).
+        window._hunterStopRequested = true; // evitar que hunterCycle re-agende
+        broadcast = false; // valor any, el log de abajo lo manejará
+      } else {
+        broadcast = true;
+      }
       log('[cazador] ' + ((cs && cs.message) || 'sin clientes reales') +
-          ' — deauth BROADCAST igual (' + window._hunterNoClientCycles + 'º): fuerza la reconexión de ' +
-          'los clientes idle. No se fabrica cliente falso.', 'warn');
+          ' — deauth BROADCAST igual (' + window._hunterNoClientCycles + '/' + MAX_NO_CLIENT_CYCLES + 'º): fuerza la reconexión de ' +
+          'los clientes idle.', 'warn');
     } else {
       window._hunterNoClientCycles = 0;
       const sta = clients[0];
@@ -1042,8 +1058,8 @@ async function hunterCycle() {
     log('[cazador] error en ciclo ' + cy + ': ' + String(e) + '. Sin cliente falso: se requiere TX real del RT3070 (WinUSB).', 'error');
   } finally {
     window._hunterRunning = false;
+    if (!window._hunterStopRequested) window._hunterTimer = setTimeout(hunterCycle, 15000);
   }
-  if (window._hunterActive) window._hunterTimer = setTimeout(hunterCycle, 15000);
 }
 window.maybeAutoHunter = function () {
   // M-09 (decisión del usuario 2026-11-23): NO reanudar la caza al abrir la
@@ -3138,7 +3154,10 @@ const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channe
           }
         } catch (e) { log('[deauth-atacar] ' + e, 'warn'); }
       }
-      if (natGuid) {
+      // P6 (2026-11-26): si el burst deauth anterior (línea 3143) ya consiguió
+      // .22000 (hashFile fue establecido), omitimos la captura pasiva de 60s para
+      // evitar trabajo redundante y seguir directo al crack.
+      if (natGuid && !hashFile) {
         const dur = 60;
         setStage(`Capturando ${dur}s (CH ${ch || 'auto'}, pasivo)…`, 30);
         log(`[captura] native_capture ${dur}s · GUID ${natGuid} · CH ${ch || '?'} (requiere modo monitor; sin inyección en Npcap).`, 'info');
