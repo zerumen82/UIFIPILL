@@ -110,6 +110,48 @@ pub fn clients_from_pcap_full(bytes: &[u8], bssid: &[u8; 6]) -> (Vec<String>, us
     (out, candidate_stas, data_frames)
 }
 
+/// Cuenta PROBE-REQ (subtype 4 de management) emitidos por STAs que buscan este BSSID.
+/// Un PROBE-REQ NO prueba asociación: es un dispositivo SONDEANDO. Se usa solo para
+/// diagnosticar el caso "0 clientes pero el móvil aparece en el pcap" (típico cuando
+/// el móvil está en la BSS de 5 GHz del mismo router y el adaptador es solo 2.4 GHz).
+#[allow(dead_code)]
+pub fn probe_count_from_pcap(bytes: &[u8], bssid: &[u8; 6]) -> usize {
+    if bytes.len() < 24 { return 0; }
+    let le = bytes[0] == 0xd4;
+    let rd32 = |o: usize| -> Option<u32> {
+        let x = [*bytes.get(o)?, *bytes.get(o+1)?, *bytes.get(o+2)?, *bytes.get(o+3)?];
+        Some(if le { u32::from_le_bytes(x) } else { u32::from_be_bytes(x) })
+    };
+    let dlt = rd32(20).unwrap_or(127);
+    if dlt != 127 && dlt != 1 { return 0; }
+    let mut n = 0usize;
+    let mut off = 24usize;
+    while off + 16 <= bytes.len() {
+        let incl = rd32(off + 8).unwrap_or(0) as usize;
+        let start = off + 16;
+        let end = match start.checked_add(incl) { Some(e) if e <= bytes.len() => e, _ => break };
+        let p = &bytes[start..end];
+        let w = if dlt == 127 {
+            if p.len() < 10 { off = end; continue; }
+            let rt = u16::from_le_bytes([p[2], p[3]]) as usize;
+            if rt < 8 || rt > p.len() { off = end; continue; }
+            &p[rt..]
+        } else { p };
+        if w.len() < 24 { off = end; continue; }
+        let fc = u16::from_le_bytes([w[0], w[1]]);
+        let ftype = (fc >> 2) & 3;
+        let fsub = (fc >> 4) & 15;
+        let a1 = &w[4..10];
+        let a3 = &w[16..22];
+        // PROBE-REQ: broadcast/respuesta, addr3 = BSSID sondeado
+        if ftype == 0 && fsub == 4 && a3 == bssid && a1.iter().all(|x| *x == 0xff) {
+            n += 1;
+        }
+        off = end;
+    }
+    n
+}
+
 #[tauri::command]
 pub async fn detect_clients(
     iface_guid: String,
@@ -133,8 +175,22 @@ pub async fn detect_clients(
         Err(e) => return fail(format!("no se pudo leer {}: {e}", cap.output_file)),
     };
     let (clients, candidate_stas, data_frames) = clients_from_pcap_full(&bytes, &ap);
+    let probes = probe_count_from_pcap(&bytes, &ap);
     let msg = if clients.is_empty() {
-        format!("Sin clientes de {} en {}s ({} paquetes, {} frames Data con BSSID, {} STAs candidatos). No se puede capturar un handshake real sin un cliente asociado.", bssid, secs, cap.packets, data_frames, candidate_stas)
+        if probes > 0 {
+            // FIX honesto 2026-11-26: hay dispositivos SONDEANDO (PROBE-REQ) pero
+            // NO asociados. Es la huella típica de un móvil en la BSS de 5 GHz del
+            // mismo router, que el adaptador 2.4 GHz (RT73/RT3070) no puede oír como
+            // cliente. NO contarlos como clientes (sería falso) — pero diagnosticarlo.
+            format!(concat!(
+                "Sin clientes ASOCIADOS de {} en {}s ({} paquetes, {} frames Data, {} candidatos). ",
+                "SÍ hay {} PROBE-REQ sondeando este BSSID: dispositivo presente pero NO asociado en 2.4 GHz ",
+                "(probablemente en la BSS de 5 GHz del router). Este adaptador es solo 2.4 GHz — ",
+                "conecta el móvil a la red sin «-5G» o usa un adaptador 5 GHz (RTL8812AU/MT7612U)."
+            ), bssid, secs, cap.packets, data_frames, candidate_stas, probes)
+        } else {
+            format!("Sin clientes de {} en {}s ({} paquetes, {} frames Data con BSSID, {} STAs candidatos). No se puede capturar un handshake real sin un cliente asociado.", bssid, secs, cap.packets, data_frames, candidate_stas)
+        }
     } else {
         format!("{} cliente(s) de {}: {} ({} frames Data, {} candidatos)", clients.len(), bssid, clients.join(", "), data_frames, candidate_stas)
     };
@@ -203,6 +259,31 @@ mod tests {
     // enviaba 26 frames Null (subtype 4, ToDS=1) para power-save. Antes del fix
     // se descartaban (solo se contaban sub 0/8) → "0 STAs candidatos" aunque
     // hubiera un cliente real. Este test simula ESOS frames y exige que se detecte.
+    // Medido 2026-11-26: móvil en 5 GHz emitía PROBE-REQ en 2.4 GHz (a3=BSSID)
+    // pero NO estaba asociado. El diagnosticador debe contar esos probes SIN
+    // confundirlos con clientes (no fabricar material falso).
+    #[test]
+    fn probe_req_counted_but_not_as_client() {
+        let ap = [0xd8, 0xa7, 0x56, 0x31, 0xbf, 0x13];
+        let phone = [0x42, 0x81, 0x41, 0x55, 0x4f, 0x69];
+        let mut pcap = vec![0xd4,0xc3,0xb2,0xa1,2,0,4,0,0,0,0,0,0,0,0,0,127,0,0,0,1,0,0,0];
+        for _ in 0..4 {
+            let mut frame = vec![0u8; 24];
+            frame[0] = 0x40; // subtype 4 (PROBE-REQ), type 0 (management)
+            frame[1] = 0x00;
+            frame[4..10].copy_from_slice(&[0xff,0xff,0xff,0xff,0xff,0xff]); // a1 = broadcast
+            frame[10..16].copy_from_slice(&phone);  // a2 = quien sondea
+            frame[16..22].copy_from_slice(&ap);     // a3 = BSSID sondeado
+            pcap.extend_from_slice(&[0,0,0,0,0,0,0,0]);
+            pcap.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+            pcap.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+            pcap.extend_from_slice(&frame);
+        }
+        assert_eq!(probe_count_from_pcap(&pcap, &ap), 4);
+        // Un PROBE-REQ NO debe contarse como cliente asociado.
+        assert!(clients_from_pcap(&pcap, &ap).is_empty());
+    }
+
     #[test]
     fn idle_phone_sends_null_frames_is_detected() {
         let ap = [0x44, 0xd4, 0x54, 0xbc, 0xde, 0xf6];
