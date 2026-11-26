@@ -350,6 +350,14 @@ pub async fn capture_until_eapol(
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(dur);
         let mut pkts: u64 = 0;
         let mut eapol = false;
+        // E0-20: el evento `eapol-detected` PARa la ráfaga de deauth (para no
+        // romper M3/M4), pero la captura NO debe parar con el primer frame:
+        // medido 2026-11-26 que un .pcap con UN solo EAPOL (M3 o M1 suelto)
+        // devuelve 0 hashes porque el conversor necesita el par M1+M2.
+        // Tras el primer EAPOL seguimos grabando EAPOL_TAIL_SECS más para
+        // recoger M2/M3/M4.
+        const EAPOL_TAIL_SECS: u64 = 8;
+        let mut eapol_at: Option<std::time::Instant> = None;
         while std::time::Instant::now() < deadline {
             let mut hdr: *mut PcapPkthdr = ptr::null_mut();
             let mut data: *const c_uchar = ptr::null();
@@ -369,20 +377,25 @@ pub async fn capture_until_eapol(
                     let hit = if dlt == 1 { frame_has_eapol_eth(wifi, &target) } else { frame_has_eapol(wifi, &target) };
                     if !eapol && hit {
                         eapol = true;
+                        eapol_at = Some(std::time::Instant::now());
                         let _ = app.emit("eapol-detected", serde_json::json!({
                             "bssid": bssid.to_uppercase(), "output_file": out, "packets": pkts
                         }));
-                        break; // parar la captura; la ráfaga debe parar YA
+                        // NO break: la ráfaga ya se paró por el evento; seguimos
+                        // para no quedarnos solo con M1 (o solo con M3).
                     }
                 }
-                0 => continue,
+                0 => {}
                 _ => break,
+            }
+            if let Some(t) = eapol_at {
+                if t.elapsed() >= std::time::Duration::from_secs(EAPOL_TAIL_SECS) { break; }
             }
         }
         (w.dump_close)(dumper);
         (w.close)(handle);
         let msg = if eapol {
-            format!("⚡ EAPOL de {bssid} detectado tras {pkts} paquetes → {out}. Deauth detenido.")
+            format!("⚡ EAPOL de {bssid} detectado tras {pkts} paquetes → {out}. Ráfaga parada y captura {EAPOL_TAIL_SECS}s más (M1+M2).")
         } else {
             format!("Sin EAPOL de {bssid} en {dur}s ({pkts} paquetes) → {out}.")
         };

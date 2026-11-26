@@ -49,6 +49,7 @@ const OID_DOT11_OPERATION_MODE_CAPABILITY: u32 = 0x0D010300 + 7;  // GET
 const OID_DOT11_CURRENT_OPERATION_MODE:    u32 = 0x0D010300 + 8;  // GET/SET
 const OID_DOT11_CURRENT_CHANNEL:           u32 = 0x0D010300 + 53; // GET/SET (ULONG)
 const OID_DOT11_CURRENT_FREQUENCY:         u32 = 0x0D010300 + 54; // GET/SET (ULONG kHz)
+const OID_RT2870_CHANNEL:                  u32 = 0xFF0100C8; // privado Ralink RT2870/RT3070
 
 // Valores DOT11_OPERATION_MODE_*
 const DOT11_OPERATION_MODE_EXTENSIBLE_STATION: u32 = 0x00000004; // managed
@@ -303,6 +304,11 @@ pub async fn activate_monitor(iface_guid: String, channel: Option<u8>) -> Monito
             // 3) SET canal (ULONG LE)
             if let Some(ch) = channel {
                 let _ = npf_set_oid(handle, OID_DOT11_CURRENT_CHANNEL, &ulong_le(ch as u32));
+                if let Some(khz) = channel_to_khz(ch) {
+                    let _ = npf_set_oid(handle, OID_DOT11_CURRENT_FREQUENCY, &khz.to_le_bytes());
+                }
+                // Vendor Ralink: el OID que realmente mueve la radio
+                let _ = npf_set_oid(handle, OID_RT2870_CHANNEL, &ulong_le(ch as u32));
             }
 
             // 4) Confirmar canal actual con un GET
@@ -320,18 +326,20 @@ pub async fn activate_monitor(iface_guid: String, channel: Option<u8>) -> Monito
                         "[OK] Modo monitor (Network Monitor) ACTIVADO\nInterfaz: {}\nDriver: OID_DOT11_CURRENT_OPERATION_MODE aceptado.\n",
                         dev_path
                     );
-                    if let Some(c) = ch_now { msg.push_str(&format!("Canal confirmado: {}\n", c)); }
+                    if let Some(c) = ch_now { msg.push_str(&format!("Canal OID (cacheado): {}\n", c)); }
                     if let Some(want) = channel {
                         if ch_now != Some(want) {
                             msg.push_str(&format!(
-                                "AVISO: canal pedido {} pero la radio está en {:?} (driver sin admin suele ignorarlo; usa set_monitor_freq o admin).\n",
+                                "AVISO: canal pedido {} pero readback OID da {:?} (cacheado, no fiable).\n",
                                 want, ch_now));
+                        } else {
+                            msg.push_str(&format!("Canal {} confirmado por OID.\n", want));
                         }
                     }
                     msg.push_str("El adaptador esta listo para capturar 802.11 con Npcap Dot11.");
                     MonitorCapResult {
                         success: true, interface_name: dev_path,
-                        mode: "monitor".into(), channel_set: ch_now,
+                        mode: "monitor".into(), channel_set: ch_now.or(channel),
                         message: msg, npcap_installed: true,
                     }
                 }
@@ -380,7 +388,16 @@ pub async fn set_monitor_channel(iface_guid: String, channel: u8) -> ChannelResu
 
     let r = match handle {
         Some((h, path)) => {
-            let set_res = npf_set_oid(h, OID_DOT11_CURRENT_CHANNEL, &ulong_le(channel as u32));
+            // 1) OID estándar
+            let mut set_res = npf_set_oid(h, OID_DOT11_CURRENT_CHANNEL, &ulong_le(channel as u32));
+            // 2) Fallback por frecuencia
+            if set_res.is_err() {
+                if let Some(khz) = channel_to_khz(channel) {
+                    set_res = npf_set_oid(h, OID_DOT11_CURRENT_FREQUENCY, &khz.to_le_bytes());
+                }
+            }
+            // 3) OID privado Ralink (RT2870/RT3070) — el que realmente mueve la radio
+            let _ = npf_set_oid(h, OID_RT2870_CHANNEL, &ulong_le(channel as u32));
             close_handle(h);
             match set_res {
                 Err(e) => ChannelResult { success: false, channel: 0,
@@ -784,4 +801,54 @@ mod lab_tests {
         println!("RESTORE ok={} {}", rs.success, rs.message);
         assert!(rs.success, "restore_managed falló: {}", rs.message);
     }
+}
+
+#[tauri::command]
+pub async fn verify_channel_rf(guid: String, secs: Option<u64>, bssid: Option<String>) -> String {
+    let s = secs.unwrap_or(3).clamp(2, 10);
+    // Objetivo opcional: si se da, contamos SUS beacons. Es la prueba fiable
+    // de que la radio escucha en el canal del AP (el "canal dominante" solo
+    // dice en qué canal estábamos escuchando, no si allí está el objetivo).
+    let want: Option<[u8; 6]> = bssid.as_deref().and_then(|b| {
+        let p: Vec<&str> = b.split(|c: char| c == ':' || c == '-').collect();
+        if p.len() != 6 { return None; }
+        let mut o = [0u8; 6];
+        for (i, x) in p.iter().enumerate() { o[i] = u8::from_str_radix(x, 16).ok()?; }
+        Some(o)
+    });
+    let tmp = std::env::temp_dir().join("chan_verify.pcap");
+    let _ = std::fs::remove_file(&tmp);
+    let cap = crate::capture::native_capture(guid.clone(), Some(s), Some(tmp.to_string_lossy().to_string())).await;
+    if !cap.success {
+        return format!("captura fallo: {}", cap.message);
+    }
+    let bytes = match std::fs::read(&tmp) { Ok(b) => b, Err(e) => return format!("leer pcap: {e}") };
+    if bytes.len() < 24 { return "pcap vacio".into(); }
+    let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let swap = match magic { 0xa1b2c3d4|0xa1b23c4d => false, 0xd4c3b2a1|0x4d3cb2a1 => true, _ => return "magic desconocido".into() };
+    let rd = |b:&[u8],o:usize| -> u32 { if o+4>b.len(){return 0;} let v=u32::from_le_bytes([b[o],b[o+1],b[o+2],b[o+3]]); if swap{v.swap_bytes()}else{v} };
+    let linktype = rd(&bytes,20);
+    let mut hist = std::collections::BTreeMap::new();
+    let mut target_hits = 0usize;
+    let mut off=24usize;
+    while off+16<=bytes.len() {
+        let incl=rd(&bytes,off+8) as usize; off+=16;
+        if incl==0||off+incl>bytes.len(){break;}
+        let pkt=&bytes[off..off+incl]; off+=incl;
+        let frame:&[u8]=match linktype{127=>{if pkt.len()<4{continue;} let rl=u16::from_le_bytes([pkt[2],pkt[3]]) as usize; if rl<8||rl>pkt.len(){continue;} &pkt[rl..]} 105=>pkt, _=>continue};
+        if frame.len()<36{continue;}
+        let fc=u16::from_le_bytes([frame[0],frame[1]]);
+        if ((fc>>2)&3)!=0 || ((fc>>4)&0xF)!=8 {continue;}
+        if let Some(w) = want.as_ref() { let wb: &[u8] = w; if frame.len() >= 22 && &frame[16..22] == wb { target_hits += 1; } }
+        let body=&frame[24..];
+        let mut p=12usize; let mut ch=None;
+        while p+2<=body.len(){ let id=body[p]; let len=body[p+1] as usize; p+=2; if p+len>body.len(){break;} if id==3&&len==1{ch=Some(body[p]);} p+=len; }
+        *hist.entry(ch.unwrap_or(0)).or_insert(0)+=1;
+    }
+    let mut v:Vec<(u8,usize)>=hist.into_iter().collect();
+    v.sort_by(|a,b| b.1.cmp(&a.1));
+    let total:usize=v.iter().map(|x|x.1).sum();
+    let dom=v.first().map(|x|x.0).unwrap_or(0);
+    let tgt = match &want { Some(_) => target_hits.to_string(), None => "n/d".into() };
+    format!("canal dominante: {} ({} beacons, {} total) {:?} · beacons objetivo: {}", dom, v.first().map(|x|x.1).unwrap_or(0), total, v, tgt)
 }

@@ -173,7 +173,8 @@ pub async fn convert_pcap_to_22000_with_ssid(pcap_path: String, output_path: Str
             let rt_len = u16::from_le_bytes([pkt[RADIOTAP_LEN_OFFSET], pkt[RADIOTAP_LEN_OFFSET+1]]) as usize;
             if rt_len > pkt.len() { offset += incl_len; continue }
             process_80211_frame(pkt, rt_len, &mut pmkid_entries, &mut handshakes);
-        } else if network == 105 {
+        } else if network != 1 && network != 127 {
+            // DLT 105 (IEEE802_11, sin radiotap): rt_len = 0, frame control empieza en offset 24.
             process_80211_frame(pkt, 0, &mut pmkid_entries, &mut handshakes);
         }
 
@@ -305,10 +306,14 @@ fn process_80211_frame(
         let desc_type = pkt[key_off]; // 1=WPA, 2=WPA2, 254=WPA2
         let key_info = u16::from_be_bytes([pkt[key_off+1], pkt[key_off+2]]);
         let _key_len  = u16::from_be_bytes([pkt[key_off+3], pkt[key_off+4]]);
+        // Offsets del Key frame (tras el header EAPOL de 4 B), medidos 2026-11-26
+        // contra M1 reales: nonce +13, MIC +77, key_data_len +93, key_data +95.
+        // (Antes key_data_len usaba +97 → leía basura: 8994/11437 en vez de 56/22,
+        //  y el PMKID del M1 jamás se extraía.)
         let key_nonce = &pkt[key_off+13..key_off+13+32];
-        let _key_mic   = &pkt[key_off+81..key_off+81+16];
-        let _key_data_len = u16::from_be_bytes([pkt[key_off+97], pkt[key_off+98]]) as usize;
-        let _key_data_off = key_off + 99;
+        let _key_mic   = &pkt[key_off+77..key_off+77+16];
+        let _key_data_len = u16::from_be_bytes([pkt[key_off+93], pkt[key_off+94]]) as usize;
+        let _key_data_off = key_off + 95;
 
         // Determine if Install flag is set (bit 6, 0x0040)
         let install = (key_info & 0x0040) != 0;
@@ -344,18 +349,19 @@ fn process_80211_frame(
                 };
                 state.keyver = if desc_type == 1 { 1 } else { 2 };
             }
-            // PMKID-KDE: en key_data, IE vendor 00:0F:AC type 4, len 0x14 (20)
-            let kd_off = key_off + 99;
+            // PMKID-KDE: en key_data (offset +95, len en +93), IE vendor 00:0F:AC
+            // type 4 (PMKID), len 0x14 (20). Medido contra M1 real con PMKID.
+            let kd_off = key_off + 95;
             if kd_off + 2 <= pkt.len() {
-                let kd_len = u16::from_be_bytes([pkt[key_off+97], pkt[key_off+98]]) as usize;
+                let kd_len = u16::from_be_bytes([pkt[key_off+93], pkt[key_off+94]]) as usize;
                 let kd_end = (kd_off + kd_len).min(pkt.len());
                 let mut p = kd_off;
                 while p + 8 <= kd_end {
                     let ie_type = pkt[p];
                     let ie_len  = pkt[p + 1] as usize;
-                    if ie_len < 20 || p + 2 + ie_len > kd_end { break }
+                    if ie_len == 0 || p + 2 + ie_len > kd_end { break }
                     // OUI 00:0F:AC (802.11) + type 4 = PMKID KDE
-                    if ie_type == 0xDD && pkt[p+2] == 0x00 && pkt[p+3] == 0x0F && pkt[p+4] == 0xAC && pkt[p+5] == 0x04 {
+                    if ie_type == 0xDD && ie_len >= 20 && pkt[p+2] == 0x00 && pkt[p+3] == 0x0F && pkt[p+4] == 0xAC && pkt[p+5] == 0x04 {
                         let mut kid = [0u8; 16];
                         kid.copy_from_slice(&pkt[p+6..p+6+16]);
                         // Descartar PMKID cero o todos-iguales (corrupto)
@@ -370,15 +376,19 @@ fn process_80211_frame(
                 }
             }
         } else if pairwise && key_mic_valid && !key_ack {
-            // M2 or M4
-            if state.eapol_m1.is_some() && state.eapol_m2.is_none() {
+            // M2 o M4 (mismo key_info: se distinguen por orden/replay).
+            // Guardar M2 aunque el M1 aún no haya llegado (captura que empieza
+            // a mitad de handshake); build_hash_line exige ambos, así que si
+            // llega M1 después, el par se completa. Antes se descartaba el M2
+            // y el handshake no se podía construir nunca.
+            if state.eapol_m2.is_none() {
                 state.eapol_m2 = Some(full_eapol.clone());
                 state.snonce = {
                     let mut n = [0u8; 32];
                     n.copy_from_slice(key_nonce);
                     Some(n)
                 };
-            } else if state.eapol_m2.is_some() && state.eapol_m4.is_none() {
+            } else if state.eapol_m4.is_none() {
                 state.eapol_m4 = Some(full_eapol.clone());
             }
         } else if install && key_ack && key_mic_valid {

