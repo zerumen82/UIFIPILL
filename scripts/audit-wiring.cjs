@@ -146,6 +146,13 @@ if (!/hasAction\(\)/.test(appSrc) || !/detect_clients['"]/.test(appSrc) ||
     !/(paso\(s\) mínimo\(s\)|paso\(s\) de DIAGN[OÓ]STICO)/.test(appSrc)) {
   console.error('REGRESSION: falta el plan mínimo REACTIVO del Modo IA (verify_channel_rf + detect_clients antes del deauth).'); bad++;
 }
+// Auto-caza EAPOL (decisión usuario 2026-11-27): checkbox en UI + auto-inicio
+// en simpleAttack y en iaAttack (Modo IA), sin parar por falta de clientes.
+const htmlSrc = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+if (!/id="auto-hunt-toggle"/.test(htmlSrc) || !/window\.maybeStartAutoHunt/.test(appSrc) ||
+    !/maybeStartAutoHunt\(bssid, ssid, ch\)/.test(appSrc)) {
+  console.error('REGRESSION: falta la Auto-caza EAPOL (toggle UI o auto-inicio en ataque/Modo IA).'); bad++;
+}
 
 const toolsBlock = cmdsSrc.slice(cmdsSrc.indexOf('let tools = serde_json::json!(['), cmdsSrc.indexOf(']);', cmdsSrc.indexOf('let tools = serde_json::json!([')));
 

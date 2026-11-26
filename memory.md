@@ -3001,3 +3001,16 @@ src/app.js, src/js/ia.js, index.html, scripts/audit-wiring.cjs, package.json, sr
 ### Pendiente
 - Arreglar tests/pcap_convert_headless.rs para que compile (use uifipill_lib, no use pcap_convert).
 - Registrar veredicto 5 GHz / E0-30 en spec/02-REQUISITOS.md.
+
+### SESIÓN 2026-11-27 (cont.) — AUTO-CAZA EAPOL PERSISTENTE
+- Usuario pidió opción "Auto-caza EAPOL": checkbox #auto-hunt-toggle (MARCADO por defecto) en index.html.
+- setAutoHunt(on) en app.js + window._autoHunt=true. maybeStartAutoHunt() se llama en el finally de
+  simpleAttack (si no cracked/stopped) Y de iaAttack (Modo IA) → el cazador sigue en bucle
+  DESAUTENTICANDO (hunterCycle → iaDeauthBurst) hasta capturar EAPOL o pulsar Detener.
+- MAX_NO_CLIENT_CYCLES ya NO detiene la caza: solo informa; broadcast continuo cuando no hay STAs.
+- iaAttack: bssid/ssid/ch declarados FUERA del try para que el finally los vea (bug histórico evitado).
+- Guardia nueva en scripts/audit-wiring.cjs que exige toggle + auto-inicio en ambos flujos.
+- Respeta M-09: NO reactiva al abrir la app, solo tras ataque iniciado por el usuario.
+- Verificado: lint OK, vite OK, cargo test 55 passed, cargo build 0 warnings.
+- Mejora pendiente detectada: probe_count_from_pcap cuenta PROBE-REQ pero no PROBE-RESP; en red Q003
+  solo hay PROBE-RESP (a1=SONDEADOR, a2=AP) → el mensaje no dice "(probable 5 GHz)". No se cambió código.
