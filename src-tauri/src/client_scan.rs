@@ -62,7 +62,11 @@ pub fn clients_from_pcap_full(bytes: &[u8], bssid: &[u8; 6]) -> (Vec<String>, us
             off = end;
             continue;
         }
-        if ftype != 2 || (fsub != 0 && fsub != 8) { off = end; continue; }
+        // FIX 2026-11-26: un móvil CONECTADO pero en idle envía frames
+        // Null (subtype 4) / QoS Null (subtype 12) para power-save (PS-Poll),
+        // no Data (0/8). Antes se descartaban → "0 STAs candidatos" aunque
+        // hubiera un cliente real asociado. Ahora también cuentan.
+        if ftype != 2 || (fsub != 0 && fsub != 4 && fsub != 8 && fsub != 12) { off = end; continue; }
         let to_ds = (fc >> 8) & 1 == 1;
         let from_ds = (fc >> 9) & 1 == 1;
         // Solo tramas verdaderamente asociadas (STA↔AP): exactamente uno de
@@ -193,6 +197,31 @@ mod tests {
         assert!(clients_from_pcap(&build(&broadcast, &ap, &wired_sa), &ap).is_empty());
         // Downlink unicast al STA real: ese sí es cliente (a3 cableado ignorado).
         assert_eq!(clients_from_pcap(&build(&sta, &ap, &wired_sa), &ap), vec!["50:8B:B9:61:38:B3".to_string()]);
+    }
+
+    // Medido 2026-11-26 en red real: el móvil BE:FD:76:27:52:16 conectado
+    // enviaba 26 frames Null (subtype 4, ToDS=1) para power-save. Antes del fix
+    // se descartaban (solo se contaban sub 0/8) → "0 STAs candidatos" aunque
+    // hubiera un cliente real. Este test simula ESOS frames y exige que se detecte.
+    #[test]
+    fn idle_phone_sends_null_frames_is_detected() {
+        let ap = [0x44, 0xd4, 0x54, 0xbc, 0xde, 0xf6];
+        let sta = [0xbe, 0xfd, 0x76, 0x27, 0x52, 0x16];
+        let mut pcap = vec![0xd4,0xc3,0xb2,0xa1,2,0,4,0,0,0,0,0,0,0,0,0,127,0,0,0,1,0,0,0];
+        for _ in 0..26 {
+            let mut frame = vec![0u8; 24];
+            // subtype 4 (Null) = 0100 << 4 = 0x40; type Data = 0x08
+            frame[0] = 0x48;
+            frame[1] = 0x01; // ToDS=1 → STA → AP
+            frame[4..10].copy_from_slice(&ap);   // addr1 = AP
+            frame[10..16].copy_from_slice(&sta); // addr2 = STA (el móvil)
+            frame[16..22].copy_from_slice(&ap);  // addr3 = AP
+            pcap.extend_from_slice(&[0,0,0,0,0,0,0,0]);
+            pcap.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+            pcap.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+            pcap.extend_from_slice(&frame);
+        }
+        assert_eq!(clients_from_pcap(&pcap, &ap), vec!["BE:FD:76:27:52:16".to_string()]);
     }
 
     #[test]

