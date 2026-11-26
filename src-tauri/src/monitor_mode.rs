@@ -805,17 +805,32 @@ mod lab_tests {
 
 #[tauri::command]
 pub async fn verify_channel_rf(guid: String, secs: Option<u64>, bssid: Option<String>) -> String {
+    // P5-x (2026-11-26): bssid obligatorio cuando se verifica el canal de una red objetivo.
+    // Si no se provee, el comando no puede contar beacons del objetivo y el resultado
+    // sería incompleto. Obligar su uso evita resultados engañosos.
+    let bssid_str = match bssid {
+        Some(b) => b,
+        None => return "Error: parámetro bssid obligatorio para verify_channel_rf. Provee el BSSID del objetivo.".into(),
+    };
     let s = secs.unwrap_or(3).clamp(2, 10);
-    // Objetivo opcional: si se da, contamos SUS beacons. Es la prueba fiable
+    // Objetivo: si se da el BSSID, contamos SUS beacons. Es la prueba fiable
     // de que la radio escucha en el canal del AP (el "canal dominante" solo
     // dice en qué canal estábamos escuchando, no si allí está el objetivo).
-    let want: Option<[u8; 6]> = bssid.as_deref().and_then(|b| {
-        let p: Vec<&str> = b.split(|c: char| c == ':' || c == '-').collect();
-        if p.len() != 6 { return None; }
-        let mut o = [0u8; 6];
-        for (i, x) in p.iter().enumerate() { o[i] = u8::from_str_radix(x, 16).ok()?; }
-        Some(o)
-    });
+    let want: Option<[u8; 6]> = {
+        let b = bssid_str.trim();
+        let p: Vec<&str> = b.split([':', '-']).collect();
+        if p.len() != 6 { None } else {
+            let mut o = [0u8; 6];
+            let mut ok = true;
+            for (i, x) in p.iter().enumerate() {
+                match u8::from_str_radix(x, 16) {
+                    Ok(v) => o[i] = v,
+                    Err(_) => { ok = false; break; }
+                }
+            }
+            if ok && o.iter().all(|&x| x != 0) { Some(o) } else { None }
+        }
+    };
     let tmp = std::env::temp_dir().join("chan_verify.pcap");
     let _ = std::fs::remove_file(&tmp);
     let cap = crate::capture::native_capture(guid.clone(), Some(s), Some(tmp.to_string_lossy().to_string())).await;
