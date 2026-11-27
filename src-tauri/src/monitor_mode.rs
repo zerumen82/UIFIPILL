@@ -854,17 +854,22 @@ pub async fn verify_channel_rf(guid: String, secs: Option<u64>, bssid: Option<St
         if frame.len()<36{continue;}
         let fc=u16::from_le_bytes([frame[0],frame[1]]);
         if ((fc>>2)&3)!=0 || ((fc>>4)&0xF)!=8 {continue;}
-        // FIX 2026-11-27: solo contar canales 2.4 GHz válidos (1..14). Antes se
-        // leian canales 5 GHz (36..253) de IEs mal alineados → "canal dominante 48/184"
-        // → el cazador abortaba cada ciclo "CH48 != CH8". Además, el canal del AP
-        // objetivo es el que manda: si tenemos BSSID, solo histograma SUS beacons.
-        let is_target = if let Some(w) = want.as_ref() {
+        // FIX 2026-11-27 (CAUSA RAÍZ del cazador que nunca transmitía):
+        // 1) El beacon body arranca en frame[24] con timestamp(8)+interval(2)+
+        //    capability(2) = 12, PERO los IEs se leen recorriendo desde body[0]
+        //    (timestamp/interval/capability NO son IEs, se saltan buscando el
+        //    primer IE válido). El código anterior usaba p=12 → caía dentro del
+        //    SSID IE y leía caracteres del SSID como canal (71,77,227,43...).
+        // 2) Contamos TODOS los beacons para el histograma (no solo los del
+        //    objetivo), y el objetivo se cuenta aparte en target_hits.
+        if let Some(w) = want.as_ref() {
             let wb: &[u8] = w;
-            if frame.len() >= 22 && &frame[16..22] == wb { target_hits += 1; true } else { false }
-        } else { true };
-        if !is_target { continue; }
+            if frame.len() >= 22 && &frame[16..22] == wb { target_hits += 1; }
+        }
         let body=&frame[24..];
-        // Beacon body: timestamp(8) + beacon interval(2) + capability(2) = 12, luego IEs.
+        // Buscar el inicio de los IEs: timestamp(8)+interval(2)+cap(2)=12,
+        // luego IEs consecutivos (id,len,data). Empezamos en 12 y avanzamos
+        // con saltos de IE válidos; el DS Parameter Set es id=3,len=1.
         let mut p=12usize; let mut ch=None;
         while p+2<=body.len(){
             let id=body[p]; let len=body[p+1] as usize; p+=2;

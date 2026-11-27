@@ -3025,3 +3025,17 @@ src/app.js, src/js/ia.js, index.html, scripts/audit-wiring.cjs, package.json, sr
   con bssid='' cuando no había objetivo válido → todos rechazados → "Plan SIN RESULTADOS".
   FIX: si bssid no es válido, el plan mínimo usa scan_networks + detect_adapters (sin BSSID).
 - Verificado: lint OK, vite OK, cargo test 55 passed, cargo build 0 warnings.
+
+### SESIÓN 2026-11-27 (cont. 3) — FIX CAUSA RAÍZ: cazador abortaba TX cada ciclo (1.0.32)
+- Síntoma medido: 400+ ciclos del cazador, "verify_channel_rf: canal dominante: 41 (1 beacons...)"
+  con canales basura (41,45,81,122,162,184,243...) y CERO transmisiones (TXDONE solo en el botón Atacar).
+- CAUSA RAÍZ 1 (backend monitor_mode.rs): el parser de IEs del beacon empezaba en body[12] pero
+  recorría mal → leía caracteres del SSID ("FibraValencia") como canal. Verificado con chaninspect.cjs:
+  body0..16 = timestamp(8)+interval(2)+cap(2)+SSID IE(00 13 ...); el DS Parameter Set (IE id=3) real
+  da CH8, pero el código reportaba 71,77,227,43... Fix: recorrer IEs correctamente desde body[12],
+  con id=3,len=1 y filtro 1..14.
+- CAUSA RAÍZ 2 (frontend app.js): iaDeauthBurst e hunterCycle abortaban TX si dom !== ch sin importar
+  que los beacons del objetivo (hits) confirmaran el canal. Fix: los BEACONS DEL OBJETIVO mandan;
+  si hits>0 se confirma canal y se ignora el dominante ruidoso; solo se aborta si hits===0 o
+  dominante 1..14 distinto sin beacons objetivo.
+- Verificado: lint OK, vite OK, cargo test 55 passed, cargo build 0 warnings.
